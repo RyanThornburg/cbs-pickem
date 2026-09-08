@@ -1,0 +1,13 @@
+[project]
+name = "cbs-pickem"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "dotenv>=0.9.9",
+    "playwright>=1.62.0",
+    "pydantic>=2.13.5",
+    "requests>=2.34.2",
+    "stamina>=26.1.0",
+]

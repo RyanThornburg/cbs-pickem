@@ -1,0 +1,12 @@
+__pycache__/
+.venv
+CLAUDE.local.md
+.old
+logs/
+*.logs
+data/
+secrets/
+test_data.json
+
+config/.env.local
+config/.env.prod
