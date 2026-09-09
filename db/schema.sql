@@ -32,10 +32,12 @@ CREATE TABLE IF NOT EXISTS teams (
 -- Stadiums and venues (including international)
 CREATE TABLE IF NOT EXISTS stadiums (
     stadium_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name VARCHAR(100) NOT NULL,
+    name VARCHAR(100) NOT NULL UNIQUE, -- matched against Sports IO's game.venue.name for upserts
     city VARCHAR(100) NOT NULL,
     state VARCHAR(50),
     country VARCHAR(50) DEFAULT 'USA',
+    latitude DECIMAL(9,6), -- for weather lookups (api/weather_api.py)
+    longitude DECIMAL(9,6),
     surface_type VARCHAR(50), -- 'Grass', 'Artificial Turf'
     roof_type VARCHAR(50) -- 'Open', 'Dome', 'Retractable'
 );
@@ -108,18 +110,62 @@ CREATE TABLE IF NOT EXISTS game_snapshots (
     FOREIGN KEY (game_id) REFERENCES games(game_id)
 );
 
--- Team box-score stats for a game (one row per team per game)
+-- Team box-score stats for a game (one row per team per game), mirroring
+-- Sports IO's games/statistics/teams response. "N-M" fields in that response
+-- (comp_att, sacks_yards_lost, made_att, third/fourth_down_efficiency,
+-- penalties.total) are split into two int columns each rather than stored
+-- as raw strings. turnovers/fumbles_lost are this team's own giveaways
+-- (offense), interceptions/fumbles_recovered/sacks_recorded are this team's
+-- takeaways (defense), don't confuse the two despite similar names.
 CREATE TABLE IF NOT EXISTS game_team_stats (
     stat_id INTEGER PRIMARY KEY AUTOINCREMENT,
     game_id INT NOT NULL,
     team_id INT NOT NULL,
-    total_yards INT,
+
+    first_downs_total INT,
+    first_downs_passing INT,
+    first_downs_rushing INT,
+    first_downs_penalties INT,
+    third_down_conversions INT,
+    third_down_attempts INT,
+    fourth_down_conversions INT,
+    fourth_down_attempts INT,
+
+    plays_total INT,
+    yards_total INT,
+    yards_per_play DECIMAL(4,1),
+    total_drives INT,
+
     passing_yards INT,
+    passing_completions INT,
+    passing_attempts INT,
+    yards_per_pass DECIMAL(4,1),
+    interceptions_thrown INT, -- this team's QB(s) getting picked off (offense)
+    sacks_given_up INT,
+    sack_yards_lost INT,
+
     rushing_yards INT,
-    turnovers INT,
-    time_of_possession_sec INT,
+    rushing_attempts INT,
+    yards_per_rush DECIMAL(4,1),
+
+    redzone_made INT,
+    redzone_attempts INT,
+
     penalties INT,
     penalty_yards INT,
+
+    total_turnovers INT, -- fumbles_lost + interceptions_thrown (offense)
+    fumbles_lost INT,
+
+    interceptions INT, -- interceptions this team's defense recorded (takeaway)
+    fumbles_recovered INT, -- fumbles this team's defense recovered (takeaway)
+    sacks_recorded INT, -- sacks this team's defense recorded (takeaway) - distinct from sacks_given_up
+    int_touchdowns INT, -- touchdowns off a return (pick-six etc.)
+
+    safeties INT,
+    points_against INT,
+    time_of_possession_sec INT,
+
     FOREIGN KEY (game_id) REFERENCES games(game_id),
     FOREIGN KEY (team_id) REFERENCES teams(team_id),
     UNIQUE (game_id, team_id)
@@ -216,6 +262,22 @@ CREATE TABLE IF NOT EXISTS odds_snapshots (
 );
 
 CREATE INDEX IF NOT EXISTS idx_odds_snapshots_game_source_market ON odds_snapshots(game_id, source, market);
+
+-- Small key-value store for src/orchestration.py's polling cursors
+-- (sports_io_live_last_poll_at, cbs_live_last_poll_at, odds_last_call_at,
+-- deadline_last_synced_sunday, housekeeping_last_run_at) - lets a stateless
+-- cron tick know what it last did without re-deriving it from other tables.
+CREATE TABLE IF NOT EXISTS orchestration_state (
+    key VARCHAR(50) PRIMARY KEY,
+    value VARCHAR(255),
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_orchestration_state_updated_at
+AFTER UPDATE ON orchestration_state
+BEGIN
+    UPDATE orchestration_state SET updated_at = CURRENT_TIMESTAMP WHERE key = OLD.key;
+END;
 
 -- Simple indexes for performance
 CREATE INDEX IF NOT EXISTS idx_games_week ON games(week_id);
