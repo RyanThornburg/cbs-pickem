@@ -11,6 +11,7 @@ Upserts are using sports_io_team_id
 
 import logging
 import sys
+from typing import Any
 
 from api.sports_io_client import get_standings, get_teams
 from api.sports_io_models import Standing
@@ -51,7 +52,7 @@ def main(env: str = "local") -> None:
     teams = get_teams()
     conference_division = _conference_division_by_team_id(get_standings())
 
-    statements = []
+    statements: list[tuple[str, list[Any] | None]] = []
     for team in teams:
         if not team.code:
             logger.warning(
