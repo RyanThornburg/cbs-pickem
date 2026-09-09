@@ -73,7 +73,7 @@ def load_env(env: str = "local") -> bool:
     env_file = Path(__file__).parent / f".env.{env}"
     if os.path.exists(env_file):
         load_dotenv(env_file)
-        logger.info("Loaded %s environment", env)
+        logger.debug("Loaded %s environment", env)
     else:
         logger.error("Environment file not found")
         return False
@@ -97,12 +97,12 @@ def load_env(env: str = "local") -> bool:
     return True
 
 
-def get_d1_config() -> dict[str, str | None]:
+def get_d1_config() -> dict[str, str]:
     """Returns Cloudflare D1 connection config"""
     return {
-        "account_id": os.getenv("CF_ACCOUNT_ID"),
-        "database_id": os.getenv("CF_D1_DATABASE_ID"),
-        "api_token": os.getenv("CF_API_TOKEN"),
+        "account_id": os.getenv("CF_ACCOUNT_ID", ""),
+        "database_id": os.getenv("CF_D1_DATABASE_ID", ""),
+        "api_token": os.getenv("CF_API_TOKEN", ""),
     }
 
 
