@@ -3,14 +3,13 @@
 Usage: uv run python -m src.loaders.season_loader [local|prod]
 
 Run at the start of a new season (or on any refresh) to upsert the season
-Sports IO currently flags as `current`
-`season_id` is the year itself (see db/schema.sql), so this is a plain upsert keyed on
-that. Any other season row's `is_active` is cleared first so at most one
+Sports IO currently flags as `current` `season_id`. Any other season row's `is_active` is cleared first so at most one
 season is ever active at a time.
 """
 
 import logging
 import sys
+from typing import Any
 
 from api.sports_io_client import get_current_season
 from config.config import configure_logging, get_d1_config, load_env
@@ -41,7 +40,7 @@ def main(env: str = "local") -> None:
         logger.warning("Sports IO has no season flagged current! Nothing to load")
         return
 
-    statements = [
+    statements: list[Any] = [
         (_CLEAR_ACTIVE_SQL, [season.year]),
         (
             _UPSERT_SQL,
