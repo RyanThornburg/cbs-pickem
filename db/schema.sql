@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS teams (
     division VARCHAR(20), -- North, South, East, West
     cbs_team_id INT UNIQUE, -- CBS Sports team ID for resolving CBS game/pick imports
     sports_io_team_id INT UNIQUE, --- Sports IO team ID
-    medium_name VARCHAR(50), -- CBS's market/brand name, e.g. 'Arizona' — not always the same as city (Arizona Cardinals play in Glendale)
+    medium_name VARCHAR(50), -- CBS's market/brand name, e.g. 'Arizona'
     nick_name VARCHAR(50), -- e.g. 'Cardinals'
     color_primary_hex VARCHAR(6),
     color_secondary_hex VARCHAR(6)
@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS weeks (
     start_date DATE,
     end_date DATE,
     is_complete BOOLEAN DEFAULT FALSE,
+    cbs_pool_period_id VARCHAR(50) UNIQUE, -- for mapping weeks in cbs
     FOREIGN KEY (season_id) REFERENCES seasons(season_id),
     UNIQUE (season_id, week_number)
 );
@@ -71,9 +72,9 @@ CREATE TABLE IF NOT EXISTS games (
     stadium_id INT,
     cbs_event_id INT UNIQUE, -- CBS Sports event ID, for idempotent upserts on re-scrape
     sports_io_game_id INT UNIQUE, -- Sports IO game ID, for joining stats/odds by game
-    odds_api_event_id VARCHAR(50) UNIQUE, -- The Odds API event ID (string, not int) — matched by team+commence_time on first sighting, then joined on directly
+    odds_api_event_id VARCHAR(50) UNIQUE, -- The Odds API event ID (string, not int) - matched by team+commence_time on first sighting, then joined on directly
     game_time DATETIME,
-    cbs_spread DECIMAL(4,1), -- the line CBS locked in for scoring picks
+    cbs_spread DECIMAL(4,1), -- home team line that cbs uses/once its set it does not change
     home_score INT,
     away_score INT,
     is_complete BOOLEAN DEFAULT FALSE,
@@ -131,6 +132,7 @@ CREATE TABLE IF NOT EXISTS user_picks (
     picked_team_id INT NOT NULL,
     is_correct BOOLEAN DEFAULT NULL, -- NULL until game is complete
     trending_status VARCHAR(10) DEFAULT 'NONE', -- CBS's own hot/cold signal for this pick
+    cbs_pick_id VARCHAR(150) UNIQUE, -- CBS's Pick.id, for reference
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(user_id),
     FOREIGN KEY (game_id) REFERENCES games(game_id),
@@ -143,6 +145,7 @@ CREATE TABLE IF NOT EXISTS weekly_performance (
     performance_id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INT NOT NULL,
     week_id INT NOT NULL,
+    has_submitted_picks BOOLEAN DEFAULT FALSE, -- did a user forget picks?
     picks_made INT DEFAULT 0,
     picks_correct INT DEFAULT 0,
     weekly_score AS (picks_correct), -- Simple 0-5 score
@@ -195,7 +198,7 @@ END;
 -- MIN/MAX over captured_at or over home_point/away_point, rather than
 -- needing dedicated columns for each. game_id is resolved by the loader
 -- via games.cbs_event_id / sports_io_game_id / odds_api_event_id before
--- insert — those are the join keys for their respective sources.
+-- insert - those are the join keys for their respective sources.
 CREATE TABLE IF NOT EXISTS odds_snapshots (
     odds_id INTEGER PRIMARY KEY AUTOINCREMENT,
     game_id INT NOT NULL,
