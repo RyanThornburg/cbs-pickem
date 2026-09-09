@@ -16,6 +16,7 @@ Used Claude to model the data
 # (tiebreakers, pool settings, myEntries) are left unmodeled; extend these
 # models from real data if/when that changes.
 
+from collections.abc import Sequence
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -73,6 +74,8 @@ class PoolEvent(CBSModel):
 
 
 class TvNetwork(CBSModel):
+    """tv network"""
+
     typename: Literal["TvNetwork"] = Field(alias="__typename")
     call_letters: str = Field(alias="callLetters")
     name: str
@@ -97,6 +100,8 @@ class EventExtra(CBSModel):
 
 
 class MoneyLine(CBSModel):
+    """money line odds"""
+
     typename: Literal["EventTeamOddsMoneyLine"] = Field(alias="__typename")
     team_id: str = Field(alias="teamId")
     odds: str
@@ -104,6 +109,8 @@ class MoneyLine(CBSModel):
 
 
 class Spread(CBSModel):
+    """spread odds"""
+
     typename: Literal["EventTeamOddsSpread"] = Field(alias="__typename")
     team_id: str = Field(alias="teamId")
     spread: str
@@ -113,6 +120,8 @@ class Spread(CBSModel):
 
 
 class Total(CBSModel):
+    """over under"""
+
     typename: Literal["EventTeamOddsTotal"] = Field(alias="__typename")
     choice: str  # 'OVER', 'UNDER'
     total: str
@@ -122,6 +131,8 @@ class Total(CBSModel):
 
 
 class OddsBook(CBSModel):
+    """bookmaker"""
+
     typename: Literal["EventOddsBook"] = Field(alias="__typename")
     name: str
 
@@ -131,9 +142,11 @@ class OddsMarket(CBSModel):
 
     typename: Literal["EventOddsMarket"] = Field(alias="__typename")
     book_used: OddsBook = Field(alias="bookUsed")
-    money_lines: list[MoneyLine] = Field(default_factory=list, alias="moneyLines")
-    spreads: list[Spread] = Field(default_factory=list)
-    totals: list[Total] = Field(default_factory=list)
+    money_lines: list[MoneyLine] = Field(
+        default_factory=list[MoneyLine], alias="moneyLines"
+    )
+    spreads: list[Spread] = Field(default_factory=list[Spread])
+    totals: list[Total] = Field(default_factory=list[Total])
 
 
 class PoolPeriod(CBSModel):
@@ -143,7 +156,9 @@ class PoolPeriod(CBSModel):
 
     typename: Literal["PoolPeriod"] = Field(alias="__typename")
     id: str
-    pool_events: list[PoolEvent] = Field(default_factory=list, alias="poolEvents")
+    pool_events: Sequence[PoolEvent] = Field(
+        default_factory=list[PoolEvent], alias="poolEvents"
+    )
 
 
 class PoolHomePoolEvent(PoolEvent):
@@ -160,7 +175,9 @@ class PoolHomePoolEvent(PoolEvent):
     winning_team_id: str | None = Field(default=None, alias="winningTeamId")
     extra: EventExtra | None = None
     odds_market: OddsMarket | None = Field(default=None, alias="oddsMarket")
-    tv_networks: list[TvNetwork] = Field(default_factory=list, alias="tvNetworks")
+    tv_networks: list[TvNetwork] = Field(
+        default_factory=list[TvNetwork], alias="tvNetworks"
+    )
 
 
 class PoolHomePoolPeriod(PoolPeriod):
@@ -171,12 +188,14 @@ class PoolHomePoolPeriod(PoolPeriod):
     order: int
     is_playoff: bool = Field(alias="isPlayOff")
     is_current: bool = Field(alias="isCurrent")
-    pool_events: list[PoolHomePoolEvent] = Field(
-        default_factory=list, alias="poolEvents"
+    pool_events: Sequence[PoolHomePoolEvent] = Field(  # pyright: ignore[reportIncompatibleVariableOverride]
+        default_factory=list[PoolHomePoolEvent], alias="poolEvents"
     )
 
 
 class Season(CBSModel):
+    """season model"""
+
     typename: Literal["Season"] = Field(alias="__typename")
     id: str
     year: int
@@ -261,7 +280,9 @@ class FootballPickemWeeklyStandingsEntry(CBSModel):
     period_score: int = Field(alias="periodScore")
     score: int
     trending_score: int = Field(alias="trendingScore")
-    picks: list[FootballPickemWeeklyStandingsPick] = Field(default_factory=list)
+    picks: list[FootballPickemWeeklyStandingsPick] = Field(
+        default_factory=list[FootballPickemWeeklyStandingsPick]
+    )
 
 
 class FootballPickemManagerWeeklyStandings(CBSModel):
@@ -271,7 +292,7 @@ class FootballPickemManagerWeeklyStandings(CBSModel):
         alias="__typename"
     )
     ranked_entries: list[FootballPickemWeeklyStandingsEntry] = Field(
-        default_factory=list, alias="rankedEntries"
+        default_factory=list[FootballPickemWeeklyStandingsEntry], alias="rankedEntries"
     )
 
 
@@ -294,7 +315,7 @@ class FootballPickemManagerPool(CBSModel):
     has_ended: bool = Field(alias="hasEnded")
     pool_period: PoolPeriod = Field(alias="poolPeriod")
     pool_periods: list[PoolPeriodSummary] = Field(
-        default_factory=list, alias="poolPeriods"
+        default_factory=list[PoolPeriodSummary], alias="poolPeriods"
     )
     standings: FootballPickemManagerPoolStandings | None = None
 
@@ -324,4 +345,11 @@ class FootballPickemPoolHome(FootballPickemManagerPool):
     come from the weekly-standings page."""
 
     season: Season
-    pool_period: PoolHomePoolPeriod = Field(alias="poolPeriod")
+    # pyright flags this as an unsafe override since pydantic fields are
+    # mutable/invariant by default - safe here, `pool_period` is never
+    # reassigned after construction (parse-once DTOs), and the narrower type
+    # is load-bearing: api/cbs_client.py reads `.order`, which only exists
+    # on PoolHomePoolPeriod, not the base PoolPeriod.
+    pool_period: PoolHomePoolPeriod = Field(  # pyright: ignore[reportIncompatibleVariableOverride]
+        alias="poolPeriod"
+    )
