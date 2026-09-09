@@ -55,8 +55,8 @@ CREATE TABLE IF NOT EXISTS weeks (
     season_id INT NOT NULL,
     week_number INT NOT NULL,
     name VARCHAR(50), -- "Week 1", "Wild Card", etc.
-    start_date DATE,
-    end_date DATE,
+    start_time DATETIME, -- ISO8601 UTC (e.g. "2026-09-14T17:00:00Z")
+    end_time DATETIME, -- same format, max game_time in the week
     is_complete BOOLEAN DEFAULT FALSE,
     cbs_pool_period_id VARCHAR(50) UNIQUE, -- for mapping weeks in cbs
     FOREIGN KEY (season_id) REFERENCES seasons(season_id),
@@ -70,22 +70,24 @@ CREATE TABLE IF NOT EXISTS games (
     home_team_id INT NOT NULL,
     away_team_id INT NOT NULL,
     stadium_id INT,
-    cbs_event_id INT UNIQUE, -- CBS Sports event ID, for idempotent upserts on re-scrape
-    sports_io_game_id INT UNIQUE, -- Sports IO game ID, for joining stats/odds by game
-    odds_api_event_id VARCHAR(50) UNIQUE, -- The Odds API event ID (string, not int) - matched by team+commence_time on first sighting, then joined on directly
-    game_time DATETIME,
+    cbs_event_id INT UNIQUE, 
+    sports_io_game_id INT UNIQUE, 
+    odds_api_event_id VARCHAR(50) UNIQUE, -- The Odds API event ID (string, not int)
+    game_time DATETIME, -- ISO8601 UTC (e.g. "2026-09-14T17:00:00Z")
     cbs_spread DECIMAL(4,1), -- home team line that cbs uses/once its set it does not change
     home_score INT,
     away_score INT,
-    is_complete BOOLEAN DEFAULT FALSE,
+    status VARCHAR(20), -- normalized common status across CBS/Sports IO: SCHEDULED, IN_PROGRESS, HALFTIME, FINAL, CANCELLED, POSTPONED
+    is_complete BOOLEAN AS (status = 'FINAL'),
     is_international BOOLEAN DEFAULT FALSE,
     tv_network VARCHAR(50),
     gametracker_url VARCHAR(255),
-    status_desc VARCHAR(30), -- 'SCHEDULED', 'IN_PROGRESS', 'HALFTIME', 'FINAL', etc.
+    status_desc VARCHAR(30), -- raw per-source status string, kept for debugging/audit
     FOREIGN KEY (week_id) REFERENCES weeks(week_id),
     FOREIGN KEY (home_team_id) REFERENCES teams(team_id),
     FOREIGN KEY (away_team_id) REFERENCES teams(team_id),
-    FOREIGN KEY (stadium_id) REFERENCES stadiums(stadium_id)
+    FOREIGN KEY (stadium_id) REFERENCES stadiums(stadium_id),
+    UNIQUE (week_id, home_team_id, away_team_id) -- lets CBS/Sports IO upserts match a game seeded by the other source before its own external id is known
 );
 
 -- Periodic in-game snapshots (score/weather)
@@ -204,7 +206,7 @@ CREATE TABLE IF NOT EXISTS odds_snapshots (
     game_id INT NOT NULL,
     source VARCHAR(20) NOT NULL, -- 'cbs', 'the_odds_api', 'sports_io'
     bookmaker VARCHAR(50), -- e.g. 'draftkings' for the_odds_api
-    market VARCHAR(20) NOT NULL, -- 'spread', 'total'
+    market VARCHAR(20) NOT NULL, -- 'spread', 'total', 'moneyline' - home_point/away_point are NULL for moneyline (no line, just a price)
     captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     home_point DECIMAL(4,1), -- for market='total', represents the Over line
     home_price INT, -- American odds

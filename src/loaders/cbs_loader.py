@@ -6,6 +6,7 @@ Usage: uv run python -m src.loaders.cbs_loader [local|prod]
 
 import logging
 import sys
+from datetime import UTC, datetime
 from typing import Any
 
 from api.cbs_client import (
@@ -58,7 +59,7 @@ ON CONFLICT(user_id, week_id) DO UPDATE SET
 
 _UPSERT_GAMES_SQL = """
 INSERT INTO games (week_id, home_team_id, away_team_id, cbs_event_id, game_time, cbs_spread,
-    home_score, away_score, is_complete, tv_network, gametracker_url, status_desc)
+    home_score, away_score, status, tv_network, gametracker_url, status_desc)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(cbs_event_id) DO UPDATE SET
     week_id = excluded.week_id,
@@ -68,12 +69,21 @@ ON CONFLICT(cbs_event_id) DO UPDATE SET
     cbs_spread = excluded.cbs_spread,
     home_score = excluded.home_score,
     away_score = excluded.away_score,
-    is_complete = excluded.is_complete,
+    status = excluded.status,
+    tv_network = excluded.tv_network,
+    gametracker_url = excluded.gametracker_url,
+    status_desc = excluded.status_desc
+ON CONFLICT(week_id, home_team_id, away_team_id) DO UPDATE SET
+    cbs_event_id = excluded.cbs_event_id,
+    game_time = excluded.game_time,
+    cbs_spread = excluded.cbs_spread,
+    home_score = excluded.home_score,
+    away_score = excluded.away_score,
+    status = excluded.status,
     tv_network = excluded.tv_network,
     gametracker_url = excluded.gametracker_url,
     status_desc = excluded.status_desc
 """
-
 _UPDATE_CBS_TEAM_SQL = """
 UPDATE teams SET
     cbs_team_id = ?,
@@ -91,7 +101,42 @@ ON CONFLICT(cbs_pool_period_id) DO UPDATE SET
     season_id = excluded.season_id,
     week_number = excluded.week_number,
     name = excluded.name
+ON CONFLICT(season_id, week_number) DO UPDATE SET
+    name = excluded.name,
+    cbs_pool_period_id = excluded.cbs_pool_period_id
 """
+
+# CBS's game_status_desc vocabulary isn't formally documented - only "FINAL" is
+# confirmed live so far. Unrecognized values pass through
+# uppercased rather than crashing, same as the Sports IO mapper below.
+_CBS_STATUS_MAP = {
+    "SCHEDULED": "SCHEDULED",
+    "IN_PROGRESS": "IN_PROGRESS",
+    "HALFTIME": "HALFTIME",
+    "FINAL": "FINAL",
+    "POSTPONED": "POSTPONED",
+    "CANCELLED": "CANCELLED",
+}
+
+
+def _cbs_status_to_common(status_desc: str) -> str:
+    """Map CBS's game_status_desc onto the common games.status vocabulary."""
+    status_desc = status_desc.upper()
+    status = _CBS_STATUS_MAP.get(status_desc)
+    if status is None:
+        logger.warning(
+            "Unrecognized CBS game status %r - leaving unmapped", status_desc
+        )
+        return status_desc
+    return status
+
+
+def _cbs_starts_at_to_iso(starts_at_millis: int) -> str:
+    """CBS's game.starts_at is epoch millis - convert to an ISO8601 UTC
+    string for a consistent format"""
+    return datetime.fromtimestamp(starts_at_millis / 1000, tz=UTC).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
 
 
 def _sql_batch_call(statements: list[tuple[str, list[Any] | None]]):
@@ -247,12 +292,11 @@ def load_cbs_games(env: str = "local") -> None:
                     home_team_id,
                     away_team_id,
                     game.cbs_event_id,
-                    game.starts_at,
+                    _cbs_starts_at_to_iso(game.starts_at),
                     game.home_team_spread,
                     game.home_team_score,
                     game.away_team_score,
-                    game.game_status_desc
-                    == "FINAL",  # TODO: confirm against a real completed game
+                    _cbs_status_to_common(game.game_status_desc),
                     game.tv_info_name,
                     game.gametracker_link,
                     game.game_status_desc,
