@@ -8,9 +8,22 @@ import logging
 import sys
 from typing import Any
 
-from api.cbs_client import ABBREV_CORRECTIONS, get_cbs_pool_teams, get_cbs_users
-from api.cbs_models import Member
-from config.config import configure_logging, get_d1_config, load_env
+from api.cbs_client import (
+    ABBREV_CORRECTIONS,
+    get_cbs_pool_home,
+    get_cbs_pool_teams,
+    get_cbs_users,
+    get_cbs_weekly,
+)
+from api.cbs_models import (
+    FootballPickemManagerPool,
+    FootballPickemPoolHome,
+    FootballPickemWeeklyStandingsEntry,
+    FootballPickemWeeklyStandingsPick,
+    Member,
+    PoolEvent,
+)
+from config.config import SEASON, configure_logging, get_d1_config, load_env
 from db.d1_client import D1Client, D1Error
 
 logger = logging.getLogger(__name__)
@@ -24,6 +37,42 @@ ON CONFLICT(cbs_id) DO UPDATE SET
     cbs_id = excluded.cbs_id,
     is_active = excluded.is_active
 """
+_UPSERT_USERS_PICK = """
+INSERT INTO user_picks (user_id, game_id, picked_team_id, is_correct, trending_status, cbs_pick_id)
+VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT(user_id, game_id) DO UPDATE SET
+    picked_team_id = excluded.picked_team_id,
+    is_correct = excluded.is_correct,
+    trending_status = excluded.trending_status,
+    cbs_pick_id = excluded.cbs_pick_id
+"""
+_UPSERT_USER_WEEKLY = """
+INSERT INTO weekly_performance (user_id, week_id, has_submitted_picks, picks_made, picks_correct, trending_score)
+VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT(user_id, week_id) DO UPDATE SET
+    has_submitted_picks = excluded.has_submitted_picks,
+    picks_made = excluded.picks_made,
+    picks_correct = excluded.picks_correct,
+    trending_score = excluded.trending_score
+"""
+
+_UPSERT_GAMES_SQL = """
+INSERT INTO games (week_id, home_team_id, away_team_id, cbs_event_id, game_time, cbs_spread,
+    home_score, away_score, is_complete, tv_network, gametracker_url, status_desc)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(cbs_event_id) DO UPDATE SET
+    week_id = excluded.week_id,
+    home_team_id = excluded.home_team_id,
+    away_team_id = excluded.away_team_id,
+    game_time = excluded.game_time,
+    cbs_spread = excluded.cbs_spread,
+    home_score = excluded.home_score,
+    away_score = excluded.away_score,
+    is_complete = excluded.is_complete,
+    tv_network = excluded.tv_network,
+    gametracker_url = excluded.gametracker_url,
+    status_desc = excluded.status_desc
+"""
 
 _UPDATE_CBS_TEAM_SQL = """
 UPDATE teams SET
@@ -33,6 +82,15 @@ UPDATE teams SET
     color_primary_hex = ?,
     color_secondary_hex = ?
 WHERE abbreviation = ?
+"""
+
+_UPSERT_WEEK_SQL = """
+INSERT INTO weeks (season_id, week_number, name, cbs_pool_period_id)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(cbs_pool_period_id) DO UPDATE SET
+    season_id = excluded.season_id,
+    week_number = excluded.week_number,
+    name = excluded.name
 """
 
 
@@ -46,6 +104,7 @@ def _sql_batch_call(statements: list[tuple[str, list[Any] | None]]):
 
 
 def load_cbs_users(env: str = "local") -> None:
+    """load users table from cbs data"""
     if not load_env(env):
         sys.exit(1)
 
@@ -93,20 +152,244 @@ def map_cbs_to_sports_io(env: str = "local"):
     logger.info("Mapped %d CBS teams onto teams table (%s)", len(statements), env)
 
 
-def load_cbs_games():
-    pass
+def load_cbs_weeks(env: str = "local") -> None:
+    """update data from weekly cbs feed"""
+    if not load_env(env):
+        sys.exit(1)
+
+    data = get_cbs_pool_home()
+    if data is None:
+        return
+
+    statements: list[tuple[str, list[Any] | None]] = [
+        (
+            _UPSERT_WEEK_SQL,
+            [SEASON, period.order, period.description, period.id],
+        )
+        for period in data.pool_periods
+    ]
+
+    if not statements:
+        logger.warning("No pool periods to load")
+        return
+
+    _sql_batch_call(statements)
+    logger.info("Upserted %d weeks into D1 (%s)", len(statements), env)
 
 
-def load_cbs_user_picks():
-    pass
+def _cbs_id_map(
+    client: D1Client, table: str, cbs_column: str, pk_column: str
+) -> dict[Any, int]:
+    """cbs external id : internal id for each row in the table"""
+    result = client.query(
+        f"SELECT {pk_column}, {cbs_column} FROM {table} WHERE {cbs_column} IS NOT NULL"
+    )
+    return {row[cbs_column]: row[pk_column] for row in result.results}
+
+
+# TODO: verify this is correct once data is live
+def _pick_status_to_correct(pick_status: str) -> bool | None:
+    """None unless a status is Correct/Incorrect"""
+    if pick_status == "CORRECT":
+        return True
+    if pick_status == "INCORRECT":
+        return False
+    return None
+
+
+def load_cbs_games(env: str = "local") -> None:
+    """run at start of new week"""
+    if not load_env(env):
+        sys.exit(1)
+
+    client = D1Client(**get_d1_config())
+
+    data: FootballPickemPoolHome | None = get_cbs_pool_home()
+    if data is None:
+        return
+
+    if not data.are_games_available:
+        logger.warning("Weekly games aren't available yet")
+        return
+
+    week_ids = _cbs_id_map(client, "weeks", "cbs_pool_period_id", "week_id")
+    team_ids = _cbs_id_map(client, "teams", "cbs_team_id", "team_id")
+
+    pool_period_id = data.pool_period.id
+    week_id = week_ids.get(pool_period_id)
+    if week_id is None:
+        logger.warning(
+            "No weeks row for CBS pool period %r - has this week been seeded?",
+            pool_period_id,
+        )
+        return
+
+    games = data.pool_period.pool_events
+
+    statements: list[tuple[str, list[Any] | None]] = []
+    for game in games:
+        home_team_id = team_ids.get(game.home_team.cbs_team_id)
+        away_team_id = team_ids.get(game.away_team.cbs_team_id)
+        if home_team_id is None or away_team_id is None:
+            logger.warning(
+                "Skipping game %s - no teams row for cbs_team_id=%s/%s yet",
+                game.cbs_event_id,
+                game.home_team.cbs_team_id,
+                game.away_team.cbs_team_id,
+            )
+            continue
+
+        statements.append(
+            (
+                _UPSERT_GAMES_SQL,
+                [
+                    week_id,
+                    home_team_id,
+                    away_team_id,
+                    game.cbs_event_id,
+                    game.starts_at,
+                    game.home_team_spread,
+                    game.home_team_score,
+                    game.away_team_score,
+                    game.game_status_desc
+                    == "FINAL",  # TODO: confirm against a real completed game
+                    game.tv_info_name,
+                    game.gametracker_link,
+                    game.game_status_desc,
+                ],
+            )
+        )
+
+    if statements:
+        _sql_batch_call(statements)
+        logger.info("Upserted %d games into D1 (%s)", len(statements), env)
+
+
+def _add_user_picks(
+    user_id: int,
+    picks: list[FootballPickemWeeklyStandingsPick],
+    game_ids: dict[int, int],
+    team_ids: dict[int, int],
+) -> None:
+    statements: list[tuple[str, list[Any] | None]] = []
+    for pick in picks:
+        assert pick.pick_info is not None  # filtered by the caller
+        game_id = game_ids.get(pick.cbs_slot_id)
+        team_id = team_ids.get(pick.pick_info.cbs_item_id)
+        if game_id is None or team_id is None:
+            logger.warning(
+                "Skipping pick %r - no games/teams row for cbs_slot_id=%s / "
+                "cbs_item_id=%s yet",
+                pick.id,
+                pick.cbs_slot_id,
+                pick.pick_info.cbs_item_id,
+            )
+            continue
+
+        statements.append(
+            (
+                _UPSERT_USERS_PICK,
+                [
+                    user_id,
+                    game_id,
+                    team_id,
+                    _pick_status_to_correct(pick.pick_info.pick_status),
+                    pick.pick_info.trending_status,
+                    pick.id,
+                ],
+            )
+        )
+
+    if statements:
+        _sql_batch_call(statements)
+
+
+def load_cbs_user_picks(env: str = "local") -> None:
+    """load users weekly picks"""
+    if not load_env(env):
+        sys.exit(1)
+
+    client = D1Client(**get_d1_config())
+
+    data: FootballPickemManagerPool = get_cbs_weekly()
+
+    if data.standings is None or data.standings.weekly is None:
+        logger.warning("No standings/picks data available yet")
+        return
+
+    user_ids = _cbs_id_map(client, "users", "cbs_id", "user_id")
+    week_ids = _cbs_id_map(client, "weeks", "cbs_pool_period_id", "week_id")
+    game_ids = _cbs_id_map(client, "games", "cbs_event_id", "game_id")
+    team_ids = _cbs_id_map(client, "teams", "cbs_team_id", "team_id")
+
+    pool_period_id = data.pool_period.id
+    week_id = week_ids.get(pool_period_id)
+    if week_id is None:
+        logger.warning(
+            "No weeks row for CBS pool period %r - has this week been seeded?",
+            pool_period_id,
+        )
+        return
+
+    # eligible games are locked, otherwise don't show a pick for that
+    # would otherwise return my picks because I'm logged in
+    # game events become locked after the start and the pick deadline
+    game_events: list[PoolEvent] = data.pool_period.pool_events
+    locked_game_cbs_ids = [game.cbs_event_id for game in game_events if game.is_locked]
+
+    entries: list[FootballPickemWeeklyStandingsEntry] = (
+        data.standings.weekly.ranked_entries
+    )
+
+    weekly_statements: list[tuple[str, list[Any] | None]] = []
+
+    for entry in entries:
+        member: Member = entry.entry.member
+        user_id = user_ids.get(member.id)
+        if user_id is None:
+            logger.warning(
+                "No users row for CBS member %r (%s) - skipping",
+                member.id,
+                member.name,
+            )
+            continue
+
+        picks: list[FootballPickemWeeklyStandingsPick] = [
+            pick
+            for pick in entry.picks
+            if pick.cbs_slot_id in locked_game_cbs_ids
+            and pick.pick_info
+            and pick.display_status != "LOCKED"
+        ]
+
+        weekly_statements.append(
+            (
+                _UPSERT_USER_WEEKLY,
+                [
+                    user_id,
+                    week_id,
+                    bool(entry.picks),
+                    entry.score,
+                    entry.period_score,
+                    entry.trending_score,
+                ],
+            )
+        )
+
+        if picks:
+            _add_user_picks(user_id, picks, game_ids, team_ids)
+
+    if weekly_statements:
+        _sql_batch_call(weekly_statements)
 
 
 def main(env: str = "local") -> None:
     if not load_env(env):
         sys.exit(1)
 
-    load_cbs_user_picks()
-    load_cbs_games()
+    load_cbs_weeks(env)
+    load_cbs_games(env)
+    load_cbs_user_picks(env)
 
 
 if __name__ == "__main__":

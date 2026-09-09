@@ -166,17 +166,26 @@ class CBSClient:
         self.login()
         return self._read_cbs_source_data(url, True)
 
-    def _fetch_common_pool(self, url: str, required_key: str) -> dict[str, Any]:
+    def _fetch_common_pool(
+        self, url: str, required_key: str, is_retry: bool = False
+    ) -> dict[str, Any]:
         """Fetch `url` and pull out its commonPool payload, or raise."""
         html = self._read_cbs_source_data(url)
         if not html:
             raise CBSDataError(f"No HTML returned for {url}")
 
         data = _extract_common_pool(html, required_key)
-        if not data:
+        if data:
+            return data
+
+        if is_retry:
             raise CBSDataError(f"Could not find {required_key!r} data in {url}")
 
-        return data
+        logger.info(
+            "%r not found in page, falling back to log in and retry...", required_key
+        )
+        self.login()
+        return self._fetch_common_pool(url, required_key, True)
 
     def fetch_weekly_data(self) -> dict[str, Any]:
         """return weekly data (or currently week if no period specified)"""
@@ -272,7 +281,8 @@ def get_cbs_pool_teams(week: int = 0) -> list[Team]:
         raise
 
 
-def get_cbs_pool_home(week: int = 0) -> FootballPickemPoolHome | None:
+# TODO Wire up a weekly mapper (if needed)
+def get_cbs_pool_home() -> FootballPickemPoolHome | None:
     """
     fetch and validate the pool-home page
     call get_cbs_weekly() for standings/picks.
