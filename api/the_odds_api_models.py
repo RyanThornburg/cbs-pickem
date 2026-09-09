@@ -10,9 +10,7 @@ come back as real non-200 HTTP statuses with a small JSON body
 live with a bad API key (401/INVALID_KEY).
 
 `point` is optional on `Outcome` because it's only present for spreads/
-totals markets, not h2h — this client currently only requests
-spreads/totals, so it'll always be populated in practice, but the field
-is genuinely absent for h2h if that ever changes.
+totals markets, not h2h
 """
 
 from pydantic import BaseModel, ConfigDict

@@ -20,7 +20,7 @@ SOURCE = "the_odds_api"
 
 API_URL = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds/"
 REGIONS = "us"
-MARKETS = "spreads,totals"
+MARKETS = "spreads,totals,h2h"
 
 # odds api allows 30 calls/second and only returns month usage
 # setting a threshold to warn when we approach it
@@ -36,7 +36,12 @@ class TheOddsApiClient:
 
     def get_odds(self):
         """pre-game odds (spreads/totals) for every upcoming/live NFL game"""
-        params = {"api_key": self.api_key, "regions": REGIONS, "markets": MARKETS}
+        params = {
+            "api_key": self.api_key,
+            "regions": REGIONS,
+            "markets": MARKETS,
+            "oddsFormat": "american",
+        }
         return self._fetch(params).json()
 
     def _record_quota(self, response: requests.Response) -> None:
