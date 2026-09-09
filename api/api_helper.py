@@ -48,3 +48,17 @@ def fetch_and_validate(
     except Exception:
         logger.exception("Fetch failed for %s", label)
         raise
+
+
+def fetch_and_validate_one(
+    label: str, fetch: Callable[[], dict[str, Any]], model: type[BaseModel]
+) -> Any:
+    """call `fetch`, validate the single returned object against `model`, log, return."""
+    logger.info("Fetching %s", label)
+    try:
+        item = model.model_validate(fetch())
+        logger.info("Parsed %s", label)
+        return item
+    except Exception:
+        logger.exception("Fetch failed for %s", label)
+        raise

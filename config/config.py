@@ -132,6 +132,13 @@ def get_the_odds_api() -> str:
     return os.getenv("THE_ODDS_API_KEY", "")
 
 
+def get_weather_api() -> str:
+    """load the weather api key from config"""
+    if not load_env():
+        raise RuntimeError("Weather API config missing/invalid")
+    return os.getenv("WEATHER_API_KEY", "")
+
+
 def debugging_mode() -> bool:
     """set to debug or not"""
     return os.getenv("DEBUG", "").lower() == "true"
