@@ -23,8 +23,8 @@ Requires Python >=3.14 (pinned via `.python-version`).
 Subsystem-specific conventions live in per-directory `CLAUDE.md` files,
 loaded automatically whenever Claude Code reads/edits files in that
 directory: `api/CLAUDE.md` (CBS scraping, Sports IO, The Odds API),
-`config/CLAUDE.md`, `db/CLAUDE.md`. This root file only holds rules that
-apply across the whole repo.
+`config/CLAUDE.md`, `db/CLAUDE.md`, `src/CLAUDE.md` (loaders, orchestration).
+This root file only holds rules that apply across the whole repo.
 
 ## Paths & Logging
 
