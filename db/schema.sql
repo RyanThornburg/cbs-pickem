@@ -80,8 +80,19 @@ CREATE TABLE IF NOT EXISTS games (
     cbs_spread DECIMAL(4,1), -- home team line that cbs uses/once its set it does not change
     home_score INT,
     away_score INT,
+    home_q1_score INT,
+    home_q2_score INT,
+    home_q3_score INT,
+    home_q4_score INT,
+    home_ot_score INT,
+    away_q1_score INT,
+    away_q2_score INT,
+    away_q3_score INT,
+    away_q4_score INT,
+    away_ot_score INT,
     status VARCHAR(20), -- normalized common status across CBS/Sports IO: SCHEDULED, IN_PROGRESS, HALFTIME, FINAL, CANCELLED, POSTPONED
     is_complete BOOLEAN AS (status = 'FINAL'),
+    has_final_stats BOOLEAN NOT NULL DEFAULT FALSE, -- set once game_team_stats has been reloaded after this game went FINAL (see orchestration._run_finished_game_stats) - not a generated column since it tracks something game_team_stats did, not games itself
     is_international BOOLEAN DEFAULT FALSE,
     tv_network VARCHAR(50),
     gametracker_url VARCHAR(255),

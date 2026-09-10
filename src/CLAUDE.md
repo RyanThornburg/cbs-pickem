@@ -34,7 +34,13 @@ in one atomic call. `main(env="local")` is each loader's CLI entry point
 - `sports_io_loader.py` — `load_games_data(live=False|True)` upserts
   `weeks` (start/end time, `live=False` only — a `live=True` call only
   ever sees currently-live games, so it can't safely compute a whole
-  week's date range) and `games` (score/status always; `stadium_id`/
+  week's date range) and `games` (score/status always, plus a per-quarter
+  score breakdown — `home_q1_score`..`home_q4_score`/`home_ot_score` and
+  the `away_` equivalents, added 2026-09-10 for a scoreboard view. Sports
+  IO's `Game.scores.{home,away}` already carried this
+  (`QuarterScore.quarter_1`..`quarter_4`/`overtime`) but the loader
+  wasn't persisting it. CBS has no equivalent field — this is a Sports
+  IO-only column set, never written by `cbs_loader.py`; `stadium_id`/
   `is_international` resolved by matching Sports IO's `venue.name`
   against `stadiums.name`, with a small `VENUE_NAME_CORRECTIONS` map for
   the 2 confirmed cases where Sports IO's venue name is stale/generic —
@@ -173,5 +179,22 @@ finished-games stats catch-up (`_run_finished_game_stats()`) both run
 unconditionally on every tick, live or quiet — the deadline sweep because
 it needs to fire once regardless of whether a game happens to be live at
 that exact moment, and the stats catch-up because it's a stateless
-`NOT EXISTS` check (any `FINAL` game with no `game_team_stats` row yet)
+per-game flag check (any `FINAL` game with `has_final_stats = FALSE`)
 rather than a time-based gate, so it costs nothing to just always check.
+
+`_run_finished_game_stats()` originally checked `NOT EXISTS (SELECT 1
+FROM game_team_stats WHERE game_id = ...)` instead of a flag — confirmed
+live 2026-09-10 that this never actually caught the live→FINAL
+transition it was meant for: `load_live_game_statistics()` already
+writes `game_team_stats` rows for a game every few minutes while it's
+`IN_PROGRESS`, so by the time the game reaches `FINAL` a row already
+exists and the `NOT EXISTS` check silently never fires — the stats left
+in place are whatever the last live poll happened to capture, not a
+confirmed final box score. Fixed by adding `games.has_final_stats`
+(`BOOLEAN NOT NULL DEFAULT FALSE`, not a generated column since it
+tracks something `game_team_stats` did, not a property of `games`
+itself) — `_run_finished_game_stats()` selects FINAL games where it's
+still `FALSE`, calls `load_game_statistics(week)` (which reloads every
+game in that week, FINAL or not — safe/idempotent either way), then sets
+the flag `TRUE` for that week's FINAL games so the same games aren't
+reloaded on every subsequent tick.

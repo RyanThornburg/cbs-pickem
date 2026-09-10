@@ -6,6 +6,7 @@ Usage: uv run python -m src.loaders.cbs_loader [local|prod]
 
 import logging
 import sys
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -314,15 +315,16 @@ def _add_user_picks(
     gap_statements: list[tuple[str, list[Any] | None]] = []
     for pick in picks:
         assert pick.pick_info is not None  # filtered by the caller
+        cbs_item_id = pick.pick_info.cbs_item_id
         game_id = game_ids.get(pick.cbs_slot_id)
-        team_id = team_ids.get(pick.pick_info.cbs_item_id)
+        team_id = team_ids.get(cbs_item_id) if cbs_item_id is not None else None
         if game_id is None or team_id is None:
             logger.warning(
                 "Skipping pick %r - no games/teams row for cbs_slot_id=%s / "
                 "cbs_item_id=%s yet",
                 pick.id,
                 pick.cbs_slot_id,
-                pick.pick_info.cbs_item_id,
+                cbs_item_id,
             )
             # a null cbs_item_id just means this entry didn't pick this
             # game - not a real mapping gap, see api/CLAUDE.md
@@ -332,11 +334,9 @@ def _add_user_picks(
                         "cbs", "game", pick.cbs_slot_id, "_add_user_picks"
                     )
                 )
-            if team_id is None and pick.pick_info.cbs_item_id is not None:
+            if team_id is None and cbs_item_id is not None:
                 gap_statements.append(
-                    mapping_gap_statement(
-                        "cbs", "team", pick.pick_info.cbs_item_id, "_add_user_picks"
-                    )
+                    mapping_gap_statement("cbs", "team", cbs_item_id, "_add_user_picks")
                 )
             continue
 
@@ -388,7 +388,7 @@ def load_cbs_user_picks(env: str = "local") -> None:
     # eligible games are locked, otherwise don't show a pick for that
     # would otherwise return my picks because I'm logged in
     # game events become locked after the start and the pick deadline
-    game_events: list[PoolEvent] = data.pool_period.pool_events
+    game_events: Sequence[PoolEvent] = data.pool_period.pool_events
     locked_game_cbs_ids = [game.cbs_event_id for game in game_events if game.is_locked]
 
     entries: list[FootballPickemWeeklyStandingsEntry] = (
@@ -442,6 +442,7 @@ def load_cbs_user_picks(env: str = "local") -> None:
 
 
 def main(env: str = "local") -> None:
+    """load data from cbs"""
     if not load_env(env):
         sys.exit(1)
 

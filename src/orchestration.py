@@ -157,17 +157,29 @@ def _run_deadline_sweep(client: D1Client, env: str, now: datetime) -> None:
 
 
 def _run_finished_game_stats(client: D1Client, env: str) -> None:
-    """Games that finished but have no game_team_stats rows yet - catches
-    both the normal live->FINAL transition and anything missed if the
-    process wasn't running at the time."""
+    """Games that went FINAL but haven't had their final box score
+    reloaded yet - catches both the normal live->FINAL transition and
+    anything missed if the process wasn't running at the time. Can't
+    check "does game_team_stats have a row for this game" (an earlier
+    version did, confirmed live 2026-09-10 to never fire) - live polling
+    already writes game_team_stats rows well before a game goes FINAL, so
+    a row always exists by the time this runs. `games.has_final_stats`
+    tracks it explicitly instead."""
     result = client.query(
-        "SELECT DISTINCT w.week_number FROM games g "
+        "SELECT DISTINCT w.week_id, w.week_number FROM games g "
         "JOIN weeks w ON w.week_id = g.week_id "
-        "WHERE g.status = 'FINAL' "
-        "AND NOT EXISTS (SELECT 1 FROM game_team_stats s WHERE s.game_id = g.game_id)"
+        "WHERE g.status = 'FINAL' AND g.has_final_stats = FALSE"
     )
     for row in result.results:
         load_game_statistics(row["week_number"], env)
+        client.batch(
+            [
+                (
+                    "UPDATE games SET has_final_stats = TRUE WHERE week_id = ? AND status = 'FINAL'",
+                    [row["week_id"]],
+                )
+            ]
+        )
 
 
 def run_tick(env: str = "local") -> None:
