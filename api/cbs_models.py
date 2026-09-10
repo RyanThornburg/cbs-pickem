@@ -169,7 +169,9 @@ class PoolHomePoolEvent(PoolEvent):
 
     away_team_id: str = Field(alias="awayTeamId")
     game_status: str = Field(alias="gameStatus")
-    marked_final_at: str | None = Field(default=None, alias="markedFinalAt")
+    marked_final_at: int | None = Field(
+        default=None, alias="markedFinalAt"
+    )  # epoch millis, confirmed live 2026-09-09 once a game actually went final
     season_type: str = Field(alias="seasonType")
     week_number: int = Field(alias="weekNumber")
     winning_team_id: str | None = Field(default=None, alias="winningTeamId")
@@ -247,7 +249,12 @@ class FootballPickemWeeklyStandingsPickInfo(CBSModel):
     typename: Literal["FootballPickemWeeklyStandingsPickInfo"] = Field(
         alias="__typename"
     )
-    cbs_item_id: int = Field(alias="cbsItemId")
+    # confirmed live 2026-09-09: null for a game this entry didn't pick -
+    # the pool only picks 5 of the week's ~16 games, but CBS still returns
+    # a picks[] entry (with pickInfo) for every game per user, not just
+    # their five. Nothing to do with game/lock state - cbs_loader.py's
+    # existing skip-and-warn on a None here is correct, not a gap.
+    cbs_item_id: int | None = Field(default=None, alias="cbsItemId")
     item_id: str = Field(alias="itemId")
     pick_status: str = Field(alias="pickStatus")
     trending_status: str = Field(alias="trendingStatus")
