@@ -27,9 +27,66 @@ so this is easy to get wrong without noticing: two real bugs only
 surfaced the first time schema was re-applied to an already-provisioned
 database (missing `IF NOT EXISTS` on `CREATE INDEX`, and a schema comment
 with a literal `;` inside it — see below). When writing a schema comment,
-double-check it doesn't contain a literal `;` — this has bitten twice now
-(2026-09-08), since `_split_statements()` splits on raw `;` without
-knowing about `--` comments.
+double-check it doesn't contain a literal `;` — this has bitten **repeatedly**
+(2026-09-08 and again multiple times 2026-09-09, always the same failure
+mode: `db.setup`'s `_split_statements()` splits on raw `;` without knowing
+about `--` comments, producing an "incomplete input" error that doesn't
+point at the actual offending line). If `db.setup` fails with that error
+after a schema edit, a stray `;` inside a comment is the first thing to
+check, not a real SQL problem.
+
+## Reconciling the same row from two independent sources
+
+`games` and `weeks` both get written by two different loaders (Sports
+IO and CBS) that don't know about each other's writes and can run in
+either order. A plain `INSERT ... ON CONFLICT(external_id)` isn't enough
+here: if Sports IO creates a `games` row first (no `cbs_event_id` yet),
+CBS's own `ON CONFLICT(cbs_event_id)` won't match it (`NULL != NULL` for
+uniqueness purposes) and would try to insert a second, duplicate row for
+the same real-world game instead of updating the first one.
+
+The fix, used for both tables: give the row a **second natural-key
+`UNIQUE` constraint** that's stable across sources —
+`UNIQUE(week_id, home_team_id, away_team_id)` on `games`,
+`UNIQUE(season_id, week_number)` on `weeks` — and chain a second
+`ON CONFLICT` clause targeting it (SQLite/D1 supports multiple `ON
+CONFLICT` clauses in one `INSERT`, evaluated in order; whichever target
+actually matches fires). Confirmed live: whichever source runs first
+creates the row and leaves the other source's external-id column `NULL`;
+whichever runs second matches via the natural-key conflict target,
+backfills its own external id, and both `game_id`/`week_id` values stay
+stable across both writes — no duplicate row, no lost data either way.
+The same shape applies to `games.espn_event_id` (matched via
+`(home_abbrev, away_abbrev)` at the loader level rather than a DB
+constraint, since ESPN never creates a `games` row itself — it only ever
+backfills onto one that already exists).
+
+## Timestamps are always ISO8601 UTC text
+
+Every `DATETIME` column (`games.game_time`, `weeks.start_time`/
+`end_time`) stores a plain ISO8601 UTC string, e.g.
+`"2026-09-14T17:00:00Z"` — never a raw epoch integer, and never a
+non-UTC offset. This matters because the sources feeding these columns
+disagree on both: CBS's raw timestamp is epoch **milliseconds**, Sports
+IO's is epoch **seconds** — storing either raw would make `game_time`
+values from the two sources silently incomparable (confirmed as a real,
+shipped bug before the fix: `sports_io_loader.py` was writing Sports
+IO's raw epoch-seconds int directly into `game_time` for a while). Each
+loader normalizes at write time (`cbs_loader._cbs_starts_at_to_iso()`,
+`sports_io_loader._epoch_seconds_to_iso()`) so every row is
+apples-to-apples and plain string comparison/sorting works correctly
+regardless of source. If you add a new time-bearing field from a new
+source, convert to this same format before it touches the DB rather than
+storing whatever the source natively gives you.
+
+`weeks.start_time`/`end_time` are themselves *derived* from `game_time`
+(min/max across that week's games) — the reason they need to be full
+UTC timestamps rather than bare `DATE`s (an earlier version of this
+schema used `DATE`) is that a "date" isn't actually a property of an
+instant until you pick a timezone to view it in; a late Sunday/Monday
+night game can cross the UTC day boundary and land on the "wrong" date
+for a US viewer if the timezone conversion is baked in at write time
+instead of left to render time.
 
 `seasons.season_id` is the season's year itself (e.g. `2026`), declared
 `INTEGER PRIMARY KEY` with no `AUTOINCREMENT` — not a surrogate id, since
@@ -57,7 +114,12 @@ the one stored as `cbs_pick_id`.
 `weekly_performance.weekly_score` is a generated column
 (`AS (picks_correct)`) — SQLite computes it automatically and rejects any
 `INSERT`/`UPDATE` that tries to write to it directly; leave it out of
-column lists and `VALUES`/`SET` clauses entirely.
+column lists and `VALUES`/`SET` clauses entirely. `games.is_complete`
+(`AS (status = 'FINAL')`) is the same pattern applied to a derived
+boolean instead of a straight alias — prefer this over having every
+loader independently compute and write `is_complete` itself, since two
+sources doing that independently is exactly how they'd eventually drift
+out of sync with each other.
 
 SQLite's `ALTER TABLE ADD COLUMN` cannot add a `UNIQUE` (or `PRIMARY KEY`)
 constraint to an existing column — trying it fails. When a schema change
@@ -65,6 +127,43 @@ needs a new `UNIQUE` column on a table that already exists in a live D1
 database, `DROP TABLE`+re-run `setup.sh` is the only option (fine for
 local dev tables with no real rows yet; check row counts first via
 `D1Client.query("SELECT COUNT(*) ...")` before dropping anything).
+
+## `mapping_gaps` tracks lookup misses for review
+
+Added 2026-09-09 so unmapped external values (a team/week/stadium/user
+that a loader's `id_map()` lookup couldn't resolve) get surfaced
+somewhere reviewable instead of only ever showing up as a
+`logger.warning()` that scrolls off. `src/loaders/loader_helper.py`'s
+`mapping_gap_statement(source, entity_type, raw_value, context)` returns
+one `(sql, params)` upsert targeting `UNIQUE(source, entity_type,
+raw_value)` — first sighting inserts a row, every later sighting just
+bumps `occurrences`/`last_seen_at`, so a value that misses on every run
+(e.g. Sports IO's `team.id: 0` placeholder for undetermined future
+playoff matchups) accumulates one durable row instead of flooding the
+table.
+
+Called **next to** the existing `logger.warning()` at a lookup-miss site,
+not instead of it — the two serve different audiences (the log is
+for tracing a specific run, the table is for spotting a pattern worth
+fixing). Not every lookup miss belongs here, though: only log a gap when
+the miss is a genuinely *unknown external value* that a correction table
+(`ABBREV_CORRECTIONS`-style) could fix. Skip it when the miss is actually
+expected/transient — e.g. CBS's `pickInfo.cbsItemId: null` just means
+that entry didn't pick that game (see `api/CLAUDE.md`), and a
+`games_by_matchup` miss in `odds_loader.py` just means that game hasn't
+been loaded yet, not that a team name failed to map.
+
+Gap statements always ride in the same batch as the loader's real writes
+(atomic, no extra HTTP round trip) but are tracked in their own list,
+never appended directly into the same list used for a `logger.info("Upserted
+%d ...")` count — mixing them in was a real bug caught during this
+session's own testing (a run that skipped 7 games due to unmapped teams
+briefly reported "Upserted 293 games" instead of 272, because 21 gap rows
+had been counted as if they were games). The pattern every call site
+follows: a dedicated `gap_statements` list, combined with the real
+`statements` list only at the `sql_batch_call(statements + gap_statements,
+client)` call, with the log line's `len(...)` always reading `statements`
+alone.
 
 ## D1Client gotchas (confirmed live, not assumed from docs)
 

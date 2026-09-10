@@ -139,6 +139,55 @@ completed historical week: `"CORRECT"`, `"INCORRECT"`, and `"NONE"`
 (before the game finishes) — `cbs_loader._pick_status_to_correct()`
 maps these to `True`/`False`/`None` for `user_picks.is_correct`.
 
+`pickInfo.cbsItemId` can also be `null` on an otherwise fully-revealed,
+`displayStatus: "VISIBLE"` pick — confirmed live 2026-09-09 during this
+season's actual Week 1 Thursday-night game. **This is not related to the
+game being live/locked** (the tempting wrong theory this session initially
+landed on, before checking): the pool only picks 5 of the week's ~16
+games per user, but CBS still returns a `picks[]` entry (with `pickInfo`)
+for every game per user, not just their five — `cbsItemId: null` simply
+means this entry didn't pick that particular game. Confirmed by comparing
+`cbsItemId` across all 38 entries for the same live game's `cbsSlotId`:
+both populated and `null` values appeared regardless of `entry.isMine` or
+the game's live status, with the split matching exactly which users had
+picked that specific game. `cbs_loader.py`'s existing skip-with-a-warning
+behavior on a `None` here is correct as-is — there's no pick to resolve a
+team for, so nothing further needs building.
+
+### CBS game status vocabulary — mostly guessed, partly confirmed
+
+`game.game_status_desc`/`event.gameStatusDesc` isn't formally documented.
+Confirmed live 2026-09-09 against a real in-progress game: `"SCHEDULED"`
+and `"FINAL"` match what was originally guessed, but the in-progress value
+is **`"INPROGRESS"` (no underscore)** — the original guess `"IN_PROGRESS"`
+never matched, so `cbs_loader._cbs_status_to_common()` was silently
+passing the raw value through unmapped instead of normalizing it (fixed).
+`"HALFTIME"`/`"POSTPONED"`/`"CANCELLED"` are still unconfirmed guesses —
+no live data has hit those states yet. If one of them turns out wrong the
+symptom will be the same: a `"Unrecognized CBS game status"` warning in
+the loader logs, not a crash.
+
+`game.starts_at`/`startsAt` is epoch **milliseconds** — confirmed by its
+field comment in `cbs_models.py` and cross-checked against a real kickoff
+time. Sports IO's `game.date.timestamp` is epoch **seconds**, a different
+unit for the same kind of value — `games.game_time` normalizes both to a
+consistent ISO8601 UTC string (`"2026-09-14T17:00:00Z"`) before storage
+specifically because of this mismatch; see `db/CLAUDE.md` for the stored
+convention. Don't assume any raw timestamp from either source is
+directly comparable to the other without converting first.
+
+`PoolHomePoolEvent.markedFinalAt` was originally modeled as `str | None`
+(guessed) — confirmed live 2026-09-09, the moment this season's first
+game actually went final, that it's really epoch **milliseconds** like
+`startsAt`, not a string; the wrong guess raised a pydantic
+`ValidationError` that fully blocked `get_cbs_pool_home()` (and therefore
+every downstream CBS loader) the instant a real game finished. Fixed to
+`int | None` in `cbs_models.py`. This field isn't consumed by any loader
+yet, so the fix was type-only — a reminder that an unused/never-read
+field can still take the whole pipeline down if its type is wrong,
+since pydantic validates every field on the payload whether or not
+anything reads it afterward.
+
 ## Sports IO & The Odds API Clients
 
 `api/sports_io_client.py` (api-sports.io, NFL stats/odds) and
@@ -210,3 +259,96 @@ CBS section above for the confirmed-false `coverage.standings` example
 'current season' checks fail closed" above — `get_current_season()`
 returns `None` rather than a mismatched season if the API's current year
 disagrees with `config.SEASON`.
+
+No team box-score endpoint anywhere (Sports IO's `games/statistics/teams`,
+ESPN's `boxscore`, or CBS) exposes **punting stats** — checked all three
+directly 2026-09-09, none have a punts/punt-yards/punt-average category.
+The only punt-related data found anywhere is incidental play-by-play text
+on ESPN's heavy `/core/nfl/game` endpoint (e.g. `"M.Dickson punts 42
+yards..."`) when a punt happened to be the most recent play — not a real
+stat, and that endpoint isn't used (see ESPN section below). Don't assume
+this is just an unwired field; there's no clean source for it right now.
+
+## Pirate Weather Client
+
+`api/weather_api.py` (Pirate Weather, a Dark Sky API-compatible service)
+gets current conditions + a 7-day hourly forecast for a lat/lng — used for
+pre-kickoff forecasts and (via `src/loaders/game_snapshots_loader.py`)
+live in-game weather. Follows the same `fetch_and_validate`-style pattern
+as Sports IO/The Odds API, but the single-object response (not a list)
+needed a new `fetch_and_validate_one()` added to `api/api_helper.py`.
+
+The API key is embedded directly in the URL **path** (Dark Sky-style, not
+a header or query param) — every log/error message in `_fetch()`
+deliberately uses the bare `API_URL` constant rather than the actual
+request URL, to avoid leaking the key into logs. Confirmed live that a
+401 error body doesn't echo the URL back either, so `response.text` is
+still safe to include in `ApiDataError` messages.
+
+Confirmed against the real OpenAPI spec (not just Dark Sky lore) two
+request params that silently change what you get if omitted:
+`extend=hourly` (without it, `hourly` is only the next 48h, not the full
+7 days — would silently miss a forecast checked early in the week for a
+Sunday kickoff), and `version=2` (unlocks `snowAccumulation`/
+`iceAccumulation`/`liquidAccumulation` on hourly entries, more directly
+game-relevant than `precipType`/`precipIntensity` alone). `units=us` is
+pinned explicitly rather than relying on an undocumented default.
+
+`alerts` is confirmed to come back as `[]` for a real location/time (no
+active alert existed when built), but its shape (`title`/`severity`/
+`time`/`expires`/`description`/`uri`/`regions`) is confirmed against the
+real OpenAPI spec, not guessed from Dark Sky convention as originally
+assumed — worth a live check once a real alert actually fires, same as
+other "confirmed against real data" caveats in this file.
+
+`snow_accumulation`/`ice_accumulation`/`liquid_accumulation` only ever
+populate on `hourly.data[]` entries, never on `currently` — Pirate
+Weather's `currently` block is a point-in-time reading and accumulation
+is inherently period-based. `game_snapshots_loader.py` only reads
+`currently`, so those three fields are always `None` there; capturing
+them for live snapshots would mean also finding and reading the current
+hour's `hourly` entry, deliberately deferred as added complexity for a
+lower-value field.
+
+## ESPN Client
+
+`api/espn_client.py`/`api/espn_models.py` read ESPN's public NFL
+scoreboard (`site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard`)
+— the **only** source found for live field position (down/distance/yard
+line/possession text/red zone/timeouts). This is a genuinely unofficial,
+undocumented API: no public docs, no terms of service, no SLA. It's been
+stable for years and is widely used by the sports-data community, but
+treat it as a bonus/best-effort source, not a contract — every call site
+that uses it is written to degrade gracefully (log and continue with
+nulls) if it fails, same as CBS pool-home in
+`game_snapshots_loader.py`.
+
+Confirmed live 2026-09-09 by checking a full week's scoreboard:
+`situation` (the field-position data) and `odds` are **mutually
+exclusive** on this endpoint — `situation` appears only once a
+competition's status is genuinely `IN_PROGRESS` (absent on all scheduled
+games), `odds` appears only pre-game and disappears the moment a game
+goes live. Deliberately not modeling `odds` from this endpoint at all —
+The Odds API already covers pre-game odds, and tracking *live* in-game
+odds would require ESPN's much heavier `/core/nfl/game?xhr=1` endpoint
+(400KB+ per game, its `pickcenter` section) instead of this lightweight
+one — scoped out as a deliberate v1 decision, not an oversight.
+
+`ABBREV_CORRECTIONS` (in `espn_client.py`, same pattern as
+`cbs_client.py`'s) maps the 2 confirmed cases where ESPN's team
+abbreviation differs from `teams.abbreviation` (Sports IO's convention):
+`LAR`→`LA` (Rams), `WSH`→`WAS` (Washington) — confirmed live by diffing
+the full 32-team abbreviation sets, same method used for CBS's
+corrections. `game_snapshots_loader.py`'s
+`VENUE_NAME_CORRECTIONS`-equivalent for stadium names lives in
+`sports_io_loader.py` instead (`"Reliant Stadium"`→`"NRG Stadium"`,
+`"FC Bayern Munich Stadium"`→`"Allianz Arena"`) — Sports IO's `venue.name`
+sometimes uses stale or sponsorship-neutral names instead of the venue's
+real/current one; both corrections found by cross-checking real 2026
+schedule data, not guessed.
+
+ESPN events are matched onto `games` by `(home_abbrev, away_abbrev)` on
+first sighting (there's no other shared id up front), then
+`games.espn_event_id` gets backfilled so later runs join directly instead
+of re-matching by name every time — same "match once, then join by id"
+pattern as `odds_loader.py`'s `odds_api_event_id`.
