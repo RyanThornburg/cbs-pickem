@@ -3,8 +3,8 @@
 Usage: uv run python -m src.loaders.season_loader [local|prod]
 
 Run at the start of a new season (or on any refresh) to upsert the season
-Sports IO currently flags as `current` `season_id`. Any other season row's `is_active` is cleared first so at most one
-season is ever active at a time.
+Sports IO currently flags as `current` `season_id`. Any other season row's `is_active`
+is cleared first so at most one season is ever active at a time.
 """
 
 import logging
@@ -13,7 +13,8 @@ from typing import Any
 
 from api.sports_io_client import get_current_season
 from config.config import configure_logging, get_d1_config, load_env
-from db.d1_client import D1Client, D1Error
+from db.d1_client import D1Client
+from src.loaders.loader_helper import sql_batch_call
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ ON CONFLICT(season_id) DO UPDATE SET
 
 
 def main(env: str = "local") -> None:
+    """load current season"""
     if not load_env(env):
         sys.exit(1)
 
@@ -55,11 +57,7 @@ def main(env: str = "local") -> None:
     ]
 
     logger.info("Upserting season %d into D1 (%s)", season.year, env)
-    try:
-        client.batch(statements)
-    except D1Error:
-        logger.exception("Season load failed")
-        sys.exit(1)
+    sql_batch_call(statements, client)
 
     logger.info("Season load complete for %s environment!", env)
 

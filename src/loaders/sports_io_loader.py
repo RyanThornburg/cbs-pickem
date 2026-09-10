@@ -13,7 +13,8 @@ from typing import Any
 from api.sports_io_client import get_games, get_live_games, get_team_statistics
 from api.sports_io_models import Game, TeamStatistics
 from config.config import SEASON, configure_logging, get_d1_config, load_env
-from db.d1_client import D1Client, D1Error
+from db.d1_client import D1Client
+from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
 
 logger = logging.getLogger(__name__)
 
@@ -121,9 +122,7 @@ ON CONFLICT(game_id, team_id) DO UPDATE SET
     time_of_possession_sec = excluded.time_of_possession_sec
 """
 
-# Sports IO's game.venue.name uses stale/former stadium names in at least
-# one confirmed case - maps those onto stadiums_loader.py's current/real
-# name instead of matching games onto a stale name stored in the table.
+# mapper to correct where sports.io using older/outdated names
 VENUE_NAME_CORRECTIONS = {
     "Reliant Stadium": "NRG Stadium",  # Texans' stadium, renamed 2010
     "FC Bayern Munich Stadium": "Allianz Arena",  # Munich, Germany
@@ -186,25 +185,6 @@ def _parse_time_of_possession(value: str) -> int:
     return int(minutes) * 60 + int(seconds)
 
 
-def _sql_batch_call(statements: list[tuple[str, list[Any] | None]]):
-    client = D1Client(**get_d1_config())
-    try:
-        client.batch(statements)
-    except D1Error:
-        logger.exception("Loading data failed")
-        sys.exit(1)
-
-
-def _sports_io_id_map(
-    client: D1Client, table: str, sportsio_column: str, pk_column: str
-) -> dict[Any, int]:
-    """sports io external id : internal id for each row in the table"""
-    result = client.query(
-        f"SELECT {pk_column}, {sportsio_column} FROM {table} WHERE {sportsio_column} IS NOT NULL"
-    )
-    return {row[sportsio_column]: row[pk_column] for row in result.results}
-
-
 # TODO: allow date as a param?
 def load_games_data(env: str = "local", live: bool = False) -> None:
     """load games from sports io"""
@@ -223,47 +203,55 @@ def load_games_data(env: str = "local", live: bool = False) -> None:
             "Skipped %d preseason games", len(games) - len(regular_and_post_games)
         )
 
-    week_info: dict[int, tuple[str, int, int]] = {}
-    for game in regular_and_post_games:
-        week_number = _regular_season_week_number(game.game.week)
-        if week_number is None:
-            continue
-        timestamp = game.game.date.timestamp
-        if week_number not in week_info:
-            week_info[week_number] = (game.game.week, timestamp, timestamp)
-        else:
-            name, min_ts, max_ts = week_info[week_number]
-            week_info[week_number] = (
-                name,
-                min(min_ts, timestamp),
-                max(max_ts, timestamp),
+    # live=True only ever fetches currently-live games,
+    # so it can't correctly compute a week's start/end range
+    # Only the full sync touches weeks.start_time/end_time
+    if not live:
+        week_info: dict[int, tuple[str, int, int]] = {}
+        for game in regular_and_post_games:
+            week_number = _regular_season_week_number(game.game.week)
+            if week_number is None:
+                continue
+            timestamp = game.game.date.timestamp
+            if week_number not in week_info:
+                week_info[week_number] = (game.game.week, timestamp, timestamp)
+            else:
+                name, min_ts, max_ts = week_info[week_number]
+                week_info[week_number] = (
+                    name,
+                    min(min_ts, timestamp),
+                    max(max_ts, timestamp),
+                )
+
+        if week_info:
+            sql_batch_call(
+                [
+                    (
+                        _UPSERT_WEEK_SQL,
+                        [
+                            SEASON,
+                            week_number,
+                            name,
+                            _epoch_seconds_to_iso(min_ts),
+                            _epoch_seconds_to_iso(max_ts),
+                        ],
+                    )
+                    for week_number, (name, min_ts, max_ts) in week_info.items()
+                ],
+                client,
             )
 
-    if week_info:
-        _sql_batch_call(
-            [
-                (
-                    _UPSERT_WEEK_SQL,
-                    [
-                        SEASON,
-                        week_number,
-                        name,
-                        _epoch_seconds_to_iso(min_ts),
-                        _epoch_seconds_to_iso(max_ts),
-                    ],
-                )
-                for week_number, (name, min_ts, max_ts) in week_info.items()
-            ]
-        )
-
-    team_ids = _sports_io_id_map(client, "teams", "sports_io_team_id", "team_id")
-    week_ids = _sports_io_id_map(client, "weeks", "name", "week_id")
+    team_ids = id_map(client, "teams", "sports_io_team_id", "team_id")
+    week_ids = id_map(client, "weeks", "name", "week_id")
     stadiums = {
         row["name"]: (row["stadium_id"], row["country"] != "USA")
-        for row in client.query("SELECT stadium_id, name, country FROM stadiums").results
+        for row in client.query(
+            "SELECT stadium_id, name, country FROM stadiums"
+        ).results
     }
 
     statements: list[tuple[str, list[Any] | None]] = []
+    gap_statements: list[tuple[str, list[Any] | None]] = []
     for game in regular_and_post_games:
         week_id = week_ids.get(game.game.week)
         home_team_id = team_ids.get(game.teams.home.id)
@@ -276,12 +264,28 @@ def load_games_data(env: str = "local", live: bool = False) -> None:
                 game.teams.home.id,
                 game.teams.away.id,
             )
+            if week_id is None:
+                gap_statements.append(
+                    mapping_gap_statement(
+                        "sports_io", "week", game.game.week, "load_games_data"
+                    )
+                )
+            if home_team_id is None:
+                gap_statements.append(
+                    mapping_gap_statement(
+                        "sports_io", "team", game.teams.home.id, "load_games_data"
+                    )
+                )
+            if away_team_id is None:
+                gap_statements.append(
+                    mapping_gap_statement(
+                        "sports_io", "team", game.teams.away.id, "load_games_data"
+                    )
+                )
             continue
 
-        # venue is None for undetermined future playoff matchups; a venue
-        # name not in `stadiums` (e.g. a new international site next
-        # season) just leaves stadium_id unset rather than skipping the
-        # game - stadium_id is nullable, unlike week/team.
+        # venue is None for undetermined
+        # just leaves stadium_id unset rather than skipping the game
         stadium_id, is_international = (None, False)
         venue_name = game.game.venue.name if game.game.venue else None
         if venue_name is not None:
@@ -292,6 +296,11 @@ def load_games_data(env: str = "local", live: bool = False) -> None:
                     "No stadiums row for venue %r (game %s) - leaving stadium_id unset",
                     venue_name,
                     game.game.id,
+                )
+                gap_statements.append(
+                    mapping_gap_statement(
+                        "sports_io", "stadium", venue_name, "load_games_data"
+                    )
                 )
             else:
                 stadium_id, is_international = match
@@ -316,8 +325,10 @@ def load_games_data(env: str = "local", live: bool = False) -> None:
         )
 
     if statements:
-        _sql_batch_call(statements)
+        sql_batch_call(statements + gap_statements, client)
         logger.info("Upserted %d games into D1 (%s)", len(statements), env)
+    elif gap_statements:
+        sql_batch_call(gap_statements, client)
 
 
 def _fetch_week_game_id_map(week_id: int, client: D1Client) -> dict[int, int]:
@@ -343,7 +354,9 @@ def _game_team_stats_statement(
     passing_completions, passing_attempts = _parse_made_attempted(
         stats.passing.comp_att, sep="/"
     )
-    sacks_given_up, sack_yards_lost = _parse_made_attempted(stats.passing.sacks_yards_lost)
+    sacks_given_up, sack_yards_lost = _parse_made_attempted(
+        stats.passing.sacks_yards_lost
+    )
     redzone_made, redzone_attempts = _parse_made_attempted(stats.red_zone.made_att)
     penalties, penalty_yards = _parse_made_attempted(stats.penalties.total)
 
@@ -391,14 +404,67 @@ def _game_team_stats_statement(
     )
 
 
+def _game_ids_by_status(client: D1Client, statuses: tuple[str, ...]) -> dict[int, int]:
+    """sports_io_game_id : internal game_id, for games currently in one of `statuses`"""
+    placeholders = ",".join("?" for _ in statuses)
+    result = client.query(
+        f"SELECT game_id, sports_io_game_id FROM games "
+        f"WHERE status IN ({placeholders}) AND sports_io_game_id IS NOT NULL",
+        list(statuses),
+    )
+    return {row["sports_io_game_id"]: row["game_id"] for row in result.results}
+
+
+def _load_stats_for_game_ids(
+    game_ids: dict[int, int], client: D1Client, env: str, label: str
+) -> None:
+    """game_ids: sports_io_game_id -> internal game_id. `label` is just for
+    log messages (e.g. "week 3", "live")."""
+    team_ids = id_map(client, "teams", "sports_io_team_id", "team_id")
+
+    statements: list[tuple[str, list[Any] | None]] = []
+    gap_statements: list[tuple[str, list[Any] | None]] = []
+    for sports_io_game_id, game_id in game_ids.items():
+        for team_stats in get_team_statistics(sports_io_game_id):
+            team_id = team_ids.get(team_stats.team.id)
+            if team_id is None:
+                logger.warning(
+                    "Skipping stats for sports_io team %s in game %s - no teams row yet",
+                    team_stats.team.id,
+                    sports_io_game_id,
+                )
+                gap_statements.append(
+                    mapping_gap_statement(
+                        "sports_io",
+                        "team",
+                        team_stats.team.id,
+                        "_load_stats_for_game_ids",
+                    )
+                )
+                continue
+
+            statements.append(_game_team_stats_statement(game_id, team_id, team_stats))
+
+    if not statements:
+        logger.warning("No game stats to load (%s)", label)
+        if gap_statements:
+            sql_batch_call(gap_statements, client)
+        return
+
+    sql_batch_call(statements + gap_statements, client)
+    logger.info(
+        "Upserted %d game_team_stats rows (%s, %s)", len(statements), label, env
+    )
+
+
 def load_game_statistics(week: int, env: str = "local") -> None:
-    """load per-team box score stats for every game in a week"""
+    """load per-team box score stats for every game in a week - meant for
+    the end-of-week/game-finished capture, not live polling (see
+    load_live_game_statistics for that)."""
     if not load_env(env):
         sys.exit(1)
 
     client = D1Client(**get_d1_config())
-
-    team_ids = _sports_io_id_map(client, "teams", "sports_io_team_id", "team_id")
 
     week_row = client.query(
         "SELECT week_id FROM weeks WHERE season_id = ? AND week_number = ?",
@@ -414,28 +480,23 @@ def load_game_statistics(week: int, env: str = "local") -> None:
         logger.warning("No games with a sports_io_game_id for week %s yet", week)
         return
 
-    statements: list[tuple[str, list[Any] | None]] = []
-    for sports_io_game_id, game_id in game_ids.items():
-        for team_stats in get_team_statistics(sports_io_game_id):
-            team_id = team_ids.get(team_stats.team.id)
-            if team_id is None:
-                logger.warning(
-                    "Skipping stats for sports_io team %s in game %s - no teams row yet",
-                    team_stats.team.id,
-                    sports_io_game_id,
-                )
-                continue
+    _load_stats_for_game_ids(game_ids, client, env, f"week {week}")
 
-            statements.append(_game_team_stats_statement(game_id, team_id, team_stats))
 
-    if not statements:
-        logger.warning("No game stats to load for week %s", week)
+def load_live_game_statistics(env: str = "local") -> None:
+    """load per-team box score stats for every currently-live game - Sports
+    IO's stats endpoint returns real partial stats mid-game (confirmed live
+    2026-09-09), not just final box scores."""
+    if not load_env(env):
+        sys.exit(1)
+
+    client = D1Client(**get_d1_config())
+    game_ids = _game_ids_by_status(client, ("IN_PROGRESS", "HALFTIME"))
+    if not game_ids:
+        logger.info("No live games to load stats for")
         return
 
-    _sql_batch_call(statements)
-    logger.info(
-        "Upserted %d game_team_stats rows for week %s (%s)", len(statements), week, env
-    )
+    _load_stats_for_game_ids(game_ids, client, env, "live")
 
 
 def main(env: str = "local") -> None:

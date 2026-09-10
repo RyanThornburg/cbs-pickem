@@ -25,7 +25,8 @@ from api.cbs_models import (
     PoolEvent,
 )
 from config.config import SEASON, configure_logging, get_d1_config, load_env
-from db.d1_client import D1Client, D1Error
+from db.d1_client import D1Client
+from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
 
 logger = logging.getLogger(__name__)
 
@@ -106,12 +107,9 @@ ON CONFLICT(season_id, week_number) DO UPDATE SET
     cbs_pool_period_id = excluded.cbs_pool_period_id
 """
 
-# CBS's game_status_desc vocabulary isn't formally documented - only "FINAL" is
-# confirmed live so far. Unrecognized values pass through
-# uppercased rather than crashing, same as the Sports IO mapper below.
 _CBS_STATUS_MAP = {
     "SCHEDULED": "SCHEDULED",
-    "IN_PROGRESS": "IN_PROGRESS",
+    "INPROGRESS": "IN_PROGRESS",
     "HALFTIME": "HALFTIME",
     "FINAL": "FINAL",
     "POSTPONED": "POSTPONED",
@@ -139,15 +137,6 @@ def _cbs_starts_at_to_iso(starts_at_millis: int) -> str:
     )
 
 
-def _sql_batch_call(statements: list[tuple[str, list[Any] | None]]):
-    client = D1Client(**get_d1_config())
-    try:
-        client.batch(statements)
-    except D1Error:
-        logger.exception("Loading data failed")
-        sys.exit(1)
-
-
 def load_cbs_users(env: str = "local") -> None:
     """load users table from cbs data"""
     if not load_env(env):
@@ -162,7 +151,7 @@ def load_cbs_users(env: str = "local") -> None:
     if not statements:
         logger.warning("No Users to load")
         return
-    _sql_batch_call(statements)
+    sql_batch_call(statements)
 
 
 def map_cbs_to_sports_io(env: str = "local"):
@@ -193,7 +182,7 @@ def map_cbs_to_sports_io(env: str = "local"):
         logger.warning("No CBS teams to map")
         return
 
-    _sql_batch_call(statements)
+    sql_batch_call(statements)
     logger.info("Mapped %d CBS teams onto teams table (%s)", len(statements), env)
 
 
@@ -218,18 +207,8 @@ def load_cbs_weeks(env: str = "local") -> None:
         logger.warning("No pool periods to load")
         return
 
-    _sql_batch_call(statements)
+    sql_batch_call(statements)
     logger.info("Upserted %d weeks into D1 (%s)", len(statements), env)
-
-
-def _cbs_id_map(
-    client: D1Client, table: str, cbs_column: str, pk_column: str
-) -> dict[Any, int]:
-    """cbs external id : internal id for each row in the table"""
-    result = client.query(
-        f"SELECT {pk_column}, {cbs_column} FROM {table} WHERE {cbs_column} IS NOT NULL"
-    )
-    return {row[cbs_column]: row[pk_column] for row in result.results}
 
 
 # TODO: verify this is correct once data is live
@@ -257,8 +236,8 @@ def load_cbs_games(env: str = "local") -> None:
         logger.warning("Weekly games aren't available yet")
         return
 
-    week_ids = _cbs_id_map(client, "weeks", "cbs_pool_period_id", "week_id")
-    team_ids = _cbs_id_map(client, "teams", "cbs_team_id", "team_id")
+    week_ids = id_map(client, "weeks", "cbs_pool_period_id", "week_id")
+    team_ids = id_map(client, "teams", "cbs_team_id", "team_id")
 
     pool_period_id = data.pool_period.id
     week_id = week_ids.get(pool_period_id)
@@ -272,6 +251,7 @@ def load_cbs_games(env: str = "local") -> None:
     games = data.pool_period.pool_events
 
     statements: list[tuple[str, list[Any] | None]] = []
+    gap_statements: list[tuple[str, list[Any] | None]] = []
     for game in games:
         home_team_id = team_ids.get(game.home_team.cbs_team_id)
         away_team_id = team_ids.get(game.away_team.cbs_team_id)
@@ -282,6 +262,18 @@ def load_cbs_games(env: str = "local") -> None:
                 game.home_team.cbs_team_id,
                 game.away_team.cbs_team_id,
             )
+            if home_team_id is None:
+                gap_statements.append(
+                    mapping_gap_statement(
+                        "cbs", "team", game.home_team.cbs_team_id, "load_cbs_games"
+                    )
+                )
+            if away_team_id is None:
+                gap_statements.append(
+                    mapping_gap_statement(
+                        "cbs", "team", game.away_team.cbs_team_id, "load_cbs_games"
+                    )
+                )
             continue
 
         statements.append(
@@ -305,8 +297,10 @@ def load_cbs_games(env: str = "local") -> None:
         )
 
     if statements:
-        _sql_batch_call(statements)
+        sql_batch_call(statements + gap_statements, client)
         logger.info("Upserted %d games into D1 (%s)", len(statements), env)
+    elif gap_statements:
+        sql_batch_call(gap_statements, client)
 
 
 def _add_user_picks(
@@ -314,8 +308,10 @@ def _add_user_picks(
     picks: list[FootballPickemWeeklyStandingsPick],
     game_ids: dict[int, int],
     team_ids: dict[int, int],
+    client: D1Client,
 ) -> None:
     statements: list[tuple[str, list[Any] | None]] = []
+    gap_statements: list[tuple[str, list[Any] | None]] = []
     for pick in picks:
         assert pick.pick_info is not None  # filtered by the caller
         game_id = game_ids.get(pick.cbs_slot_id)
@@ -328,6 +324,20 @@ def _add_user_picks(
                 pick.cbs_slot_id,
                 pick.pick_info.cbs_item_id,
             )
+            # a null cbs_item_id just means this entry didn't pick this
+            # game - not a real mapping gap, see api/CLAUDE.md
+            if game_id is None:
+                gap_statements.append(
+                    mapping_gap_statement(
+                        "cbs", "game", pick.cbs_slot_id, "_add_user_picks"
+                    )
+                )
+            if team_id is None and pick.pick_info.cbs_item_id is not None:
+                gap_statements.append(
+                    mapping_gap_statement(
+                        "cbs", "team", pick.pick_info.cbs_item_id, "_add_user_picks"
+                    )
+                )
             continue
 
         statements.append(
@@ -344,8 +354,8 @@ def _add_user_picks(
             )
         )
 
-    if statements:
-        _sql_batch_call(statements)
+    if statements or gap_statements:
+        sql_batch_call(statements + gap_statements, client)
 
 
 def load_cbs_user_picks(env: str = "local") -> None:
@@ -361,10 +371,10 @@ def load_cbs_user_picks(env: str = "local") -> None:
         logger.warning("No standings/picks data available yet")
         return
 
-    user_ids = _cbs_id_map(client, "users", "cbs_id", "user_id")
-    week_ids = _cbs_id_map(client, "weeks", "cbs_pool_period_id", "week_id")
-    game_ids = _cbs_id_map(client, "games", "cbs_event_id", "game_id")
-    team_ids = _cbs_id_map(client, "teams", "cbs_team_id", "team_id")
+    user_ids = id_map(client, "users", "cbs_id", "user_id")
+    week_ids = id_map(client, "weeks", "cbs_pool_period_id", "week_id")
+    game_ids = id_map(client, "games", "cbs_event_id", "game_id")
+    team_ids = id_map(client, "teams", "cbs_team_id", "team_id")
 
     pool_period_id = data.pool_period.id
     week_id = week_ids.get(pool_period_id)
@@ -386,6 +396,7 @@ def load_cbs_user_picks(env: str = "local") -> None:
     )
 
     weekly_statements: list[tuple[str, list[Any] | None]] = []
+    gap_statements: list[tuple[str, list[Any] | None]] = []
 
     for entry in entries:
         member: Member = entry.entry.member
@@ -395,6 +406,9 @@ def load_cbs_user_picks(env: str = "local") -> None:
                 "No users row for CBS member %r (%s) - skipping",
                 member.id,
                 member.name,
+            )
+            gap_statements.append(
+                mapping_gap_statement("cbs", "user", member.id, "load_cbs_user_picks")
             )
             continue
 
@@ -421,10 +435,10 @@ def load_cbs_user_picks(env: str = "local") -> None:
         )
 
         if picks:
-            _add_user_picks(user_id, picks, game_ids, team_ids)
+            _add_user_picks(user_id, picks, game_ids, team_ids, client)
 
-    if weekly_statements:
-        _sql_batch_call(weekly_statements)
+    if weekly_statements or gap_statements:
+        sql_batch_call(weekly_statements + gap_statements, client)
 
 
 def main(env: str = "local") -> None:

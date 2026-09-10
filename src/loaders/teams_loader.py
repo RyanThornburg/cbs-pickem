@@ -16,7 +16,8 @@ from typing import Any
 from api.sports_io_client import get_standings, get_teams
 from api.sports_io_models import Standing
 from config.config import SEASON, configure_logging, get_d1_config, load_env
-from db.d1_client import D1Client, D1Error
+from db.d1_client import D1Client
+from src.loaders.loader_helper import sql_batch_call
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ def _conference_division_by_team_id(
 
 
 def main(env: str = "local") -> None:
+    """load team data"""
     if not load_env(env):
         sys.exit(1)
 
@@ -84,11 +86,7 @@ def main(env: str = "local") -> None:
         return
 
     logger.info("Upserting %d teams into D1 (%s)", len(statements), env)
-    try:
-        client.batch(statements)
-    except D1Error:
-        logger.exception("Teams load failed")
-        sys.exit(1)
+    sql_batch_call(statements, client)
 
     logger.info("Teams load complete for %s environment!", env)
 

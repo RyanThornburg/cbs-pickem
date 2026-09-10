@@ -1,25 +1,17 @@
-"""Seed NFL stadiums - static reference data, not fetched from any API.
-
- EXCEPT three teams where that data was
-confirmed stale (Rams/Chargers still showed their pre-2020, pre-SoFi
-venues; Bills showed a stadium literally named "(Old)" for a team that
-opened a new stadium for the 2026 season) - those three, plus every
-latitude/longitude (no source above provides coordinates at all), are
-this session's best-effort estimate and are flagged NEEDS_REVIEW below for
-a human to confirm rather than presented as equally reliable.
+"""
+Claude created dataset
+Seed NFL stadiums - static reference data, not fetched from any API.
 """
 
 import logging
 import sys
 from typing import Any
 
-from config.config import configure_logging, get_d1_config, load_env
-from db.d1_client import D1Client, D1Error
+from config.config import configure_logging, load_env
+from src.loaders.loader_helper import sql_batch_call
 
 logger = logging.getLogger(__name__)
 
-# name must match Sports IO's game.venue.name exactly - that's the join key
-# sports_io_loader.py uses to resolve games.stadium_id.
 STADIUMS: list[dict[str, Any]] = [
     {
         "name": "Levi's Stadium",
@@ -324,12 +316,6 @@ STADIUMS: list[dict[str, Any]] = [
     },
 ]
 
-# Confirmed against the real 2026 season schedule (Sports IO /games,
-# checked live 2026-09-09) - these are the only non-U.S. venues actually on
-# this season's slate. city/country/lat-lon are this session's general
-# knowledge (well-known landmark stadiums), not confirmed against a
-# dedicated source - worth a spot-check same as the domestic NEEDS_REVIEW
-# entries above.
 INTERNATIONAL_VENUES: list[dict[str, Any]] = [
     {
         "name": "Estadio Banorte",
@@ -430,15 +416,6 @@ ON CONFLICT(name) DO UPDATE SET
 """
 
 
-def _sql_batch_call(statements: list[tuple[str, list[Any] | None]]):
-    client = D1Client(**get_d1_config())
-    try:
-        client.batch(statements)
-    except D1Error:
-        logger.exception("Loading data failed")
-        sys.exit(1)
-
-
 def load_stadiums(env: str = "local") -> None:
     """seed/update the static stadiums list"""
     if not load_env(env):
@@ -460,7 +437,7 @@ def load_stadiums(env: str = "local") -> None:
         )
         for s in STADIUMS + INTERNATIONAL_VENUES
     ]
-    _sql_batch_call(statements)
+    sql_batch_call(statements)
     logger.info("Upserted %d stadiums into D1 (%s)", len(statements), env)
 
 

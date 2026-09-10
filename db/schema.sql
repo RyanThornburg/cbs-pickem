@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS games (
     cbs_event_id INT UNIQUE, 
     sports_io_game_id INT UNIQUE, 
     odds_api_event_id VARCHAR(50) UNIQUE, -- The Odds API event ID (string, not int)
+    espn_event_id VARCHAR(50) UNIQUE, -- ESPN's event id (string) - matched by team abbreviation on first sighting, then joined on directly
     game_time DATETIME, -- ISO8601 UTC (e.g. "2026-09-14T17:00:00Z")
     cbs_spread DECIMAL(4,1), -- home team line that cbs uses/once its set it does not change
     home_score INT,
@@ -98,15 +99,29 @@ CREATE TABLE IF NOT EXISTS game_snapshots (
     game_id INT NOT NULL,
     captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     quarter INT, -- 1-4, 5=OT
+    time_remaining VARCHAR(10), -- "MM:SS" left in the quarter, from CBS
     status_desc VARCHAR(30), -- CBS raw status at time of capture
     possession VARCHAR(10), -- 'HOME', 'AWAY'
     home_score INT,
     away_score INT,
+    down INT, -- from ESPN - null between plays (e.g. halftime)
+    distance INT,
+    yard_line INT,
+    down_distance_text VARCHAR(30), -- e.g. '1st & 10 at SEA 18'
+    possession_text VARCHAR(20), -- e.g. 'SEA 18'
+    is_red_zone BOOLEAN DEFAULT FALSE,
+    home_timeouts INT,
+    away_timeouts INT,
     temperature_f INT,
-    weather_condition VARCHAR(50), -- 'Clear', 'Rain', 'Snow', etc.
+    feels_like_f INT,
+    weather_condition VARCHAR(50), -- Pirate Weather's summary text, e.g. 'Overcast', 'Possible Drizzle', 'Fog'
+    precip_type VARCHAR(20), -- 'rain', 'snow', 'sleet', 'none'
     wind_speed_mph INT,
+    wind_gust_mph INT,
     wind_direction VARCHAR(10),
     precipitation_pct INT,
+    visibility_mi DECIMAL(4,1),
+    weather_alert VARCHAR(255), -- active alert title(s) at capture time, e.g. 'Winter Storm Warning' - NULL if none
     FOREIGN KEY (game_id) REFERENCES games(game_id)
 );
 
@@ -278,6 +293,23 @@ AFTER UPDATE ON orchestration_state
 BEGIN
     UPDATE orchestration_state SET updated_at = CURRENT_TIMESTAMP WHERE key = OLD.key;
 END;
+
+-- Tracks lookup misses in the loaders (a mapper couldn't resolve a raw
+-- external value to an internal id) so unmapped values can be reviewed
+-- and turned into a correction table entry instead of silently skipping
+-- rows forever. Written next to the existing logger.warning() at each
+-- lookup-miss site, not instead of it.
+CREATE TABLE IF NOT EXISTS mapping_gaps (
+    mapping_gap_id INTEGER PRIMARY KEY,
+    source VARCHAR(20) NOT NULL,
+    entity_type VARCHAR(20) NOT NULL,
+    raw_value VARCHAR(255),
+    context VARCHAR(255),
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    occurrences INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(source, entity_type, raw_value)
+);
 
 -- Simple indexes for performance
 CREATE INDEX IF NOT EXISTS idx_games_week ON games(week_id);
