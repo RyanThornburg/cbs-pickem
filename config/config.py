@@ -20,6 +20,7 @@ SCHEMA_PATH: Path = PROJECT_ROOT / "db/schema.sql"
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 LOG_DIR = PROJECT_ROOT / "logs"
 LOG_FILE = LOG_DIR / "log.log"
+ERROR_LOG_FILE = LOG_DIR / "error.log"
 LOG_FILES_TO_KEEP = 5
 LOG_MAX_BYTES = 1_000_000
 
@@ -59,10 +60,17 @@ def configure_logging(level: int = logging.INFO):
         filename=LOG_FILE, backupCount=LOG_FILES_TO_KEEP - 1, maxBytes=LOG_MAX_BYTES
     )
 
+    error_handler = logging.handlers.RotatingFileHandler(
+        filename=ERROR_LOG_FILE,
+        backupCount=LOG_FILES_TO_KEEP - 1,
+        maxBytes=LOG_MAX_BYTES,
+    )
+    error_handler.setLevel(logging.ERROR)
+
     logging.basicConfig(
         level=level,
         format=LOG_FORMAT,
-        handlers=[logging.StreamHandler(), rotate_handler],
+        handlers=[logging.StreamHandler(), rotate_handler, error_handler],
         force=True,
     )
 
