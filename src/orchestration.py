@@ -98,19 +98,18 @@ def _is_live_window_active(client: D1Client) -> bool:
     return bool(result.results)
 
 
-def _run_live_updates(client: D1Client, env: str, now: datetime) -> None:
+def _run_live_updates(client: D1Client, env: str) -> None:
     if _should_run(
         client, "sports_io_live_last_poll_at", SPORTS_IO_LIVE_INTERVAL_SECONDS
     ):
         load_games_data(env, live=True)
         _set_state(client, "sports_io_live_last_poll_at", _now_iso())
 
-    # need to poll for picks after the deadline or early week games
-    # live polling only happens prior to deadline for seeding the data
-    # data from sports io/espn fills in the majority of the live game data
-    if now < _current_week_deadline_utc(now) and _should_run(
-        client, "cbs_live_last_poll_at", CBS_LIVE_INTERVAL_SECONDS
-    ):
+    # Runs for the whole live window, not just pre-deadline - most games kick
+    # off at/after the Sunday 1PM ET deadline, and that's also when CBS
+    # reveals every entry's picks (not just early-game ones), so this is when
+    # the bulk of live pick-grading actually happens via trending status
+    if _should_run(client, "cbs_live_last_poll_at", CBS_LIVE_INTERVAL_SECONDS):
         load_cbs_user_picks(env)
         _set_state(client, "cbs_live_last_poll_at", _now_iso())
 
@@ -190,7 +189,7 @@ def run_tick(env: str = "local") -> None:
     now = datetime.now(UTC)
 
     if _is_live_window_active(client):
-        _run_live_updates(client, env, now)
+        _run_live_updates(client, env)
     else:
         _run_quiet_period_tasks(client, env)
 
