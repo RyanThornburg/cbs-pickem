@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS weeks (
     end_time DATETIME, -- same format, max game_time in the week
     is_complete BOOLEAN DEFAULT FALSE,
     cbs_pool_period_id VARCHAR(50) UNIQUE, -- for mapping weeks in cbs
+    is_current BOOLEAN DEFAULT FALSE, 
     FOREIGN KEY (season_id) REFERENCES seasons(season_id),
     UNIQUE (season_id, week_number)
 );

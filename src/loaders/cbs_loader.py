@@ -97,15 +97,17 @@ WHERE abbreviation = ?
 """
 
 _UPSERT_WEEK_SQL = """
-INSERT INTO weeks (season_id, week_number, name, cbs_pool_period_id)
-VALUES (?, ?, ?, ?)
+INSERT INTO weeks (season_id, week_number, name, cbs_pool_period_id, is_current)
+VALUES (?, ?, ?, ?, ?)
 ON CONFLICT(cbs_pool_period_id) DO UPDATE SET
     season_id = excluded.season_id,
     week_number = excluded.week_number,
-    name = excluded.name
+    name = excluded.name,
+    is_current = excluded.is_current
 ON CONFLICT(season_id, week_number) DO UPDATE SET
     name = excluded.name,
-    cbs_pool_period_id = excluded.cbs_pool_period_id
+    cbs_pool_period_id = excluded.cbs_pool_period_id,
+    is_current = excluded.is_current
 """
 
 _CBS_STATUS_MAP = {
@@ -199,7 +201,7 @@ def load_cbs_weeks(env: str = "local") -> None:
     statements: list[tuple[str, list[Any] | None]] = [
         (
             _UPSERT_WEEK_SQL,
-            [SEASON, period.order, period.description, period.id],
+            [SEASON, period.order, period.description, period.id, period.is_current],
         )
         for period in data.pool_periods
     ]
