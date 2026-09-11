@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 
 SEASON = 2026
 
+# used for second half standings
+# current pool has 3 standings, 1st half, 2nd half and overall
+SECOND_HALF_START_WEEK = 10
+
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data" / str(SEASON)
 STATE_PATH: Path = PROJECT_ROOT / "secrets/state.json"
@@ -89,10 +93,12 @@ def load_env(env: str = "local") -> bool:
     # validate required fields
     required_vars = [
         "CF_ACCOUNT_ID",
-        "CF_API_TOKEN",
+        "CF_D1_TOKEN",
         "CF_D1_DATABASE_ID",
         "CBS_USER",
         "CBS_PASS",
+        "CF_KV_NAMESPACE_ID",
+        "CF_KV_TOKEN",
     ]
     missing_vars = [var for var in required_vars if not os.getenv(var)]
 
@@ -110,7 +116,16 @@ def get_d1_config() -> dict[str, str]:
     return {
         "account_id": os.getenv("CF_ACCOUNT_ID", ""),
         "database_id": os.getenv("CF_D1_DATABASE_ID", ""),
-        "api_token": os.getenv("CF_API_TOKEN", ""),
+        "api_token": os.getenv("CF_D1_TOKEN", ""),
+    }
+
+
+def get_kv_config() -> dict[str, str]:
+    "return cloudflare kv config"
+    return {
+        "account_id": os.getenv("CF_ACCOUNT_ID", ""),
+        "kv_namespace_id": os.getenv("CF_KV_NAMESPACE_ID", ""),
+        "api_token": os.getenv("CF_KV_TOKEN", ""),
     }
 
 

@@ -10,3 +10,4 @@ test_data.json
 
 config/.env.local
 config/.env.prod
+.wrangler/

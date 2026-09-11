@@ -13,6 +13,11 @@ from zoneinfo import ZoneInfo
 
 from config.config import configure_logging, get_d1_config, load_env
 from db.d1_client import D1Client
+from src.kv_writer import (
+    write_current_week_games,
+    write_current_week_leaderboard,
+    write_meta_current,
+)
 from src.loaders.cbs_loader import load_cbs_games, load_cbs_user_picks, load_cbs_weeks
 from src.loaders.game_snapshots_loader import load_game_snapshots
 from src.loaders.odds_loader import load_the_odds_api_odds
@@ -111,6 +116,7 @@ def _run_live_updates(client: D1Client, env: str) -> None:
     # the bulk of live pick-grading actually happens via trending status
     if _should_run(client, "cbs_live_last_poll_at", CBS_LIVE_INTERVAL_SECONDS):
         load_cbs_user_picks(env)
+        write_current_week_leaderboard(env)
         _set_state(client, "cbs_live_last_poll_at", _now_iso())
 
     if _should_run(
@@ -125,6 +131,9 @@ def _run_live_updates(client: D1Client, env: str) -> None:
         load_live_game_statistics(env)
         _set_state(client, "live_game_stats_last_capture_at", _now_iso())
 
+    # always update current week games
+    write_current_week_games(env)
+
 
 def _run_quiet_period_tasks(client: D1Client, env: str) -> None:
     if _should_run(client, "odds_last_call_at", ODDS_INTERVAL_SECONDS):
@@ -135,6 +144,8 @@ def _run_quiet_period_tasks(client: D1Client, env: str) -> None:
         load_games_data(env)  # full schedule/weeks refresh - idempotent, safe any day
         load_cbs_weeks(env)
         load_cbs_games(env)
+        write_meta_current(env)
+        write_current_week_games(env)
         _set_state(client, "housekeeping_last_run_at", _now_iso())
     else:
         logger.info("Not running, too soon")
@@ -151,6 +162,9 @@ def _run_deadline_sweep(client: D1Client, env: str, now: datetime) -> None:
     load_cbs_weeks(env)
     load_cbs_games(env)
     load_cbs_user_picks(env)
+    write_meta_current(env)
+    write_current_week_games(env)
+    write_current_week_leaderboard(env)
     _set_state(client, "deadline_last_synced_sunday", sunday_date)
     logger.info("Ran Sunday 1PM ET deadline sweep for %s", sunday_date)
 
