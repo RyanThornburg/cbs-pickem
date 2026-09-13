@@ -5,6 +5,7 @@ Usage: uv run python -m src.loaders.odds_loader [local|prod]
 
 import logging
 import sys
+from datetime import UTC, datetime
 from typing import Any
 
 from api.the_odds_api_client import get_odds
@@ -153,7 +154,13 @@ def load_the_odds_api_odds(env: str = "local") -> None:
     gap_statements: list[tuple[str, list[Any] | None]] = []
     snapshot_statements: list[tuple[str, list[Any] | None]] = []
 
+    now_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     for event in events:
+        if event.commence_time <= now_iso:
+            # skip games that start so odds_snapshots only ever holds pre-kickoff lines.
+            continue
+
         game_id = _resolve_game_id(
             event,
             odds_event_ids,
