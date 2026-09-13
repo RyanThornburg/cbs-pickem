@@ -72,6 +72,24 @@ in one atomic call. `main(env="local")` is each loader's CLI entry point
   everything else still gets captured) rather than aborting the whole
   snapshot.
 
+`load_games_data(env, live=True)` fetches via
+`_get_live_window_games()`, not `get_live_games()` — confirmed live
+2026-09-11 that Sports IO's `live=all` filter (`get_live_games()`) stops
+returning a game the instant it goes `FINAL`, so a poller that only ever
+calls it can observe "still in progress" but can *never* observe the
+transition to final; the game just silently vanishes from the response,
+leaving `games.status` stuck at a stale `IN_PROGRESS` until the next
+24h housekeeping full sync catches it (which also delayed
+`_run_finished_game_stats()`'s catch-up, since that's gated on
+`status = 'FINAL'`). `_get_live_window_games()` instead calls
+`api.sports_io_client.get_games_by_date()` for both today's and
+yesterday's UTC dates (yesterday too, so a game that kicked off just
+before UTC midnight and is still within its live window isn't missed
+because its own date field is "yesterday") — that endpoint returns every
+game on the date regardless of status, so `FINAL` is visible the moment
+Sports IO reports it. See `api/CLAUDE.md`'s Sports IO section for the
+endpoint-level detail.
+
 `src/loaders/loader_helper.py` is the write-side counterpart to
 `api/api_helper.py`'s shared read-side plumbing — every loader in this
 directory uses it rather than defining its own copy (consolidated
@@ -141,23 +159,32 @@ Cadences, and why each one is what it is:
 
 - **Sports IO, 1 min, live only** — score/status. The fastest thing
   polled, and the only thing that needs to be.
-- **CBS picks, 2 min, live and only before that week's Sunday deadline** —
-  after the deadline everything's already visible via the deadline sweep,
-  so a live CBS poll has nothing left to do. Confirmed live 2026-09-09
-  that this needed a real DST-aware date calculation
+- **CBS picks, 2 min, the entire live window** — originally gated to
+  "only before that week's Sunday deadline" (everything's visible via the
+  deadline sweep after that, so a live poll seemed to have nothing left
+  to do), but that guard was wrong: most games kick off *at or after* the
+  deadline, and that's also when CBS reveals every entry's picks (not
+  just early-game ones) — so the majority of live pick-grading
+  (`is_correct`/`trending_status`/`trending_score`) was never actually
+  being polled. Fixed 2026-09-10 by dropping the deadline check entirely;
+  `_is_live_window_active()` alone now bounds the cost, same as every
+  other live-only branch. Confirmed live 2026-09-09 that the deadline
+  calc itself needed to be DST-aware
   (`_current_week_deadline_utc()`, using `zoneinfo`): a first version
   computed "the most recent Sunday" instead of "the upcoming Sunday" for
   Tuesday–Saturday, silently preventing the CBS branch from ever firing
   for the entire first half of a week. Pick'em weeks run Tue–Mon, so
   "this week's deadline" is the *upcoming* Sunday for Tue–Sat, today for
-  Sunday itself, and yesterday for Monday.
-- **`game_snapshots`/live `game_team_stats`, 10 min, live only** — score
+  Sunday itself, and yesterday for Monday. The deadline calc itself is
+  still used by `_run_deadline_sweep()` below, just no longer gates this.
+- **`game_snapshots`/live `game_team_stats`, 3 min, live only** — score
   moves every play, but weather/box-score stats don't need finer
   granularity than that, and `game_snapshots_loader.py` has its own
   additional dedup on top (skips a row entirely if the game clock hasn't
   moved since the last capture).
-- **Odds, 6 hr baseline, quiet periods only** — a flat interval, no
-  game-day boost yet (see the TODO in `CLAUDE.local.md`).
+- **Odds, 6 hr baseline, quiet periods only** — a flat interval, plus a
+  separate always-on pre-kickoff capture (see
+  `_run_pre_kickoff_odds_capture()` below) for the game-day boost.
 - **Housekeeping, 24 hr, quiet periods only** — full Sports IO schedule
   refresh + `load_cbs_weeks()`/`load_cbs_games()`. The CBS half of this
   exists specifically so `cbs_event_id`/`cbs_spread` are established for
@@ -174,13 +201,49 @@ things on `games` (`cbs_event_id`, the FK picks resolve through, and
 `cbs_spread`, the actual line the pool grades against) and both now get
 established once/day by housekeeping instead.
 
-The Sunday-deadline sweep (`_run_deadline_sweep()`) and the
-finished-games stats catch-up (`_run_finished_game_stats()`) both run
-unconditionally on every tick, live or quiet — the deadline sweep because
-it needs to fire once regardless of whether a game happens to be live at
-that exact moment, and the stats catch-up because it's a stateless
-per-game flag check (any `FINAL` game with `has_final_stats = FALSE`)
-rather than a time-based gate, so it costs nothing to just always check.
+The pre-kickoff odds capture (`_run_pre_kickoff_odds_capture()`), the
+Sunday-deadline sweep (`_run_deadline_sweep()`), and the finished-games
+stats catch-up (`_run_finished_game_stats()`) all run unconditionally on
+every tick, live or quiet — the deadline sweep because it needs to fire
+once regardless of whether a game happens to be live at that exact
+moment, the stats catch-up because it's a stateless per-game flag check
+(any `FINAL` game with `has_final_stats = FALSE`) rather than a
+time-based gate, and the pre-kickoff odds capture because an already-live
+early game (e.g. an early Sunday game running long) would otherwise
+suppress it for an approaching later kickoff if it were nested inside the
+quiet-only branch.
+
+`_run_pre_kickoff_odds_capture()` (added 2026-09-11) is keyed off actual
+`games.game_time` values, not hardcoded days/times - same reasoning as
+`_is_live_window_active()`, since kickoff slots shift (byes,
+international games, Thanksgiving). It fires once whenever any
+not-yet-final game's kickoff is within `ODDS_PREKICKOFF_LEAD_MINUTES`
+(30), gated by `ODDS_PREKICKOFF_MIN_GAP_SECONDS` (2 hr) rather than
+per-slot state - that gap is what collapses a same-window doubleheader
+(Sunday's 4:05/4:25 ET games) into one call instead of firing separately
+for each distinct `game_time`, while still firing separately for TNF,
+each distinct Sunday window, and MNF since those are hours apart. Adds
+roughly 5 calls/week on top of the flat baseline - well within The Odds
+API's 500/month allowance (see `CLAUDE.local.md`).
+
+Both odds call sites (the flat baseline in `_run_quiet_period_tasks()`
+and the pre-kickoff capture above) go through a shared `_capture_odds()`
+helper, added 2026-09-11, that wraps `load_the_odds_api_odds()`/
+`write_current_week_odds()` in a `try/except Exception:
+logger.exception(...)` - odds are enrichment, not load-bearing, same
+category as weather (see `game_snapshots_loader.py`'s ESPN/Pirate Weather
+try/excepts in the Loaders section above), so a missing/invalid
+`THE_ODDS_API_KEY` or an API outage must never block the deadline sweep,
+finished-stats catch-up, or games KV write that run later in the same
+tick. `logger.exception` is ERROR level, so it already lands in
+`ERROR_LOG_FILE` (root `CLAUDE.md`'s "Paths & Logging") with no extra
+plumbing - a real admin-page alert is still future work (see
+`CLAUDE.local.md`'s TODO list), but the failure is at least captured
+reviewably today, same "surface it somewhere, don't let it scroll by"
+motivation as `mapping_gaps` (`db/CLAUDE.md`). The state key is updated
+whether the capture succeeded or failed, specifically so a persistent
+failure (e.g. a missing key) logs once per interval instead of retrying -
+and failing - on every single minute-cron tick until it's fixed.
 
 `_run_finished_game_stats()` originally checked `NOT EXISTS (SELECT 1
 FROM game_team_stats WHERE game_id = ...)` instead of a flag — confirmed
@@ -198,3 +261,145 @@ still `FALSE`, calls `load_game_statistics(week)` (which reloads every
 game in that week, FINAL or not — safe/idempotent either way), then sets
 the flag `TRUE` for that week's FINAL games so the same games aren't
 reloaded on every subsequent tick.
+
+`write_current_week_games(env)` (see "KV writer" below) runs
+unconditionally at the end of `run_tick()`, live or quiet — same
+category of fix as `has_final_stats` above, found the same way. A tick
+that observes a game go live→FINAL correctly stops treating it as live
+and takes the quiet branch, but `write_current_week_games()` used to
+only run unconditionally *inside* the live branch; the games KV key
+would then show a stale `IN_PROGRESS`/`live` block for up to 24h (the
+next housekeeping run) after a game actually ended. Fixed 2026-09-11 by
+moving the call out of `_run_live_updates()` to the bottom of
+`run_tick()`, alongside `_run_deadline_sweep()`/`_run_finished_game_stats()` —
+cheap regardless (a few small `SELECT`s + one KV write), so no reason to
+gate it.
+
+`write_admin_status(env)` (see "KV writer" below, `meta:admin`) runs
+unconditionally right after `write_current_week_games()` for the same
+reason — cheap local reads, and an admin health check is most useful
+exactly when something just failed, not up to 24h stale.
+
+## KV writer
+
+`src/kv_writer.py` computes derived JSON blobs from D1 and writes them to
+Cloudflare KV for `cbs-pickem-web`'s Worker to read — D1 stays the system
+of record, KV is a serving cache (see root `CLAUDE.md`'s Commands list
+and `CLAUDE.local.md`'s "Web UI" section for the overall architecture
+decision). Five keys, each with a `write_*`/`write_current_week_*` pair
+(the latter resolves `weeks.is_current` via `_resolve_current_week()`
+then delegates):
+
+- `write_meta_current()` → `meta:current` — `current_week` from
+  `weeks.is_current`, plus `second_half_start_week` and `paid_places`
+  (both config, see below) so the UI never hardcodes pool rules.
+- `write_week_games()` → `week:{season}:{weekNN}:games` — schedule +
+  picks (naturally empty pre-lock, `user_picks` only ever has
+  locked/revealed rows) + a `live` block (down/distance/possession/
+  weather from `game_snapshots`) present only while `games.status` is
+  `IN_PROGRESS`/`HALFTIME` — a missing `live` key means no live data, not
+  zeros.
+- `write_week_leaderboard()` → `week:{season}:{weekNN}:leaderboard` —
+  cumulative/first-half/second-half scores and tie-aware `place`
+  (`_standard_rank()`, standard competition ranking: ties share a place,
+  the next place skips) computed here rather than by the web app.
+  **No custom live-grading** — `is_correct`/`trending_status`/
+  `trending_score` are CBS's own fields, passed through as-is; deriving
+  provisional correctness from live scores was explicitly rejected during
+  the original KV-contract design discussion (2026-09-10, not written down
+  anywhere in-repo — the design doc was a Claude Artifact, not a file
+  here). The actual
+  computation lives in `compute_week_leaderboard(d1, week_number)`, split
+  out from the write function specifically so `season_close_out.py` can
+  reuse the identical math for a season's final standings — see below.
+  Each user also gets `in_money_overall`/`in_money_first_half`/
+  `in_money_second_half` booleans against the configured payout counts,
+  plus `seasons_played` (added 2026-09-11, `_prior_seasons_by_user()`)
+  computed from `historical_standings` rather than stored on `users` -
+  deliberately not a persisted column since it's a pure derivation with no
+  ongoing-maintenance win from storing it (see reasoning below). Every
+  `historical_standings` row is a *closed* season, so a leaderboard
+  entry's own count is that plus 1 for the current season itself (safe
+  here specifically because every `user_id` on a week's leaderboard is by
+  definition a confirmed current-season participant). No separate
+  `is_rookie` flag - redundant with `seasons_played == 1`. Any future
+  per-user key should reuse `_prior_seasons_by_user()` the same way,
+  adding its own +1 only where the caller can make the same guarantee.
+- `write_week_odds()` → `week:{season}:{weekNN}:odds` — per game,
+  `cbs_spread` (what the pool is graded against) alongside an
+  opening/closing consensus spread. "Consensus" is the **mode**, not a
+  mean — confirmed this is what was wanted (the value the most books
+  agree on, e.g. "6 of 9 at -3", not a blended number that might not
+  match any real line), ties broken by the median of the tied values.
+  Restricted to `_ODDS_BOOKMAKERS` (draftkings/fanduel/betmgm/betrivers/
+  bovada) — The Odds API also returns several offshore/enthusiast books
+  (betus/lowvig/betonlineag/mybookieag) that update fast but aren't names
+  worth citing in the UI. Each book's own earliest/latest
+  `odds_snapshots` row stands in for "opening"/"closing" (matching the
+  table's own MIN/MAX-over-`captured_at` design, see `db/CLAUDE.md`).
+- `write_historical()` → `meta:historical` — see `db/CLAUDE.md`'s
+  `historical_standings` section for what feeds this.
+- `write_admin_status()` → `meta:admin` (added 2026-09-11) — a health-check
+  summary for an eventual admin page: when each `orchestration.py` task
+  last ran (from `orchestration_state`) plus recent `mapping_gaps`/
+  `system_events` rows to review. Staleness is only flagged for odds
+  (combining its two cursors - the flat baseline and the pre-kickoff
+  capture, since either one running recently means odds data is fresh)
+  and housekeeping, using thresholds deliberately looser than
+  `orchestration.py`'s own intervals (`_ODDS_STALE_SECONDS`/
+  `_HOUSEKEEPING_STALE_SECONDS`, not imported from there to avoid a
+  circular import - `orchestration.py` already imports from this module).
+  The four live-only pollers (Sports IO/CBS live polls, `game_snapshots`,
+  live `game_team_stats`) just report their raw last-run timestamp with
+  no stale flag - "should this have run" for those depends on live-window
+  history, which isn't worth the complexity for a first pass; most of the
+  time they simply won't have run recently because nothing's live, and
+  that's correct, not a problem. Unlike every other `write_*` function
+  here, this one isn't called after a specific D1 write - it's called
+  unconditionally at the end of `run_tick()`, same as
+  `write_current_week_games()`, since it's a handful of cheap local
+  `SELECT`s and freshness matters most exactly when something just broke.
+
+**Write-through, not polling or diffing**: every write function is
+called immediately after the specific D1 write that could have changed
+its underlying data (see `orchestration.py`'s call sites), not on its own
+timer and not after checking whether anything actually changed. This was
+a deliberate design choice over both alternatives — a timer decouples the
+write from the actual change (stale between ticks or wasted no-op writes
+when nothing changed), and diffing adds a read-before-write for no
+correctness benefit since these writes are already cheap and idempotent.
+`write_current_week_games()` is the one exception (unconditional every
+tick, not tied to one specific loader) precisely because *several*
+different loaders can change what it shows — see above.
+
+`config.OVERALL_PAID_PLACES`/`FIRST_HALF_PAID_PLACES`/
+`SECOND_HALF_PAID_PLACES` (added 2026-09-11, `_PAID_PLACES` in
+`kv_writer.py`) are hand-set pool-admin rules, same convention as
+`SECOND_HALF_START_WEEK` — currently 5/3/3, matching what the pool
+actually pays out. Change these, not the leaderboard math, if the pool's
+payout structure ever changes.
+
+## Season close-out
+
+`src/season_close_out.py` is the manual, once-a-year counterpart to
+`src/new_season.py` — see root `CLAUDE.md`'s "End of season" section for
+the full runbook. It always operates on `config.SEASON` (never a season
+passed as an argument) because `compute_week_leaderboard()`, which it
+reuses for the closing math, is itself hardcoded to `config.SEASON` —
+accepting a different season id here would silently mislabel that
+season's real data. Resolves the season's final week via
+`MAX(week_number) FROM weeks`, computes that week's leaderboard, and
+upserts one `historical_standings` row per user from
+`entry["place"]`/`entry["cumulative_score"]`/`entry["first_half_place"]`/
+`entry["first_half_score"]`/`entry["second_half_place"]`/
+`entry["second_half_score"]`, then calls `write_historical()` to refresh
+KV.
+
+**Never run this before the season's real final week has been played** —
+confirmed live 2026-09-10 that doing so produces a wrong result
+silently: `compute_week_leaderboard()`'s only guard is "does any
+`weekly_performance` row exist through this week," which is true the
+moment week 1 has data, so calling it with, say, week 18 as the "final"
+week while only week 1 has actually happened would compute cumulative
+scores as if week 1 were the whole season and write that as the
+season's official close-out.

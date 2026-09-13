@@ -165,6 +165,22 @@ follows: a dedicated `gap_statements` list, combined with the real
 client)` call, with the log line's `len(...)` always reading `statements`
 alone.
 
+## `system_events` tracks real failures for review
+
+Added 2026-09-11, same shape/intent as `mapping_gaps` above but for actual
+exceptions (e.g. a failed odds capture) rather than lookup misses -
+`UNIQUE(source, message)` so a persistent failure accumulates one durable
+row (`occurrences`/`last_seen_at` bumped) instead of flooding the table.
+Written next to the existing `logger.exception()` at each catch site, not
+instead of it - the log has the full traceback for debugging, this table
+is the queryable "is anything broken" summary `src/kv_writer.py`'s
+`meta:admin` key surfaces (see `src/CLAUDE.md`'s KV writer section).
+First (only, as of this writing) call site: `orchestration.py`'s
+`_capture_odds()`, via a small `_record_system_event()` helper kept local
+to that module rather than added to `loader_helper.py` - orchestration is
+a different layer than the loaders that module serves, and there's only
+one call site so far to justify a shared abstraction.
+
 ## D1Client gotchas (confirmed live, not assumed from docs)
 
 `db/d1_client.py`'s `batch()` POSTs a single JSON object shaped
@@ -186,3 +202,75 @@ schema, not just whichever one first triggers it — always pass real
 Python `bool`s into `D1Client.batch()`/`.query()` params and let
 `_bind_params()` handle the conversion, rather than pre-converting to
 `0`/`1` at each call site.
+
+D1 supports `INSERT ... RETURNING` — confirmed live 2026-09-10
+(`src/historical_backfill.py`'s new-user insert uses it to get the fresh
+`user_id` back in the same round trip rather than a follow-up `SELECT`).
+
+## `weeks.is_current` / `seasons.historical_data_incomplete`
+
+`weeks.is_current` (added 2026-09-10) mirrors CBS's own
+`poolPeriod.isCurrent` flag — `cbs_loader.load_cbs_weeks()` writes it for
+every period on every run (CBS reports `false` for all but one, so no
+separate "clear the old current week" step is needed). This is what
+`kv_writer._resolve_current_week()` reads to answer "which week is live
+right now" instead of guessing from `game_time`.
+
+`load_cbs_weeks()` also corrects `seasons.name` from CBS's real pool name
+(e.g. `"MorLocked 10.0"`) every time it runs — `season_loader.py`
+(Sports IO-sourced) has no way to know this and defaults to a generic
+`"{year} Season"`, which is wrong for anything downstream that expects
+the branded name (`historical_standings.pool_name`, `meta:historical`).
+
+`seasons.historical_data_incomplete` flags a season whose *archived*
+standings are known to be missing entries — not a property of the season
+itself. Confirmed for 2015 and 2016: the saved CBS export for those years
+has no rank-1 entry at all (2016 is also missing rank-2), meaning
+whoever actually won isn't recoverable from what was saved. Don't assume
+a low `best captured rank is N > 1` in a query means those users somehow
+tied for the top — it means the winner's row is simply absent.
+
+## `historical_standings` / `historical_user_mapping`
+
+Added 2026-09-10 for a historical winners/standings page, backfilled once
+from `data/{year}/{year}_standings.json` (2013-2025) via
+`src/historical_backfill.py` (see `src/CLAUDE.md` and root `CLAUDE.md`'s
+"End of season" section for how this gets extended going forward).
+Deliberately a separate table from `user_stats` rather than backfilled
+into it — `user_stats`'s other columns (streaks, home/away splits) are
+`NOT NULL DEFAULT 0` and need real per-pick data this archive doesn't
+have; storing a false `0` there for "we don't know" would be worse than
+not having the column at all.
+
+`historical_standings.first_half_rank`/`first_half_score`/
+`second_half_rank`/`second_half_score` are nullable for the same reason,
+one level more specific: almost none of the archive has the per-week
+`periodScores` breakdown needed to derive a half-season split at all
+(only 2024/2025 saved it, and even then nothing parses it automatically,
+see below). Confirmed live 2026-09-11 that **`data/2024/2024_standings.json`
+and the original `data/2025/2025_standings.json` were byte-for-byte
+duplicates** (same pool id, same entries) - a real data-collection bug in
+the archive itself, not a code bug. The user resupplied the real 2025
+data by hand; re-ran the backfill after clearing the wrong season-2025
+rows first (`ON CONFLICT` upserts alone weren't enough, since some users
+in the wrong data don't appear in the real data at all and would've been
+left as stale rows). Worth a similar spot-check (compare pool ids /
+top entries across adjacent years) if any other archived year is ever
+suspected of being wrong - the other 12 files were diffed and are each
+distinct, so this looks isolated to 2025, but wasn't independently
+verified beyond the pool-id comparison.
+
+2024's own first/second-half splits were **not** backfilled automatically
+even though its `periodScores` data could technically support deriving
+them (mapping each `poolPeriodId` to a week number, then summing on
+either side of `config.SECOND_HALF_START_WEEK`) - deliberately deferred
+as real extra scope for one year of benefit; only 2025's halves are
+filled in, entered by hand from the user's own records. Come back to this
+if 2024's half-season winners are ever wanted.
+
+`historical_user_mapping` is the audit trail for how each archived CBS
+entry got matched onto a `users.user_id` - name matching is
+case-insensitive (confirmed live: "Bill Morlok" in the 2015 archive vs.
+`users.name = "bill morlok"` resolved to the same person automatically),
+and a name with no match at all gets a brand-new `is_active = FALSE`
+user row, logged as a warning for review rather than silently guessed.

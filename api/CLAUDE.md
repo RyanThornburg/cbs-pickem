@@ -269,6 +269,19 @@ yards..."`) when a punt happened to be the most recent play — not a real
 stat, and that endpoint isn't used (see ESPN section below). Don't assume
 this is just an unwired field; there's no clean source for it right now.
 
+`get_live_games()` (`/games?live=all`) **cannot ever report a game going
+FINAL** — confirmed live 2026-09-11: Sports IO's `live=all` filter is
+server-side and simply stops returning a game the instant its status
+leaves the live states, so a poller that only ever calls this endpoint
+sees "still in progress" right up until the game vanishes from the
+response, with no intermediate "now FINAL" sighting. `get_games_by_date(date)`
+(`/games?date=YYYY-MM-DD`) was added for this reason — it returns every
+game on that date regardless of status, so it's what
+`sports_io_loader.py`'s live poll now uses instead (see `src/CLAUDE.md`'s
+Orchestration section). `get_live_games()` itself is unused by any loader
+now but kept since it's still a legitimate way to ask "what's live right
+now" if a future use case wants exactly that.
+
 ## Pirate Weather Client
 
 `api/weather_api.py` (Pirate Weather, a Dark Sky API-compatible service)
