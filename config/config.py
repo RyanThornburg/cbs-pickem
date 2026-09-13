@@ -10,10 +10,15 @@ from dotenv import load_dotenv
 logger = logging.getLogger(__name__)
 
 SEASON = 2026
-
+ENV = "local"
 # used for second half standings
 # current pool has 3 standings, 1st half, 2nd half and overall
 SECOND_HALF_START_WEEK = 10
+
+# How many places get paid per standings category
+OVERALL_PAID_PLACES = 5
+FIRST_HALF_PAID_PLACES = 3
+SECOND_HALF_PAID_PLACES = 3
 
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data" / str(SEASON)
@@ -99,6 +104,7 @@ def load_env(env: str = "local") -> bool:
         "CBS_PASS",
         "CF_KV_NAMESPACE_ID",
         "CF_KV_TOKEN",
+        "SPORTS_IO_API_KEY",
     ]
     missing_vars = [var for var in required_vars if not os.getenv(var)]
 
@@ -131,7 +137,7 @@ def get_kv_config() -> dict[str, str]:
 
 def get_cbs_config() -> CBSConfig:
     """Returns CBS Sports login credentials and pool id"""
-    if not load_env():
+    if not load_env(ENV):
         raise RuntimeError("CBS config missing/invalid")
 
     return CBSConfig(
@@ -143,21 +149,21 @@ def get_cbs_config() -> CBSConfig:
 
 def get_sports_io_api() -> str:
     """load sports io api from config"""
-    if not load_env():
+    if not load_env(ENV):
         raise RuntimeError("Sports IO API config missing/invalid")
     return os.getenv("SPORTS_IO_API_KEY", "")
 
 
 def get_the_odds_api() -> str:
     """load the odds api key from config"""
-    if not load_env():
+    if not load_env(ENV):
         raise RuntimeError("The Odds API config missing/invalid")
     return os.getenv("THE_ODDS_API_KEY", "")
 
 
 def get_weather_api() -> str:
     """load the weather api key from config"""
-    if not load_env():
+    if not load_env(ENV):
         raise RuntimeError("Weather API config missing/invalid")
     return os.getenv("WEATHER_API_KEY", "")
 
