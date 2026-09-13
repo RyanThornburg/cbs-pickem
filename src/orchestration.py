@@ -14,9 +14,13 @@ from zoneinfo import ZoneInfo
 from config.config import configure_logging, get_d1_config, load_env
 from db.d1_client import D1Client
 from src.kv_writer import (
+    write_admin_status,
     write_current_week_games,
     write_current_week_leaderboard,
+    write_current_week_odds,
+    write_current_week_trends,
     write_meta_current,
+    write_season_trends,
 )
 from src.loaders.cbs_loader import load_cbs_games, load_cbs_user_picks, load_cbs_weeks
 from src.loaders.game_snapshots_loader import load_game_snapshots
@@ -41,15 +45,30 @@ CBS_LIVE_INTERVAL_SECONDS = 120
 GAME_SNAPSHOT_INTERVAL_SECONDS = (
     3 * 60
 )  # score/quarter/weather don't need finer granularity
-ODDS_INTERVAL_SECONDS = (
-    6 * 60 * 60
-)  # 4x/day baseline - no game-day boost yet, see CLAUDE.md
+ODDS_INTERVAL_SECONDS = 6 * 60 * 60  # 4x/day baseline, all days
+# Extra capture right before each distinct kickoff cluster (TNF, Sunday windows, MNF)
+ODDS_PREKICKOFF_LEAD_MINUTES = 30
+ODDS_PREKICKOFF_MIN_GAP_SECONDS = 2 * 60 * 60  # cover the 4pm window gap
 HOUSEKEEPING_INTERVAL_SECONDS = 24 * 60 * 60
 
 _UPSERT_STATE_SQL = """
 INSERT INTO orchestration_state (key, value) VALUES (?, ?)
 ON CONFLICT(key) DO UPDATE SET value = excluded.value
 """
+
+# first sighting of a (source, message) pair inserts a row later ones increase count and last seen
+_UPSERT_SYSTEM_EVENT_SQL = """
+INSERT INTO system_events (source, message, first_seen_at, last_seen_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(source, message) DO UPDATE SET
+    last_seen_at = excluded.last_seen_at,
+    occurrences = occurrences + 1
+"""
+
+
+def _record_system_event(client: D1Client, source: str, message: str) -> None:
+    now = _now_iso()
+    client.batch([(_UPSERT_SYSTEM_EVENT_SQL, [source, message[:500], now, now])])
 
 
 def _now_iso() -> str:
@@ -107,8 +126,14 @@ def _run_live_updates(client: D1Client, env: str) -> None:
     if _should_run(
         client, "sports_io_live_last_poll_at", SPORTS_IO_LIVE_INTERVAL_SECONDS
     ):
-        load_games_data(env, live=True)
-        _set_state(client, "sports_io_live_last_poll_at", _now_iso())
+        # Sports IO has sent malformed/unexpected game data mid-slate
+        try:
+            load_games_data(env, live=True)
+        except Exception as exc:
+            logger.exception("Live games poll failed - continuing without it")
+            _record_system_event(client, "sports_io_live_poll", str(exc))
+        finally:
+            _set_state(client, "sports_io_live_last_poll_at", _now_iso())
 
     # Runs for the whole live window, not just pre-deadline - most games kick
     # off at/after the Sunday 1PM ET deadline, and that's also when CBS
@@ -131,24 +156,68 @@ def _run_live_updates(client: D1Client, env: str) -> None:
         load_live_game_statistics(env)
         _set_state(client, "live_game_stats_last_capture_at", _now_iso())
 
-    # always update current week games
-    write_current_week_games(env)
+
+def _capture_odds(client: D1Client, env: str, state_key: str) -> None:
+    """Odds aren't required/shouldn't block, don't raise but log error"""
+    try:
+        load_the_odds_api_odds(env)
+        write_current_week_odds(env)
+    except Exception as exc:
+        logger.exception("Odds capture failed - continuing without it")
+        _record_system_event(client, "odds_capture", str(exc))
+    finally:
+        _set_state(client, state_key, _now_iso())
 
 
 def _run_quiet_period_tasks(client: D1Client, env: str) -> None:
     if _should_run(client, "odds_last_call_at", ODDS_INTERVAL_SECONDS):
-        load_the_odds_api_odds(env)
-        _set_state(client, "odds_last_call_at", _now_iso())
+        _capture_odds(client, env, "odds_last_call_at")
 
     if _should_run(client, "housekeeping_last_run_at", HOUSEKEEPING_INTERVAL_SECONDS):
         load_games_data(env)  # full schedule/weeks refresh - idempotent, safe any day
         load_cbs_weeks(env)
         load_cbs_games(env)
         write_meta_current(env)
-        write_current_week_games(env)
+        # write_current_week_games(env) not needed here - run_tick() now
+        # calls it unconditionally on every tick regardless of branch
         _set_state(client, "housekeeping_last_run_at", _now_iso())
     else:
         logger.info("Not running, too soon")
+
+
+def _run_pre_kickoff_odds_capture(client: D1Client, env: str, now: datetime) -> None:
+    """One extra odds call right before each distinct kickoff cluster this
+    week (TNF, Sunday's early/late/night windows, MNF) - the flat baseline
+    interval otherwise has no relationship to actual kickoff times and can
+    miss the line right before games start. Keyed off games.game_time
+    itself rather than hardcoded days/times, same reasoning as
+    _is_live_window_active() - kickoff slots shift (byes, international
+    games, Thanksgiving). ODDS_PREKICKOFF_MIN_GAP_SECONDS (not per-slot
+    state) is what collapses a same-window doubleheader (e.g. Sunday's
+    4:05/4:25 ET games) into a single call instead of one per exact
+    game_time. Runs unconditionally every tick (not just quiet-period),
+    since a still-live early game can otherwise suppress the call for an
+    approaching later kickoff.
+    """
+    if not _should_run(
+        client, "odds_prekickoff_last_call_at", ODDS_PREKICKOFF_MIN_GAP_SECONDS
+    ):
+        return
+
+    now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    lead_cutoff = (now + timedelta(minutes=ODDS_PREKICKOFF_LEAD_MINUTES)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    result = client.query(
+        "SELECT 1 FROM games WHERE game_time > ? AND game_time <= ? "
+        "AND status NOT IN ('FINAL', 'CANCELLED', 'POSTPONED') LIMIT 1",
+        [now_iso, lead_cutoff],
+    )
+    if not result.results:
+        return
+
+    logger.info("Running pre-kickoff odds capture")
+    _capture_odds(client, env, "odds_prekickoff_last_call_at")
 
 
 def _run_deadline_sweep(client: D1Client, env: str, now: datetime) -> None:
@@ -188,14 +257,17 @@ def _run_finished_game_stats(client: D1Client, env: str) -> None:
         client.batch(
             [
                 (
-                    "UPDATE games SET has_final_stats = TRUE WHERE week_id = ? AND status = 'FINAL'",
+                    (
+                        "UPDATE games SET has_final_stats = TRUE "
+                        "WHERE week_id = ? AND status = 'FINAL'"
+                    ),
                     [row["week_id"]],
                 )
             ]
         )
 
 
-def run_tick(env: str = "local") -> None:
+def main(env: str = "local") -> None:
     if not load_env(env):
         sys.exit(1)
 
@@ -207,12 +279,13 @@ def run_tick(env: str = "local") -> None:
     else:
         _run_quiet_period_tasks(client, env)
 
+    _run_pre_kickoff_odds_capture(client, env, now)
     _run_deadline_sweep(client, env, now)
     _run_finished_game_stats(client, env)
-
-
-def main(env: str = "local") -> None:
-    run_tick(env)
+    write_current_week_games(env)
+    write_current_week_trends(env)
+    write_season_trends(env)
+    write_admin_status(env)
 
 
 if __name__ == "__main__":

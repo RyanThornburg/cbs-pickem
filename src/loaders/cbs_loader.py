@@ -96,6 +96,9 @@ UPDATE teams SET
 WHERE abbreviation = ?
 """
 
+# CBS's pool home page is the only source for the real name
+_UPDATE_SEASON_NAME_SQL = "UPDATE seasons SET name = ? WHERE season_id = ?"
+
 _UPSERT_WEEK_SQL = """
 INSERT INTO weeks (season_id, week_number, name, cbs_pool_period_id, is_current)
 VALUES (?, ?, ?, ?, ?)
@@ -210,8 +213,10 @@ def load_cbs_weeks(env: str = "local") -> None:
         logger.warning("No pool periods to load")
         return
 
+    week_count = len(statements)
+    statements.append((_UPDATE_SEASON_NAME_SQL, [data.name, SEASON]))
     sql_batch_call(statements)
-    logger.info("Upserted %d weeks into D1 (%s)", len(statements), env)
+    logger.info("Upserted %d weeks into D1 (%s)", week_count, env)
 
 
 # TODO: verify this is correct once data is live
