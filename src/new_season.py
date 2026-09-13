@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 def main(env: str = "local") -> None:
     season_loader.main(env)  # load season from sports io
     teams_loader.main(env)  # load teams from sports io
-    cbs_loader.load_cbs_users()  # load users for this season
-    cbs_loader.map_cbs_to_sports_io()  # add cbs ids to team id data
+    cbs_loader.load_cbs_users(env)  # load users for this season
+    cbs_loader.map_cbs_to_sports_io(env)  # add cbs ids to team id data
 
 
 if __name__ == "__main__":
