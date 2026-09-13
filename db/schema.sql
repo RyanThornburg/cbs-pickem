@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS seasons (
     name VARCHAR(50),
     start_date DATE,
     end_date DATE,
-    is_active BOOLEAN DEFAULT FALSE
+    is_active BOOLEAN DEFAULT FALSE,
+    historical_data_incomplete BOOLEAN DEFAULT FALSE -- our archived standings for this season are missing entries (confirmed for 2015/2016 - the actual rank-1, and for 2016 rank-2, are absent from the saved CBS export), not a property of the season itself
 );
 
 -- Weeks within a season
@@ -267,6 +268,42 @@ BEGIN
     UPDATE user_stats SET updated_at = CURRENT_TIMESTAMP WHERE stat_id = OLD.stat_id;
 END;
 
+-- Final standings from prior seasons
+CREATE TABLE IF NOT EXISTS historical_standings (
+    historical_standing_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    season_id INT NOT NULL,
+    user_id INT NOT NULL,
+    pool_name VARCHAR(50), -- e.g. "MorLocked 8.0" - changes most years
+    final_rank INT NOT NULL, -- CBS's own tie-aware rank.value
+    final_score INT NOT NULL,
+    is_champion BOOLEAN AS (final_rank = 1),
+    -- don't have all the data so allow nulls
+    first_half_rank INT,
+    first_half_score INT,
+    second_half_rank INT,
+    second_half_score INT,
+    FOREIGN KEY (season_id) REFERENCES seasons(season_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id),
+    UNIQUE (season_id, user_id)
+);
+
+-- Identity resolution audit trail for the historical_standings backfill -
+-- CBS's entry/member ids for the same real person differ every season (no
+-- stable natural key across years, confirmed live), so matching onto
+-- users.user_id is done by exact (case-insensitive) name instead. This
+-- table records which raw CBS entry each season resolved to which user_id,
+-- so a re-run doesn't need to re-derive (or re-ask about) the same mapping.
+CREATE TABLE IF NOT EXISTS historical_user_mapping (
+    season_id INT NOT NULL,
+    cbs_entry_id VARCHAR(150) NOT NULL,
+    cbs_member_id VARCHAR(150),
+    raw_name VARCHAR(100) NOT NULL, -- the name exactly as it appeared that season
+    user_id INT NOT NULL,
+    FOREIGN KEY (season_id) REFERENCES seasons(season_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id),
+    PRIMARY KEY (season_id, cbs_entry_id)
+);
+
 -- Point-in-time odds snapshots (spread/total lines), one row per
 -- game+source+bookmaker+market+capture. Repeated captures over time let
 -- opening/closing lines and best/worst available line be derived with
@@ -321,6 +358,22 @@ CREATE TABLE IF NOT EXISTS mapping_gaps (
     last_seen_at TEXT NOT NULL,
     occurrences INTEGER NOT NULL DEFAULT 1,
     UNIQUE(source, entity_type, raw_value)
+);
+
+-- Structured failures worth an admin's attention, same shape/intent as
+-- mapping_gaps above but for real exceptions (e.g. a failed odds capture)
+-- rather than lookup misses. Written next to the existing logger.exception()
+-- at each catch site, not instead of it - the log has the full traceback for
+-- debugging, this table is the queryable "is anything broken" summary
+-- src/kv_writer.py's meta:admin key surfaces.
+CREATE TABLE IF NOT EXISTS system_events (
+    system_event_id INTEGER PRIMARY KEY,
+    source VARCHAR(50) NOT NULL,
+    message VARCHAR(500) NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    occurrences INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(source, message)
 );
 
 -- Simple indexes for performance
