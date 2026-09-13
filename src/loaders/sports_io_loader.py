@@ -7,10 +7,10 @@ Usage: uv run python -m src.loaders.sports_io_loader [local|prod]
 import logging
 import re
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from api.sports_io_client import get_games, get_live_games, get_team_statistics
+from api.sports_io_client import get_games, get_games_by_date, get_team_statistics
 from api.sports_io_models import Game, TeamStatistics
 from config.config import SEASON, configure_logging, get_d1_config, load_env
 from db.d1_client import D1Client
@@ -166,8 +166,12 @@ _SPORTS_IO_STATUS_MAP = {
 }
 
 
-def _sports_io_status_to_common(short_status: str) -> str:
-    """Map Sports IO's game.status.short onto the common games.status vocabulary."""
+def _sports_io_status_to_common(short_status: str | None) -> str | None:
+    """Map Sports IO's game.status.short onto the common games.status vocabulary"""
+    # short status can be none
+    if short_status is None:
+        logger.warning("Sports IO game status.short was null - leaving status unmapped")
+        return None
     status = _SPORTS_IO_STATUS_MAP.get(short_status)
     if status is None:
         logger.warning(
@@ -208,6 +212,20 @@ def _parse_time_of_possession(value: str) -> int:
 
 
 # TODO: allow date as a param?
+def _get_live_window_games() -> list[Game]:
+    """
+    Checking games for current day and yesterday (UTC) so we don't miss
+    status updates on games that kicked off before midnight UTC
+    can't use get_live_games() because we'd miss games that just finished"""
+    today = datetime.now(UTC).date()
+    yesterday = today - timedelta(days=1)
+    games_by_id: dict[int, Game] = {}
+    for date in (yesterday, today):
+        for game in get_games_by_date(date.isoformat()):
+            games_by_id[game.game.id] = game
+    return list(games_by_id.values())
+
+
 def load_games_data(env: str = "local", live: bool = False) -> None:
     """load games from sports io"""
     if not load_env(env):
@@ -215,7 +233,7 @@ def load_games_data(env: str = "local", live: bool = False) -> None:
 
     client = D1Client(**get_d1_config())
 
-    games: list[Game] = get_games() if not live else get_live_games()
+    games: list[Game] = get_games() if not live else _get_live_window_games()
 
     # don't care about preseason data and could run into Week n issues between
     # preseason and regular season if we don't filter out pre season here

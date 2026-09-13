@@ -95,6 +95,10 @@ class SportsIOClient:
         """live games"""
         return self._request(Endpoint.GAMES, live="all")
 
+    def get_games_by_date(self, date: str):
+        """every game (any status) on a given date (YYYY-MM-DD)"""
+        return self._request(Endpoint.GAMES, date=date)
+
     def get_team_statistics(self, game_id: int):
         """box scores for teams"""
         return self._request(Endpoint.TEAM_STATISTICS, id=game_id)
@@ -246,6 +250,15 @@ def get_live_games() -> list[Game]:
     """check for live games"""
     return fetch_and_validate(
         "live games", _new_client().get_live_games, Endpoint.GAMES.model
+    )
+
+
+def get_games_by_date(date: str) -> list[Game]:
+    """every game (any status, including FINAL) on a given date (YYYY-MM-DD)"""
+    return fetch_and_validate(
+        f"games on {date}",
+        lambda: _new_client().get_games_by_date(date),
+        Endpoint.GAMES.model,
     )
 
 

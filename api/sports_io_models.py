@@ -144,8 +144,8 @@ class Venue(SportsIOModel):
 
 
 class GameStatus(SportsIOModel):
-    short: str
-    long: str
+    short: str | None = None
+    long: str | None = None
     timer: str | None = None
 
 
