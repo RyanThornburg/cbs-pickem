@@ -37,13 +37,24 @@ _LIVE_STATUSES = ("IN_PROGRESS", "HALFTIME")
 
 _GAMES_SQL = """
 SELECT g.game_id, g.status, g.home_score, g.away_score, g.game_time,
-       g.cbs_spread, g.tv_network, g.gametracker_url,
-       ht.team_id AS home_id, ht.abbreviation AS home_abbr, ht.nick_name AS home_name,
-       at.team_id AS away_id, at.abbreviation AS away_abbr, at.nick_name AS away_name
+    g.cbs_spread, g.tv_network, g.gametracker_url,
+    g.forecast_temp_f, g.forecast_feels_like_f, g.forecast_condition,
+    g.forecast_precip_type, g.forecast_wind_speed_mph, g.forecast_wind_gust_mph,
+    g.forecast_wind_direction, g.forecast_precipitation_pct,
+    g.forecast_visibility_mi, g.forecast_alert, g.forecast_captured_at,
+    s.stadium_id, s.name AS stadium_name, s.city AS stadium_city,
+    s.state AS stadium_state, s.country AS stadium_country,
+    s.latitude AS stadium_latitude, s.longitude AS stadium_longitude,
+    s.roof_type AS stadium_roof_type, s.surface_type AS stadium_surface_type,
+    ht.team_id AS home_id, ht.abbreviation AS home_abbr, ht.nick_name AS home_name,
+    ht.wins AS home_wins, ht.losses AS home_losses, ht.ties AS home_ties,
+    at.team_id AS away_id, at.abbreviation AS away_abbr, at.nick_name AS away_name,
+    at.wins AS away_wins, at.losses AS away_losses, at.ties AS away_ties
 FROM games g
 JOIN teams ht ON ht.team_id = g.home_team_id
 JOIN teams at ON at.team_id = g.away_team_id
 JOIN weeks w ON w.week_id = g.week_id
+LEFT JOIN stadiums s ON s.stadium_id = g.stadium_id
 WHERE w.season_id = ? AND w.week_number = ?
 ORDER BY g.game_time
 """
@@ -95,8 +106,12 @@ GROUP BY user_id
 _ODDS_BOOKMAKERS = ("draftkings", "fanduel", "betmgm", "betrivers", "bovada")
 
 # trends thresholds - hand-picked judgment calls, not derived from data
-_LONE_WOLF_MIN_OPPOSING = 3  # how big the other side must be for a solo pick to mean anything
-_ONE_SIDED_MIN_PICKS = 3  # floor so an early, barely-revealed game can't look "lopsided"
+_ALL_ALONE_MIN_OPPOSING = (
+    3  # how big the other side must be for a solo pick to mean anything
+)
+_ONE_SIDED_MIN_PICKS = (
+    3  # floor so an early, barely-revealed game can't look "lopsided"
+)
 _ONE_SIDED_THRESHOLD = 0.8  # consensus share needed to call a game one-sided
 _LINE_MOVER_MIN_POINTS = 1.0  # spread/total movement below this isn't worth surfacing
 
@@ -184,9 +199,9 @@ _HOUSEKEEPING_STALE_SECONDS = 48 * 60 * 60
 # historical season records
 _HISTORICAL_SQL = """
 SELECT hs.season_id, s.name AS pool_name, s.historical_data_incomplete,
-       u.user_id, u.name, u.is_active, hs.final_rank, hs.final_score,
-       hs.first_half_rank, hs.first_half_score,
-       hs.second_half_rank, hs.second_half_score
+    u.user_id, u.name, u.is_active, hs.final_rank, hs.final_score,
+    hs.first_half_rank, hs.first_half_score,
+    hs.second_half_rank, hs.second_half_score
 FROM historical_standings hs
 JOIN users u ON u.user_id = hs.user_id
 JOIN seasons s ON s.season_id = hs.season_id
@@ -203,18 +218,14 @@ def _resolve_current_week(d1: D1Client) -> int | None:
     return result.results[0]["week_number"] if result.results else None
 
 
-def write_meta_current(env: str = "local") -> None:
+def write_meta_current() -> None:
     """Write meta:current - which week is live right now, for this season."""
-    if not load_env(env):
-        sys.exit(1)
-
     d1 = D1Client(**get_d1_config())
     current_week = _resolve_current_week(d1)
     if current_week is None:
         logger.warning(
-            "No current week found for season %s (%s) - not writing meta:current",
+            "No current week found for season %s - not writing meta:current",
             SEASON,
-            env,
         )
         return
 
@@ -228,7 +239,7 @@ def write_meta_current(env: str = "local") -> None:
             "paid_places": _PAID_PLACES,
         },
     )
-    logger.info("Wrote meta:current (week %d) to KV (%s)", current_week, env)
+    logger.info("Wrote meta:current (week %d) to KV", current_week)
 
 
 def _snapshot_weather(snapshot: dict[str, Any]) -> dict[str, Any] | None:
@@ -249,6 +260,58 @@ def _snapshot_weather(snapshot: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _team_record(game: dict[str, Any], side: str) -> dict[str, Any] | None:
+    """None if this team's record hasn't synced yet (teams_loader.py hasn't
+    run, or this team's Sports IO standings row wasn't found)."""
+    wins = game[f"{side}_wins"]
+    if wins is None:
+        return None
+    return {
+        "wins": wins,
+        "losses": game[f"{side}_losses"],
+        "ties": game[f"{side}_ties"],
+    }
+
+
+def _game_stadium(game: dict[str, Any]) -> dict[str, Any] | None:
+    """None if this game has no resolved stadium yet."""
+    if game["stadium_id"] is None:
+        return None
+    return {
+        "name": game["stadium_name"],
+        "city": game["stadium_city"],
+        "state": game["stadium_state"],
+        "country": game["stadium_country"],
+        "latitude": game["stadium_latitude"],
+        "longitude": game["stadium_longitude"],
+        "roof_type": game["stadium_roof_type"],
+        "surface_type": game["stadium_surface_type"],
+    }
+
+
+def _game_forecast(game: dict[str, Any]) -> dict[str, Any] | None:
+    """None if no pregame capture has happened yet - enclosed stadiums
+    (src/loaders/pregame_weather_loader.py skips them) never get one, and
+    neither does a game whose forecast hasn't been captured yet. This is
+    the pregame forecast, frozen at whatever was last captured before
+    kickoff - see the "live" block above for in-game/postgame conditions."""
+    if game["forecast_captured_at"] is None:
+        return None
+    return {
+        "temp_f": game["forecast_temp_f"],
+        "feels_like_f": game["forecast_feels_like_f"],
+        "condition": game["forecast_condition"],
+        "precip_type": game["forecast_precip_type"],
+        "wind_speed_mph": game["forecast_wind_speed_mph"],
+        "wind_gust_mph": game["forecast_wind_gust_mph"],
+        "wind_direction": game["forecast_wind_direction"],
+        "precipitation_pct": game["forecast_precipitation_pct"],
+        "visibility_mi": game["forecast_visibility_mi"],
+        "weather_alert": game["forecast_alert"],
+        "captured_at": game["forecast_captured_at"],
+    }
+
+
 def _snapshot_live_block(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {
         "quarter": snapshot["quarter"],
@@ -264,14 +327,11 @@ def _snapshot_live_block(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def write_week_games(week_number: int, env: str = "local") -> None:
+def write_week_games(week_number: int) -> None:
     """Write week:{season}:{weekNN}:games - one week's schedule, joined with
     who picked which side (naturally empty pre-lock - user_picks only ever
     has locked/revealed rows, see api/CLAUDE.md) and, for games currently in
     progress, the latest game_snapshots state."""
-    if not load_env(env):
-        sys.exit(1)
-
     d1 = D1Client(**get_d1_config())
 
     games = d1.query(_GAMES_SQL, [SEASON, week_number]).results
@@ -301,11 +361,13 @@ def write_week_games(week_number: int, env: str = "local") -> None:
                 "id": game["home_id"],
                 "abbr": game["home_abbr"],
                 "name": game["home_name"],
+                "record": _team_record(game, "home"),
             },
             "away_team": {
                 "id": game["away_id"],
                 "abbr": game["away_abbr"],
                 "name": game["away_name"],
+                "record": _team_record(game, "away"),
             },
             "status": game["status"],
             "home_score": game["home_score"],
@@ -314,6 +376,8 @@ def write_week_games(week_number: int, env: str = "local") -> None:
             "cbs_spread": game["cbs_spread"],
             "tv_network": game["tv_network"],
             "gametracker_url": game["gametracker_url"],
+            "stadium": _game_stadium(game),
+            "forecast": _game_forecast(game),
             "picks": {
                 "home": [
                     {"user_id": p["user_id"], "name": p["name"]}
@@ -344,32 +408,47 @@ def write_week_games(week_number: int, env: str = "local") -> None:
         },
     )
     logger.info(
-        "Wrote week:%s:%02d:games (%d games) to KV (%s)",
+        "Wrote week:%s:%02d:games (%d games) to KV",
         SEASON,
         week_number,
         len(games_json),
-        env,
     )
 
 
-def write_current_week_games(env: str = "local") -> None:
-    """Resolve weeks.is_current and write that week's games key - the call
-    orchestration.py actually uses, since a live tick knows a game is live
-    but not which week it belongs to without asking."""
-    if not load_env(env):
-        sys.exit(1)
-
+def write_current_week_games() -> None:
+    """Resolve weeks.is_current and write that week's games key."""
     d1 = D1Client(**get_d1_config())
     current_week = _resolve_current_week(d1)
     if current_week is None:
         logger.warning(
-            "No current week found for season %s (%s) - not writing games key",
+            "No current week found for season %s - not writing games key",
             SEASON,
-            env,
         )
         return
 
-    write_week_games(current_week, env)
+    write_week_games(current_week)
+
+
+_INCOMPLETE_WEEKS_SQL = (
+    "SELECT week_number FROM weeks WHERE season_id = ? AND is_complete = 0"
+)
+
+
+def write_incomplete_weeks_games() -> None:
+    """Write week:{season}:{weekNN}:games for every week that isn't fully
+    FINAL yet - not just weeks.is_current.
+    cbs can flip the current pool week before the previous weeks games finish.
+    this helps clean up any stragglers"""
+    d1 = D1Client(**get_d1_config())
+    week_numbers = [
+        row["week_number"] for row in d1.query(_INCOMPLETE_WEEKS_SQL, [SEASON]).results
+    ]
+    if not week_numbers:
+        logger.info("No incomplete weeks for season %s - nothing to refresh", SEASON)
+        return
+
+    for week_number in week_numbers:
+        write_week_games(week_number)
 
 
 def _standard_rank(score_by_user: dict[int, int]) -> dict[int, int]:
@@ -490,11 +569,8 @@ def compute_week_leaderboard(
     return users_json
 
 
-def write_week_leaderboard(week_number: int, env: str = "local") -> None:
+def write_week_leaderboard(week_number: int) -> None:
     """Write week:{season}:{weekNN}:leaderboard from compute_week_leaderboard()."""
-    if not load_env(env):
-        sys.exit(1)
-
     d1 = D1Client(**get_d1_config())
     users_json = compute_week_leaderboard(d1, week_number)
     if users_json is None:
@@ -516,30 +592,25 @@ def write_week_leaderboard(week_number: int, env: str = "local") -> None:
         },
     )
     logger.info(
-        "Wrote week:%s:%02d:leaderboard (%d users) to KV (%s)",
+        "Wrote week:%s:%02d:leaderboard (%d users) to KV",
         SEASON,
         week_number,
         len(users_json),
-        env,
     )
 
 
-def write_current_week_leaderboard(env: str = "local") -> None:
+def write_current_week_leaderboard() -> None:
     """Resolve weeks.is_current and write that week's leaderboard key."""
-    if not load_env(env):
-        sys.exit(1)
-
     d1 = D1Client(**get_d1_config())
     current_week = _resolve_current_week(d1)
     if current_week is None:
         logger.warning(
-            "No current week found for season %s (%s) - not writing leaderboard key",
+            "No current week found for season %s - not writing leaderboard key",
             SEASON,
-            env,
         )
         return
 
-    write_week_leaderboard(current_week, env)
+    write_week_leaderboard(current_week)
 
 
 def _consensus_line(values: list[float]) -> tuple[float, int]:
@@ -583,7 +654,9 @@ def _open_close_consensus_by_game(
         closes = closes_by_game.get(game_id)
         if not opens or not closes:
             continue
-        open_line, open_agreement = _consensus_line([row["home_point"] for row in opens])
+        open_line, open_agreement = _consensus_line(
+            [row["home_point"] for row in opens]
+        )
         close_line, close_agreement = _consensus_line(
             [row["home_point"] for row in closes]
         )
@@ -599,12 +672,9 @@ def _open_close_consensus_by_game(
     return consensus_by_game
 
 
-def write_week_odds(week_number: int, env: str = "local") -> None:
+def write_week_odds(week_number: int) -> None:
     """Write week:{season}:{weekNN}:odds - each game's cbs_spread (what the
     pool is graded against) alongside an opening/closing consensus line."""
-    if not load_env(env):
-        sys.exit(1)
-
     d1 = D1Client(**get_d1_config())
 
     games = d1.query(_WEEK_CBS_SPREADS_SQL, [SEASON, week_number]).results
@@ -637,11 +707,10 @@ def write_week_odds(week_number: int, env: str = "local") -> None:
         },
     )
     logger.info(
-        "Wrote week:%s:%02d:odds (%d games) to KV (%s)",
+        "Wrote week:%s:%02d:odds (%d games) to KV",
         SEASON,
         week_number,
         len(games_json),
-        env,
     )
 
 
@@ -690,21 +759,19 @@ def _one_sided_entry(
     }
 
 
-def _lone_wolf_entries(
+def _all_alone_entries(
     game: dict[str, Any],
     home_picks: list[dict[str, Any]],
     away_picks: list[dict[str, Any]],
     week_number: int | None = None,
 ) -> list[dict[str, Any]]:
-    """One user alone on a side while the other side has a real crowd
-    (_LONE_WOLF_MIN_OPPOSING) - a 1-vs-1 split this early isn't a story,
-    it's just the second person to pick yet."""
+    """One user alone on a side while the other side has at least _ALL_ALONE_MIN_OPPOSING"""
     entries: list[dict[str, Any]] = []
     for picks, opposing, team_id, abbr in (
         (home_picks, away_picks, game["home_id"], game["home_abbr"]),
         (away_picks, home_picks, game["away_id"], game["away_abbr"]),
     ):
-        if len(picks) != 1 or len(opposing) < _LONE_WOLF_MIN_OPPOSING:
+        if len(picks) != 1 or len(opposing) < _ALL_ALONE_MIN_OPPOSING:
             continue
         entry = {
             "game_id": game["game_id"],
@@ -747,16 +814,13 @@ def _movers_from_consensus(
     return movers
 
 
-def write_week_trends(week_number: int, env: str = "local") -> None:
+def write_week_trends(week_number: int) -> None:
     """Write week:{season}:{weekNN}:trends - pick popularity/cold teams,
-    lopsided games, lone-wolf picks (one user alone on a side against a
+    lopsided games, all-alone picks (one user alone on a side against a
     real crowd on the other), and the week's biggest spread movers.
     Popularity/cold-team splits only count a game once its picks are
     revealed (a game with zero total picks yet is unlocked, not actually
     cold - same ambiguity write_week_games() already documents)."""
-    if not load_env(env):
-        sys.exit(1)
-
     d1 = D1Client(**get_d1_config())
 
     games = d1.query(_GAMES_SQL, [SEASON, week_number]).results
@@ -775,7 +839,7 @@ def write_week_trends(week_number: int, env: str = "local") -> None:
     pick_popularity: list[dict[str, Any]] = []
     cold_teams: list[dict[str, Any]] = []
     one_sided_games: list[dict[str, Any]] = []
-    lone_wolves: list[dict[str, Any]] = []
+    loners: list[dict[str, Any]] = []
 
     for game in games:
         home_picks, away_picks = _split_home_away(
@@ -807,7 +871,7 @@ def write_week_trends(week_number: int, env: str = "local") -> None:
         if one_sided:
             one_sided_games.append(one_sided)
 
-        lone_wolves.extend(_lone_wolf_entries(game, home_picks, away_picks))
+        loners.extend(_all_alone_entries(game, home_picks, away_picks))
 
     pick_popularity.sort(key=lambda e: -e["pick_count"])
     one_sided_games.sort(key=lambda e: -e["consensus_pct"])
@@ -829,42 +893,37 @@ def write_week_trends(week_number: int, env: str = "local") -> None:
             "pick_popularity": pick_popularity,
             "cold_teams": cold_teams,
             "one_sided_games": one_sided_games,
-            "lone_wolves": lone_wolves,
+            "all_alone": loners,
             "spread_movers": spread_movers,
             "total_movers": total_movers,
         },
     )
     logger.info(
         "Wrote week:%s:%02d:trends (%d popular, %d cold, %d one-sided, "
-        "%d lone wolves, %d spread movers, %d total movers) to KV (%s)",
+        "%d all alone, %d spread movers, %d total movers) to KV",
         SEASON,
         week_number,
         len(pick_popularity),
         len(cold_teams),
         len(one_sided_games),
-        len(lone_wolves),
+        len(loners),
         len(spread_movers),
         len(total_movers),
-        env,
     )
 
 
-def write_current_week_trends(env: str = "local") -> None:
+def write_current_week_trends() -> None:
     """Resolve weeks.is_current and write that week's trends key."""
-    if not load_env(env):
-        sys.exit(1)
-
     d1 = D1Client(**get_d1_config())
     current_week = _resolve_current_week(d1)
     if current_week is None:
         logger.warning(
-            "No current week found for season %s (%s) - not writing trends key",
+            "No current week found for season %s - not writing trends key",
             SEASON,
-            env,
         )
         return
 
-    write_week_trends(current_week, env)
+    write_week_trends(current_week)
 
 
 def _ats_side(game: dict[str, Any]) -> str | None:
@@ -874,7 +933,11 @@ def _ats_side(game: dict[str, Any]) -> str | None:
     beats that line."""
     if game["status"] != "FINAL":
         return None
-    if game["cbs_spread"] is None or game["home_score"] is None or game["away_score"] is None:
+    if (
+        game["cbs_spread"] is None
+        or game["home_score"] is None
+        or game["away_score"] is None
+    ):
         return None
     adjusted = game["home_score"] - game["away_score"] + game["cbs_spread"]
     if adjusted > 0:
@@ -884,14 +947,11 @@ def _ats_side(game: dict[str, Any]) -> str | None:
     return "push"
 
 
-def write_season_trends(env: str = "local") -> None:
+def write_season_trends() -> None:
     """Write season:{season}:trends - season-long pick popularity, ATS
     cover record per team (from cbs_spread + final scores, independent of
     who actually picked them - works even for a team nobody in the pool
-    ever picks), cold teams, and every lone-wolf pick logged this season."""
-    if not load_env(env):
-        sys.exit(1)
-
+    ever picks), cold teams, and every all-alone pick logged this season."""
     d1 = D1Client(**get_d1_config())
 
     games = d1.query(_SEASON_GAMES_SQL, [SEASON]).results
@@ -962,13 +1022,15 @@ def write_season_trends(env: str = "local") -> None:
         )
     team_ats_record.sort(key=lambda e: (-(e["cover_pct"] or 0), -e["covers"]))
 
-    lone_wolves: list[dict[str, Any]] = []
+    all_alone: list[dict[str, Any]] = []
     for game in games:
         home_picks, away_picks = _split_home_away(
             game, picks_by_game.get(game["game_id"], [])
         )
-        lone_wolves.extend(
-            _lone_wolf_entries(game, home_picks, away_picks, week_number=game["week_number"])
+        all_alone.extend(
+            _all_alone_entries(
+                game, home_picks, away_picks, week_number=game["week_number"]
+            )
         )
 
     kv = KVClient(**get_kv_config())
@@ -980,47 +1042,39 @@ def write_season_trends(env: str = "local") -> None:
             "team_pick_totals": team_pick_totals,
             "cold_teams_season": cold_teams_season,
             "team_ats_record": team_ats_record,
-            "lone_wolves_season": lone_wolves,
+            "all_alone_season": all_alone,
         },
     )
     logger.info(
         "Wrote season:%s:trends (%d teams picked, %d cold, %d ATS records, "
-        "%d lone wolves) to KV (%s)",
+        "%d all alone) to KV",
         SEASON,
         len(team_pick_totals),
         len(cold_teams_season),
         len(team_ats_record),
-        len(lone_wolves),
-        env,
+        len(all_alone),
     )
 
 
-def write_current_week_odds(env: str = "local") -> None:
+def write_current_week_odds() -> None:
     """Resolve weeks.is_current and write that week's odds key."""
-    if not load_env(env):
-        sys.exit(1)
-
     d1 = D1Client(**get_d1_config())
     current_week = _resolve_current_week(d1)
     if current_week is None:
         logger.warning(
-            "No current week found for season %s (%s) - not writing odds key",
+            "No current week found for season %s - not writing odds key",
             SEASON,
-            env,
         )
         return
 
-    write_week_odds(current_week, env)
+    write_week_odds(current_week)
 
 
-def write_historical(env: str = "local") -> None:
+def write_historical() -> None:
     """Write meta:historical - past champions and each user's all-time
     record, from historical_standings (backfilled once from the pre-2026
     archive, and going forward one row per user per season at close-out).
     Static/manual cadence - nothing changes here until a season closes."""
-    if not load_env(env):
-        sys.exit(1)
-
     d1 = D1Client(**get_d1_config())
     rows = d1.query(_HISTORICAL_SQL).results
     if not rows:
@@ -1129,10 +1183,9 @@ def write_historical(env: str = "local") -> None:
         },
     )
     logger.info(
-        "Wrote meta:historical (%d years, %d career entries) to KV (%s)",
+        "Wrote meta:historical (%d years, %d career entries) to KV",
         len(years),
         len(career),
-        env,
     )
 
 
@@ -1148,7 +1201,7 @@ def _seconds_since(iso_value: str | None, now: datetime) -> float | None:
     return (now - last_at).total_seconds()
 
 
-def write_admin_status(env: str = "local") -> None:
+def write_admin_status() -> None:
     """Write meta:admin - a health-check summary for an admin page: when
     each orchestration task last ran, and open mapping_gaps/system_events
     to review. Recomputed unconditionally every tick (see orchestration.py's
@@ -1163,13 +1216,12 @@ def write_admin_status(env: str = "local") -> None:
     the complexity for a first pass - most weeks they simply won't have run
     recently because nothing's live, and that's correct, not a problem.
     """
-    if not load_env(env):
-        sys.exit(1)
-
     d1 = D1Client(**get_d1_config())
     now = datetime.now(UTC)
 
-    state = {row["key"]: row["value"] for row in d1.query(_ORCHESTRATION_STATE_SQL).results}
+    state = {
+        row["key"]: row["value"] for row in d1.query(_ORCHESTRATION_STATE_SQL).results
+    }
 
     # Odds has two independent cursors (the flat baseline and the
     # pre-kickoff capture, see orchestration.py) - either one running
@@ -1194,12 +1246,17 @@ def write_admin_status(env: str = "local") -> None:
         },
         "housekeeping": {
             "last_at": state.get("housekeeping_last_run_at"),
-            "stale": housekeeping_age is None or housekeeping_age > _HOUSEKEEPING_STALE_SECONDS,
+            "stale": housekeeping_age is None
+            or housekeeping_age > _HOUSEKEEPING_STALE_SECONDS,
         },
         "sports_io_live_poll": {"last_at": state.get("sports_io_live_last_poll_at")},
         "cbs_live_poll": {"last_at": state.get("cbs_live_last_poll_at")},
-        "game_snapshot_capture": {"last_at": state.get("game_snapshot_last_capture_at")},
-        "live_game_stats_capture": {"last_at": state.get("live_game_stats_last_capture_at")},
+        "game_snapshot_capture": {
+            "last_at": state.get("game_snapshot_last_capture_at")
+        },
+        "live_game_stats_capture": {
+            "last_at": state.get("live_game_stats_last_capture_at")
+        },
         "deadline_last_synced_sunday": state.get("deadline_last_synced_sunday"),
     }
 
@@ -1225,25 +1282,26 @@ def write_admin_status(env: str = "local") -> None:
         },
     )
     logger.info(
-        "Wrote meta:admin (%d mapping gaps, %d system events) to KV (%s)",
+        "Wrote meta:admin (%d mapping gaps, %d system events) to KV",
         mapping_gaps_totals["distinct_count"],
         system_events_totals["distinct_count"],
-        env,
     )
 
 
-def main(env: str = "local") -> None:
+def main() -> None:
     "write data to kv"
-    write_meta_current(env)
-    write_current_week_games(env)
-    write_current_week_leaderboard(env)
-    write_current_week_odds(env)
-    write_current_week_trends(env)
-    write_season_trends(env)
-    write_historical(env)
-    write_admin_status(env)
+    write_meta_current()
+    write_current_week_games()
+    write_current_week_leaderboard()
+    write_current_week_odds()
+    write_current_week_trends()
+    write_season_trends()
+    write_historical()
+    write_admin_status()
 
 
 if __name__ == "__main__":
     configure_logging()
-    main(sys.argv[1] if len(sys.argv) > 1 else "local")
+    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
+        sys.exit(1)
+    main()

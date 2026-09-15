@@ -14,10 +14,9 @@ from api.cbs_client import get_cbs_pool_home
 from api.espn_client import ABBREV_CORRECTIONS as ESPN_ABBREV_CORRECTIONS
 from api.espn_client import get_scoreboard
 from api.espn_models import Situation
-from api.weather_api import get_forecast
 from config.config import configure_logging, get_d1_config, load_env
 from db.d1_client import D1Client
-from src.loaders.loader_helper import mapping_gap_statement, sql_batch_call
+from src.loaders.loader_helper import capture_weather, mapping_gap_statement, sql_batch_call
 
 logger = logging.getLogger(__name__)
 
@@ -38,31 +37,6 @@ _LATEST_SNAPSHOT_SQL = """
 SELECT game_id, quarter, time_remaining FROM game_snapshots
 WHERE snapshot_id IN (SELECT MAX(snapshot_id) FROM game_snapshots GROUP BY game_id)
 """
-
-_COMPASS_POINTS = [
-    "N",
-    "NNE",
-    "NE",
-    "ENE",
-    "E",
-    "ESE",
-    "SE",
-    "SSE",
-    "S",
-    "SSW",
-    "SW",
-    "WSW",
-    "W",
-    "WNW",
-    "NW",
-    "NNW",
-]
-
-
-def _bearing_to_compass(bearing: float) -> str:
-    """Convert a wind bearing in degrees to a 16-point compass direction."""
-    return _COMPASS_POINTS[round(bearing / 22.5) % 16]
-
 
 _NO_SITUATION = (None, None, None, None, None, None, None, None)
 
@@ -117,53 +91,8 @@ def _fetch_espn_scoreboard_lookup() -> tuple[
     return by_espn_id, by_teams
 
 
-_NO_WEATHER = (None, None, None, None, None, None, None, None, None, None)
-
-
-def _weather_fields(
-    latitude: float | None, longitude: float | None, game_id: int
-) -> tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any]:
-    """missing forecasts don't block"""
-    if latitude is None or longitude is None:
-        return _NO_WEATHER
-
-    try:
-        forecast = get_forecast(latitude, longitude)
-    except Exception:
-        logger.exception("Weather fetch failed for game_id=%s", game_id)
-        return _NO_WEATHER
-
-    current = forecast.currently
-    if current is None:
-        return _NO_WEATHER
-
-    alert = "; ".join(a.title for a in forecast.alerts) or None
-
-    return (
-        round(current.temperature) if current.temperature is not None else None,
-        round(current.apparent_temperature)
-        if current.apparent_temperature is not None
-        else None,
-        current.summary,
-        current.precip_type,
-        round(current.wind_speed) if current.wind_speed is not None else None,
-        round(current.wind_gust) if current.wind_gust is not None else None,
-        _bearing_to_compass(current.wind_bearing)
-        if current.wind_bearing is not None
-        else None,
-        round(current.precip_probability * 100)
-        if current.precip_probability is not None
-        else None,
-        current.visibility,
-        alert,
-    )
-
-
-def load_game_snapshots(env: str = "local") -> None:
+def load_game_snapshots() -> None:
     """capture a snapshot for every currently-live game"""
-    if not load_env(env):
-        sys.exit(1)
-
     client = D1Client(**get_d1_config())
 
     live_games = client.query(
@@ -213,11 +142,9 @@ def load_game_snapshots(env: str = "local") -> None:
             skipped_unchanged += 1
             continue
 
-        # Dome/Retractable stadiums are treated as always enclosed for weather purposes
-        if row["roof_type"] in ("Dome", "Retractable"):
-            weather = _NO_WEATHER
-        else:
-            weather = _weather_fields(row["latitude"], row["longitude"], row["game_id"])
+        weather = capture_weather(
+            row["latitude"], row["longitude"], row["roof_type"], f"game_id={row['game_id']}"
+        )
 
         if row["espn_event_id"] is not None:
             situation = espn_by_id.get(row["espn_event_id"])
@@ -288,14 +215,16 @@ def load_game_snapshots(env: str = "local") -> None:
         return
 
     sql_batch_call(statements + gap_statements, client)
-    logger.info("Captured %d game snapshots (%s)", len(statements), env)
+    logger.info("Captured %d game snapshots", len(statements))
 
 
-def main(env: str = "local") -> None:
+def main() -> None:
     """game snapshots"""
-    load_game_snapshots(env)
+    load_game_snapshots()
 
 
 if __name__ == "__main__":
     configure_logging()
-    main(sys.argv[1] if len(sys.argv) > 1 else "local")
+    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
+        sys.exit(1)
+    main()

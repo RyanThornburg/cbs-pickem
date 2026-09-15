@@ -128,6 +128,17 @@ database, `DROP TABLE`+re-run `setup.sh` is the only option (fine for
 local dev tables with no real rows yet; check row counts first via
 `D1Client.query("SELECT COUNT(*) ...")` before dropping anything).
 
+For a non-`UNIQUE` column, plain `ALTER TABLE ... ADD COLUMN` works fine
+against a table that already has rows — `db/setup.py` itself doesn't run
+these (it only ever applies `schema.sql`'s `CREATE TABLE IF NOT EXISTS`,
+which is a no-op against a table that already exists), so a column added
+to `schema.sql` after a database's first `setup.sh` run needs its own
+one-off `ALTER TABLE` against that already-provisioned database — there's
+no migration runner in this repo, so this has been done ad hoc via
+`D1Client.batch()` each time (e.g. `games.forecast_*` and
+`teams.wins`/`losses`/`ties`, both added 2026-09-15 - applied to local,
+**not yet applied to prod**).
+
 ## `mapping_gaps` tracks lookup misses for review
 
 Added 2026-09-09 so unmapped external values (a team/week/stadium/user

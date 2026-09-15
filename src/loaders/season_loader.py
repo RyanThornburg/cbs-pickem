@@ -31,11 +31,8 @@ ON CONFLICT(season_id) DO UPDATE SET
 """
 
 
-def main(env: str = "local") -> None:
+def main() -> None:
     """load current season"""
-    if not load_env(env):
-        sys.exit(1)
-
     client = D1Client(**get_d1_config())
     season = get_current_season()
     if season is None:
@@ -56,12 +53,14 @@ def main(env: str = "local") -> None:
         ),
     ]
 
-    logger.info("Upserting season %d into D1 (%s)", season.year, env)
+    logger.info("Upserting season %d into D1", season.year)
     sql_batch_call(statements, client)
 
-    logger.info("Season load complete for %s environment!", env)
+    logger.info("Season load complete")
 
 
 if __name__ == "__main__":
     configure_logging()
-    main(sys.argv[1] if len(sys.argv) > 1 else "local")
+    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
+        sys.exit(1)
+    main()

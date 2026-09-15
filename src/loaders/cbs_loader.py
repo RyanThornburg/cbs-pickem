@@ -143,11 +143,8 @@ def _cbs_starts_at_to_iso(starts_at_millis: int) -> str:
     )
 
 
-def load_cbs_users(env: str = "local") -> None:
+def load_cbs_users() -> None:
     """load users table from cbs data"""
-    if not load_env(env):
-        sys.exit(1)
-
     users: list[Member] = get_cbs_users()
 
     statements: list[tuple[str, list[Any] | None]] = [
@@ -160,14 +157,11 @@ def load_cbs_users(env: str = "local") -> None:
     sql_batch_call(statements)
 
 
-def map_cbs_to_sports_io(env: str = "local"):
+def map_cbs_to_sports_io():
     """
     Match CBS teams to existing team row from Sports IO
     Match on abbreviation and add CBS-only fields.
     """
-    if not load_env(env):
-        sys.exit(1)
-
     cbs_teams = get_cbs_pool_teams()
     statements: list[tuple[str, list[Any] | None]] = [
         (
@@ -189,14 +183,11 @@ def map_cbs_to_sports_io(env: str = "local"):
         return
 
     sql_batch_call(statements)
-    logger.info("Mapped %d CBS teams onto teams table (%s)", len(statements), env)
+    logger.info("Mapped %d CBS teams onto teams table", len(statements))
 
 
-def load_cbs_weeks(env: str = "local") -> None:
+def load_cbs_weeks() -> None:
     """update data from weekly cbs feed"""
-    if not load_env(env):
-        sys.exit(1)
-
     data = get_cbs_pool_home()
     if data is None:
         return
@@ -216,7 +207,7 @@ def load_cbs_weeks(env: str = "local") -> None:
     week_count = len(statements)
     statements.append((_UPDATE_SEASON_NAME_SQL, [data.name, SEASON]))
     sql_batch_call(statements)
-    logger.info("Upserted %d weeks into D1 (%s)", week_count, env)
+    logger.info("Upserted %d weeks into D1", week_count)
 
 
 # TODO: verify this is correct once data is live
@@ -229,11 +220,8 @@ def _pick_status_to_correct(pick_status: str) -> bool | None:
     return None
 
 
-def load_cbs_games(env: str = "local") -> None:
+def load_cbs_games() -> None:
     """run at start of new week"""
-    if not load_env(env):
-        sys.exit(1)
-
     client = D1Client(**get_d1_config())
 
     data: FootballPickemPoolHome | None = get_cbs_pool_home()
@@ -306,7 +294,7 @@ def load_cbs_games(env: str = "local") -> None:
 
     if statements:
         sql_batch_call(statements + gap_statements, client)
-        logger.info("Upserted %d games into D1 (%s)", len(statements), env)
+        logger.info("Upserted %d games into D1", len(statements))
     elif gap_statements:
         sql_batch_call(gap_statements, client)
 
@@ -365,11 +353,8 @@ def _add_user_picks(
         sql_batch_call(statements + gap_statements, client)
 
 
-def load_cbs_user_picks(env: str = "local") -> None:
+def load_cbs_user_picks() -> None:
     """load users weekly picks"""
-    if not load_env(env):
-        sys.exit(1)
-
     client = D1Client(**get_d1_config())
 
     data: FootballPickemManagerPool = get_cbs_weekly()
@@ -448,16 +433,15 @@ def load_cbs_user_picks(env: str = "local") -> None:
         sql_batch_call(weekly_statements + gap_statements, client)
 
 
-def main(env: str = "local") -> None:
+def main() -> None:
     """load data from cbs"""
-    if not load_env(env):
-        sys.exit(1)
-
-    load_cbs_weeks(env)
-    load_cbs_games(env)
-    load_cbs_user_picks(env)
+    load_cbs_weeks()
+    load_cbs_games()
+    load_cbs_user_picks()
 
 
 if __name__ == "__main__":
     configure_logging()
-    main(sys.argv[1] if len(sys.argv) > 1 else "local")
+    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
+        sys.exit(1)
+    main()

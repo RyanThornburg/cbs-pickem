@@ -416,11 +416,8 @@ ON CONFLICT(name) DO UPDATE SET
 """
 
 
-def load_stadiums(env: str = "local") -> None:
+def load_stadiums() -> None:
     """seed/update the static stadiums list"""
-    if not load_env(env):
-        sys.exit(1)
-
     statements: list[tuple[str, list[Any] | None]] = [
         (
             _UPSERT_STADIUM_SQL,
@@ -438,14 +435,16 @@ def load_stadiums(env: str = "local") -> None:
         for s in STADIUMS + INTERNATIONAL_VENUES
     ]
     sql_batch_call(statements)
-    logger.info("Upserted %d stadiums into D1 (%s)", len(statements), env)
+    logger.info("Upserted %d stadiums into D1", len(statements))
 
 
-def main(env: str = "local") -> None:
+def main() -> None:
     """load stadium details"""
-    load_stadiums(env)
+    load_stadiums()
 
 
 if __name__ == "__main__":
     configure_logging()
-    main(sys.argv[1] if len(sys.argv) > 1 else "local")
+    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
+        sys.exit(1)
+    main()

@@ -41,13 +41,10 @@ def _season_pool_name(d1: D1Client) -> str | None:
     return result.results[0]["name"] if result.results else None
 
 
-def close_out_season(env: str = "local") -> None:
+def close_out_season() -> None:
     """Close out config.SEASON (the current season) - compute_week_leaderboard()
     is itself hardcoded to config.SEASON, so this can never operate on any
     other season without mislabeling that season's real data."""
-    if not load_env(env):
-        sys.exit(1)
-
     d1 = D1Client(**get_d1_config())
 
     final_week = _final_week_number(d1)
@@ -82,20 +79,21 @@ def close_out_season(env: str = "local") -> None:
         )
 
     logger.info(
-        "Closed out season %s (final week %d) - wrote %d historical_standings rows (%s)",
+        "Closed out season %s (final week %d) - wrote %d historical_standings rows",
         SEASON,
         final_week,
         len(standings),
-        env,
     )
 
-    write_historical(env)
+    write_historical()
 
 
-def main(env: str = "local") -> None:
-    close_out_season(env)
+def main() -> None:
+    close_out_season()
 
 
 if __name__ == "__main__":
     configure_logging()
-    main(sys.argv[1] if len(sys.argv) > 1 else "local")
+    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
+        sys.exit(1)
+    main()

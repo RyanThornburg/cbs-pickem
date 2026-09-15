@@ -226,11 +226,8 @@ def _get_live_window_games() -> list[Game]:
     return list(games_by_id.values())
 
 
-def load_games_data(env: str = "local", live: bool = False) -> None:
+def load_games_data(live: bool = False) -> None:
     """load games from sports io"""
-    if not load_env(env):
-        sys.exit(1)
-
     client = D1Client(**get_d1_config())
 
     games: list[Game] = get_games() if not live else _get_live_window_games()
@@ -376,7 +373,7 @@ def load_games_data(env: str = "local", live: bool = False) -> None:
 
     if statements:
         sql_batch_call(statements + gap_statements, client)
-        logger.info("Upserted %d games into D1 (%s)", len(statements), env)
+        logger.info("Upserted %d games into D1", len(statements))
     elif gap_statements:
         sql_batch_call(gap_statements, client)
 
@@ -466,7 +463,7 @@ def _game_ids_by_status(client: D1Client, statuses: tuple[str, ...]) -> dict[int
 
 
 def _load_stats_for_game_ids(
-    game_ids: dict[int, int], client: D1Client, env: str, label: str
+    game_ids: dict[int, int], client: D1Client, label: str
 ) -> None:
     """game_ids: sports_io_game_id -> internal game_id. `label` is just for
     log messages (e.g. "week 3", "live")."""
@@ -502,18 +499,13 @@ def _load_stats_for_game_ids(
         return
 
     sql_batch_call(statements + gap_statements, client)
-    logger.info(
-        "Upserted %d game_team_stats rows (%s, %s)", len(statements), label, env
-    )
+    logger.info("Upserted %d game_team_stats rows (%s)", len(statements), label)
 
 
-def load_game_statistics(week: int, env: str = "local") -> None:
+def load_game_statistics(week: int) -> None:
     """load per-team box score stats for every game in a week - meant for
     the end-of-week/game-finished capture, not live polling (see
     load_live_game_statistics for that)."""
-    if not load_env(env):
-        sys.exit(1)
-
     client = D1Client(**get_d1_config())
 
     week_row = client.query(
@@ -530,33 +522,29 @@ def load_game_statistics(week: int, env: str = "local") -> None:
         logger.warning("No games with a sports_io_game_id for week %s yet", week)
         return
 
-    _load_stats_for_game_ids(game_ids, client, env, f"week {week}")
+    _load_stats_for_game_ids(game_ids, client, f"week {week}")
 
 
-def load_live_game_statistics(env: str = "local") -> None:
+def load_live_game_statistics() -> None:
     """load per-team box score stats for every currently-live game - Sports
     IO's stats endpoint returns real partial stats mid-game (confirmed live
     2026-09-09), not just final box scores."""
-    if not load_env(env):
-        sys.exit(1)
-
     client = D1Client(**get_d1_config())
     game_ids = _game_ids_by_status(client, ("IN_PROGRESS", "HALFTIME"))
     if not game_ids:
         logger.info("No live games to load stats for")
         return
 
-    _load_stats_for_game_ids(game_ids, client, env, "live")
+    _load_stats_for_game_ids(game_ids, client, "live")
 
 
-def main(env: str = "local") -> None:
+def main() -> None:
     """load game data"""
-    if not load_env(env):
-        sys.exit(1)
-
-    load_games_data(env)
+    load_games_data()
 
 
 if __name__ == "__main__":
     configure_logging()
-    main(sys.argv[1] if len(sys.argv) > 1 else "local")
+    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
+        sys.exit(1)
+    main()

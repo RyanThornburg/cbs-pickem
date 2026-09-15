@@ -19,17 +19,20 @@ from src.kv_writer import (
     write_current_week_leaderboard,
     write_current_week_odds,
     write_current_week_trends,
+    write_incomplete_weeks_games,
     write_meta_current,
     write_season_trends,
 )
 from src.loaders.cbs_loader import load_cbs_games, load_cbs_user_picks, load_cbs_weeks
 from src.loaders.game_snapshots_loader import load_game_snapshots
 from src.loaders.odds_loader import load_the_odds_api_odds
+from src.loaders.pregame_weather_loader import load_pregame_weather
 from src.loaders.sports_io_loader import (
     load_game_statistics,
     load_games_data,
     load_live_game_statistics,
 )
+from src.loaders.teams_loader import main as load_teams
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +53,14 @@ ODDS_INTERVAL_SECONDS = 6 * 60 * 60  # 4x/day baseline, all days
 ODDS_PREKICKOFF_LEAD_MINUTES = 30
 ODDS_PREKICKOFF_MIN_GAP_SECONDS = 2 * 60 * 60  # cover the 4pm window gap
 HOUSEKEEPING_INTERVAL_SECONDS = 24 * 60 * 60
+# Pregame forecast: coarse baseline for the whole current week (scoped to
+# weeks.is_current in load_pregame_weather() itself - see its own docstring
+# for why that join matters), boosted once a game is close enough that a
+# tighter refresh is actually worth the extra calls - well within Pirate
+# Weather's 20k/month quota either way.
+WEATHER_PREGAME_BASELINE_INTERVAL_SECONDS = 4 * 60 * 60
+WEATHER_PREGAME_NEAR_INTERVAL_SECONDS = 60 * 60
+WEATHER_PREGAME_NEAR_WINDOW_HOURS = 24
 
 _UPSERT_STATE_SQL = """
 INSERT INTO orchestration_state (key, value) VALUES (?, ?)
@@ -122,13 +133,13 @@ def _is_live_window_active(client: D1Client) -> bool:
     return bool(result.results)
 
 
-def _run_live_updates(client: D1Client, env: str) -> None:
+def _run_live_updates(client: D1Client) -> None:
     if _should_run(
         client, "sports_io_live_last_poll_at", SPORTS_IO_LIVE_INTERVAL_SECONDS
     ):
         # Sports IO has sent malformed/unexpected game data mid-slate
         try:
-            load_games_data(env, live=True)
+            load_games_data(live=True)
         except Exception as exc:
             logger.exception("Live games poll failed - continuing without it")
             _record_system_event(client, "sports_io_live_poll", str(exc))
@@ -140,28 +151,29 @@ def _run_live_updates(client: D1Client, env: str) -> None:
     # reveals every entry's picks (not just early-game ones), so this is when
     # the bulk of live pick-grading actually happens via trending status
     if _should_run(client, "cbs_live_last_poll_at", CBS_LIVE_INTERVAL_SECONDS):
-        load_cbs_user_picks(env)
-        write_current_week_leaderboard(env)
+        load_cbs_user_picks()
+        # write_current_week_leaderboard() not needed here - run_tick()
+        # now calls it unconditionally on every tick regardless of branch
         _set_state(client, "cbs_live_last_poll_at", _now_iso())
 
     if _should_run(
         client, "game_snapshot_last_capture_at", GAME_SNAPSHOT_INTERVAL_SECONDS
     ):
-        load_game_snapshots(env)
+        load_game_snapshots()
         _set_state(client, "game_snapshot_last_capture_at", _now_iso())
 
     if _should_run(
         client, "live_game_stats_last_capture_at", GAME_SNAPSHOT_INTERVAL_SECONDS
     ):
-        load_live_game_statistics(env)
+        load_live_game_statistics()
         _set_state(client, "live_game_stats_last_capture_at", _now_iso())
 
 
-def _capture_odds(client: D1Client, env: str, state_key: str) -> None:
+def _capture_odds(client: D1Client, state_key: str) -> None:
     """Odds aren't required/shouldn't block, don't raise but log error"""
     try:
-        load_the_odds_api_odds(env)
-        write_current_week_odds(env)
+        load_the_odds_api_odds()
+        write_current_week_odds()
     except Exception as exc:
         logger.exception("Odds capture failed - continuing without it")
         _record_system_event(client, "odds_capture", str(exc))
@@ -169,23 +181,24 @@ def _capture_odds(client: D1Client, env: str, state_key: str) -> None:
         _set_state(client, state_key, _now_iso())
 
 
-def _run_quiet_period_tasks(client: D1Client, env: str) -> None:
+def _run_quiet_period_tasks(client: D1Client) -> None:
     if _should_run(client, "odds_last_call_at", ODDS_INTERVAL_SECONDS):
-        _capture_odds(client, env, "odds_last_call_at")
+        _capture_odds(client, "odds_last_call_at")
 
     if _should_run(client, "housekeeping_last_run_at", HOUSEKEEPING_INTERVAL_SECONDS):
-        load_games_data(env)  # full schedule/weeks refresh - idempotent, safe any day
-        load_cbs_weeks(env)
-        load_cbs_games(env)
-        write_meta_current(env)
-        # write_current_week_games(env) not needed here - run_tick() now
+        load_games_data()  # full schedule/weeks refresh - idempotent, safe any day
+        load_teams()  # refresh team win/loss/tie records, same cadence
+        load_cbs_weeks()
+        load_cbs_games()
+        write_meta_current()
+        # write_current_week_games() not needed here - run_tick() now
         # calls it unconditionally on every tick regardless of branch
         _set_state(client, "housekeeping_last_run_at", _now_iso())
     else:
         logger.info("Not running, too soon")
 
 
-def _run_pre_kickoff_odds_capture(client: D1Client, env: str, now: datetime) -> None:
+def _run_pre_kickoff_odds_capture(client: D1Client, now: datetime) -> None:
     """One extra odds call right before each distinct kickoff cluster this
     week (TNF, Sunday's early/late/night windows, MNF) - the flat baseline
     interval otherwise has no relationship to actual kickoff times and can
@@ -217,10 +230,46 @@ def _run_pre_kickoff_odds_capture(client: D1Client, env: str, now: datetime) -> 
         return
 
     logger.info("Running pre-kickoff odds capture")
-    _capture_odds(client, env, "odds_prekickoff_last_call_at")
+    _capture_odds(client, "odds_prekickoff_last_call_at")
 
 
-def _run_deadline_sweep(client: D1Client, env: str, now: datetime) -> None:
+def _run_pregame_weather_capture(client: D1Client, now: datetime) -> None:
+    """Pregame forecast for games that haven't started yet - same
+    baseline+near-kickoff-boost shape as _run_pre_kickoff_odds_capture(),
+    except continuous (weather is worth re-checking repeatedly as it
+    changes) rather than a single pre-kickoff pulse. Runs unconditionally
+    every tick, live or quiet, so an already-live early game can't
+    suppress the refresh for an approaching later one.
+    """
+    now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    near_cutoff = (now + timedelta(hours=WEATHER_PREGAME_NEAR_WINDOW_HOURS)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    has_near_kickoff = bool(
+        client.query(
+            "SELECT 1 FROM games WHERE game_time > ? AND game_time <= ? "
+            "AND status = 'SCHEDULED' LIMIT 1",
+            [now_iso, near_cutoff],
+        ).results
+    )
+    interval = (
+        WEATHER_PREGAME_NEAR_INTERVAL_SECONDS
+        if has_near_kickoff
+        else WEATHER_PREGAME_BASELINE_INTERVAL_SECONDS
+    )
+    if not _should_run(client, "weather_pregame_last_capture_at", interval):
+        return
+
+    try:
+        load_pregame_weather()
+    except Exception as exc:
+        logger.exception("Pregame weather capture failed - continuing without it")
+        _record_system_event(client, "pregame_weather_capture", str(exc))
+    finally:
+        _set_state(client, "weather_pregame_last_capture_at", _now_iso())
+
+
+def _run_deadline_sweep(client: D1Client, now: datetime) -> None:
     deadline = _current_week_deadline_utc(now)
     sunday_date = deadline.date().isoformat()
     if now < deadline:
@@ -228,17 +277,17 @@ def _run_deadline_sweep(client: D1Client, env: str, now: datetime) -> None:
     if _get_state(client, "deadline_last_synced_sunday") == sunday_date:
         return
 
-    load_cbs_weeks(env)
-    load_cbs_games(env)
-    load_cbs_user_picks(env)
-    write_meta_current(env)
-    write_current_week_games(env)
-    write_current_week_leaderboard(env)
+    load_cbs_weeks()
+    load_cbs_games()
+    load_cbs_user_picks()
+    write_meta_current()
+    write_current_week_games()
+    write_current_week_leaderboard()
     _set_state(client, "deadline_last_synced_sunday", sunday_date)
     logger.info("Ran Sunday 1PM ET deadline sweep for %s", sunday_date)
 
 
-def _run_finished_game_stats(client: D1Client, env: str) -> None:
+def _run_finished_game_stats(client: D1Client) -> None:
     """Games that went FINAL but haven't had their final box score
     reloaded yet - catches both the normal live->FINAL transition and
     anything missed if the process wasn't running at the time. Can't
@@ -246,14 +295,22 @@ def _run_finished_game_stats(client: D1Client, env: str) -> None:
     version did, confirmed live 2026-09-10 to never fire) - live polling
     already writes game_team_stats rows well before a game goes FINAL, so
     a row always exists by the time this runs. `games.has_final_stats`
-    tracks it explicitly instead."""
+    tracks it explicitly instead.
+
+    Also marks weeks.is_complete once every game in that week is FINAL -
+    added 2026-09-15, this was a plain always-FALSE column with nothing
+    anywhere ever writing to it until now. Piggybacks on this same loop
+    rather than its own separate sweep, since this is already exactly
+    "a week whose games just changed FINAL-ness" - the NOT EXISTS check
+    only needs to run for weeks touched this tick, not every week every
+    tick."""
     result = client.query(
         "SELECT DISTINCT w.week_id, w.week_number FROM games g "
         "JOIN weeks w ON w.week_id = g.week_id "
         "WHERE g.status = 'FINAL' AND g.has_final_stats = FALSE"
     )
     for row in result.results:
-        load_game_statistics(row["week_number"], env)
+        load_game_statistics(row["week_number"])
         client.batch(
             [
                 (
@@ -262,32 +319,53 @@ def _run_finished_game_stats(client: D1Client, env: str) -> None:
                         "WHERE week_id = ? AND status = 'FINAL'"
                     ),
                     [row["week_id"]],
-                )
+                ),
+                (
+                    (
+                        "UPDATE weeks SET is_complete = TRUE WHERE week_id = ? "
+                        "AND NOT EXISTS ("
+                        "SELECT 1 FROM games WHERE week_id = ? AND status != 'FINAL'"
+                        ")"
+                    ),
+                    [row["week_id"], row["week_id"]],
+                ),
             ]
         )
 
 
-def main(env: str = "local") -> None:
-    if not load_env(env):
-        sys.exit(1)
-
+def main() -> None:
     client = D1Client(**get_d1_config())
     now = datetime.now(UTC)
 
     if _is_live_window_active(client):
-        _run_live_updates(client, env)
+        _run_live_updates(client)
     else:
-        _run_quiet_period_tasks(client, env)
+        _run_quiet_period_tasks(client)
 
-    _run_pre_kickoff_odds_capture(client, env, now)
-    _run_deadline_sweep(client, env, now)
-    _run_finished_game_stats(client, env)
-    write_current_week_games(env)
-    write_current_week_trends(env)
-    write_season_trends(env)
-    write_admin_status(env)
+    _run_pre_kickoff_odds_capture(client, now)
+    _run_pregame_weather_capture(client, now)
+    _run_deadline_sweep(client, now)
+    # Must run before _run_finished_game_stats() marks a week is_complete -
+    # this call's own query reads is_complete as of *before* that update, so
+    # the exact tick a week's last game goes FINAL still gets one final KV
+    # write for it (games.status/score themselves are already fresh by here,
+    # from _run_live_updates()/_run_quiet_period_tasks() above - only
+    # is_complete's flip timing matters for this ordering).
+    write_incomplete_weeks_games()
+    _run_finished_game_stats(client)
+    # Unconditional, not just from inside the CBS live branch - is_current
+    # can flip to a new week (housekeeping runs daily, independent of
+    # live/quiet state) days before that week's first game goes live and
+    # the CBS branch would otherwise get a chance to write its leaderboard
+    # key for the first time, leaving it simply missing from KV until then.
+    write_current_week_leaderboard()
+    write_current_week_trends()
+    write_season_trends()
+    write_admin_status()
 
 
 if __name__ == "__main__":
     configure_logging()
-    main(sys.argv[1] if len(sys.argv) > 1 else "local")
+    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
+        sys.exit(1)
+    main()

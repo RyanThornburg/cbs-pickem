@@ -133,11 +133,8 @@ def _snapshot_statements_for_event(
     return statements
 
 
-def load_the_odds_api_odds(env: str = "local") -> None:
+def load_the_odds_api_odds() -> None:
     """load odds from the odds api"""
-    if not load_env(env):
-        sys.exit(1)
-
     client = D1Client(**get_d1_config())
     events: list[Event] = get_odds()
 
@@ -177,7 +174,7 @@ def load_the_odds_api_odds(env: str = "local") -> None:
     if backfill_statements:
         sql_batch_call(backfill_statements + gap_statements, client)
         logger.info(
-            "Linked %d games to odds_api_event_id (%s)", len(backfill_statements), env
+            "Linked %d games to odds_api_event_id", len(backfill_statements)
         )
     elif gap_statements:
         sql_batch_call(gap_statements, client)
@@ -187,18 +184,17 @@ def load_the_odds_api_odds(env: str = "local") -> None:
         return
 
     sql_batch_call(snapshot_statements, client)
-    logger.info("Inserted %d odds snapshots (%s)", len(snapshot_statements), env)
+    logger.info("Inserted %d odds snapshots", len(snapshot_statements))
 
 
-def main(env: str = "local") -> None:
+def main() -> None:
     """load all odds"""
-    if not load_env(env):
-        sys.exit(1)
-
-    load_the_odds_api_odds(env)
+    load_the_odds_api_odds()
     # TODO: add odds from sports io
 
 
 if __name__ == "__main__":
     configure_logging()
-    main(sys.argv[1] if len(sys.argv) > 1 else "local")
+    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
+        sys.exit(1)
+    main()

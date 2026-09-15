@@ -5,10 +5,73 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
+from api.weather_api import get_forecast
 from config.config import get_d1_config
 from db.d1_client import D1Client, D1Error
 
 logger = logging.getLogger(__name__)
+
+# Stadiums with these roof types are always treated as enclosed - no way to
+# detect actual roof state (e.g. a retractable roof open on a nice day), so
+# weather is deliberately skipped for both rather than guessed at.
+ENCLOSED_ROOF_TYPES = ("Dome", "Retractable")
+
+_NO_WEATHER = (None, None, None, None, None, None, None, None, None, None)
+
+_COMPASS_POINTS = [
+    "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+    "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+]  # fmt: skip
+
+
+def _bearing_to_compass(bearing: float) -> str:
+    """Convert a wind bearing in degrees to a 16-point compass direction."""
+    return _COMPASS_POINTS[round(bearing / 22.5) % 16]
+
+
+def capture_weather(
+    latitude: float | None, longitude: float | None, roof_type: str | None, context: str
+) -> tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any]:
+    """(temp_f, feels_like_f, condition, precip_type, wind_speed_mph,
+    wind_gust_mph, wind_direction, precipitation_pct, visibility_mi, alert)
+    for a stadium location right now - None across the board for an
+    enclosed roof, a stadium with no known coordinates, or any fetch
+    failure (weather is enrichment, never worth blocking the caller's
+    write over). `context` only labels the log line on failure (e.g.
+    "game_id=123") so it's traceable back to what the fetch was for."""
+    if roof_type in ENCLOSED_ROOF_TYPES or latitude is None or longitude is None:
+        return _NO_WEATHER
+
+    try:
+        forecast = get_forecast(latitude, longitude)
+    except Exception:
+        logger.exception("Weather fetch failed for %s", context)
+        return _NO_WEATHER
+
+    current = forecast.currently
+    if current is None:
+        return _NO_WEATHER
+
+    alert = "; ".join(a.title for a in forecast.alerts) or None
+
+    return (
+        round(current.temperature) if current.temperature is not None else None,
+        round(current.apparent_temperature)
+        if current.apparent_temperature is not None
+        else None,
+        current.summary,
+        current.precip_type,
+        round(current.wind_speed) if current.wind_speed is not None else None,
+        round(current.wind_gust) if current.wind_gust is not None else None,
+        _bearing_to_compass(current.wind_bearing)
+        if current.wind_bearing is not None
+        else None,
+        round(current.precip_probability * 100)
+        if current.precip_probability is not None
+        else None,
+        current.visibility,
+        alert,
+    )
 
 
 def sql_batch_call(

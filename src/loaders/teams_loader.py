@@ -24,9 +24,9 @@ logger = logging.getLogger(__name__)
 _UPSERT_SQL = """
 INSERT INTO teams (
     name, season, city, abbreviation, established, logo,
-    conference, division, sports_io_team_id
+    conference, division, wins, losses, ties, sports_io_team_id
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(sports_io_team_id) DO UPDATE SET
     name = excluded.name,
     season = excluded.season,
@@ -35,24 +35,22 @@ ON CONFLICT(sports_io_team_id) DO UPDATE SET
     established = excluded.established,
     logo = excluded.logo,
     conference = excluded.conference,
-    division = excluded.division
+    division = excluded.division,
+    wins = excluded.wins,
+    losses = excluded.losses,
+    ties = excluded.ties
 """
 
 
-def _conference_division_by_team_id(
-    standings: list[Standing],
-) -> dict[int, tuple[str, str]]:
-    return {s.team.id: (s.conference, s.division) for s in standings}
+def _standings_by_team_id(standings: list[Standing]) -> dict[int, Standing]:
+    return {s.team.id: s for s in standings}
 
 
-def main(env: str = "local") -> None:
+def main() -> None:
     """load team data"""
-    if not load_env(env):
-        sys.exit(1)
-
     client = D1Client(**get_d1_config())
     teams = get_teams()
-    conference_division = _conference_division_by_team_id(get_standings())
+    standings_by_team_id = _standings_by_team_id(get_standings())
 
     statements: list[tuple[str, list[Any] | None]] = []
     for team in teams:
@@ -63,7 +61,12 @@ def main(env: str = "local") -> None:
                 team.id,
             )
             continue
-        conference, division = conference_division.get(team.id, (None, None))
+        standing = standings_by_team_id.get(team.id)
+        conference = standing.conference if standing else None
+        division = standing.division if standing else None
+        wins = standing.won if standing else None
+        losses = standing.lost if standing else None
+        ties = standing.ties if standing else None
         statements.append(
             (
                 _UPSERT_SQL,
@@ -76,6 +79,9 @@ def main(env: str = "local") -> None:
                     team.logo,
                     conference,
                     division,
+                    wins,
+                    losses,
+                    ties,
                     team.id,
                 ],
             )
@@ -85,12 +91,14 @@ def main(env: str = "local") -> None:
         logger.warning("No teams to load")
         return
 
-    logger.info("Upserting %d teams into D1 (%s)", len(statements), env)
+    logger.info("Upserting %d teams into D1", len(statements))
     sql_batch_call(statements, client)
 
-    logger.info("Teams load complete for %s environment!", env)
+    logger.info("Teams load complete")
 
 
 if __name__ == "__main__":
     configure_logging()
-    main(sys.argv[1] if len(sys.argv) > 1 else "local")
+    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
+        sys.exit(1)
+    main()

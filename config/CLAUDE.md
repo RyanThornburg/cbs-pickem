@@ -5,9 +5,19 @@ exposes one typed getter per concern (`get_d1_config()`, `get_cbs_config()`
 — the latter returns a `CBSConfig` dataclass). `get_cbs_config()` calls
 `load_env()` itself and raises if it fails, so CBS config is validated at
 the point it's requested rather than relying on the caller to check
-`load_env()`'s return value. For everything else, call `load_env()` once,
-then pull whichever config a module needs — see `db/setup.py` for that
-pattern.
+`load_env()`'s return value.
+
+For everything else — D1/KV, which is most of the codebase —
+`load_env(env)` is called **exactly once per process**, and only from the
+`if __name__ == "__main__":` block of whichever module was actually
+invoked from the command line (added 2026-09-15, see `src/CLAUDE.md`'s
+Loaders section for the full reasoning): `if not
+load_env(sys.argv[1] if len(sys.argv) > 1 else "local"): sys.exit(1)`
+then call that module's `main()` with no arguments. No other function —
+not `main()`, not any `load_*()`/`write_*()` — takes an `env` parameter
+or calls `load_env()` itself; they all just call `get_d1_config()`/
+`get_kv_config()` directly, trusting `os.environ` is already populated
+for the rest of the process. See `db/setup.py` for the pattern.
 
 `config/config.py` also exposes `get_week_path(week)`,
 `get_players_path()`, and `get_pool_home_path(week)` — where scraped CBS

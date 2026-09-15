@@ -44,23 +44,22 @@ def _split_statements(sql: str) -> list[str]:
     return statements
 
 
-def main(env: str = "local") -> None:
-    if not load_env(env):
-        sys.exit(1)
-
+def main() -> None:
     client = D1Client(**get_d1_config())
     statements = _split_statements(SCHEMA_PATH.read_text())
 
-    logger.info("Applying %d statements to D1 (%s)", len(statements), env)
+    logger.info("Applying %d statements to D1", len(statements))
     try:
         client.batch([(stmt, None) for stmt in statements])
     except D1Error:
         logger.exception("Schema setup failed")
         sys.exit(1)
 
-    logger.info("Database setup complete for %s environment!", env)
+    logger.info("Database setup complete")
 
 
 if __name__ == "__main__":
     configure_logging()
-    main(sys.argv[1] if len(sys.argv) > 1 else "local")
+    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
+        sys.exit(1)
+    main()

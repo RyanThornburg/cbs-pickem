@@ -26,7 +26,10 @@ CREATE TABLE IF NOT EXISTS teams (
     medium_name VARCHAR(50), -- CBS's market/brand name, e.g. 'Arizona'
     nick_name VARCHAR(50), -- e.g. 'Cardinals'
     color_primary_hex VARCHAR(6),
-    color_secondary_hex VARCHAR(6)
+    color_secondary_hex VARCHAR(6),
+    wins INT,
+    losses INT,
+    ties INT
 );
 
 -- Stadiums and venues (including international)
@@ -60,7 +63,7 @@ CREATE TABLE IF NOT EXISTS weeks (
     name VARCHAR(50), -- "Week 1", "Wild Card", etc.
     start_time DATETIME, -- ISO8601 UTC (e.g. "2026-09-14T17:00:00Z")
     end_time DATETIME, -- same format, max game_time in the week
-    is_complete BOOLEAN DEFAULT FALSE,
+    is_complete BOOLEAN DEFAULT FALSE, -- set once every game in the week is FINAL (orchestration._run_finished_game_stats)
     cbs_pool_period_id VARCHAR(50) UNIQUE, -- for mapping weeks in cbs
     is_current BOOLEAN DEFAULT FALSE, 
     FOREIGN KEY (season_id) REFERENCES seasons(season_id),
@@ -99,6 +102,19 @@ CREATE TABLE IF NOT EXISTS games (
     tv_network VARCHAR(50),
     gametracker_url VARCHAR(255),
     status_desc VARCHAR(30), -- raw per-source status string, kept for debugging/audit
+    -- pregame forecast before kickoff (overwriting on each call)
+    -- not keeping historical forecasts, just the latest
+    -- tracking in game weather in the game snapshot table    forecast_temp_f INT,
+    forecast_feels_like_f INT,
+    forecast_condition VARCHAR(50),
+    forecast_precip_type VARCHAR(20),
+    forecast_wind_speed_mph INT,
+    forecast_wind_gust_mph INT,
+    forecast_wind_direction VARCHAR(10),
+    forecast_precipitation_pct INT,
+    forecast_visibility_mi DECIMAL(4,1),
+    forecast_alert VARCHAR(255),
+    forecast_captured_at TIMESTAMP
     FOREIGN KEY (week_id) REFERENCES weeks(week_id),
     FOREIGN KEY (home_team_id) REFERENCES teams(team_id),
     FOREIGN KEY (away_team_id) REFERENCES teams(team_id),
