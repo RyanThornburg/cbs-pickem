@@ -62,6 +62,14 @@ already never took `env` (see `config/CLAUDE.md`).
   `db/CLAUDE.md`'s reconciliation section for how this coexists with
   Sports IO also writing `games`), and `load_cbs_user_picks()` (upsert
   `weekly_performance` + `user_picks` from the weekly-standings page).
+  `load_cbs_games()`/`load_cbs_user_picks()` both take an optional
+  `pool_period_id` (added 2026-09-15, passed straight through to
+  `get_cbs_pool_home()`/`get_cbs_weekly()` — see `api/CLAUDE.md`) — this
+  is what `backfill_cbs_week(week_number)` uses to re-run both loaders
+  against a specific already-elapsed week instead of always the current
+  one, resolving the id from `weeks.cbs_pool_period_id` (already stored
+  for every week). CLI: `uv run python -m src.loaders.cbs_loader
+  [local|prod] <week_number>`.
 - `sports_io_loader.py` — `load_games_data(live=False|True)` upserts
   `weeks` (start/end time, `live=False` only — a `live=True` call only
   ever sees currently-live games, so it can't safely compute a whole
@@ -169,7 +177,12 @@ and the try/except-degrades-to-nulls behavior both call sites need, so
 a fetch failure never blocks the caller's own write. Pulled out here
 once a second loader needed the exact same logic `game_snapshots_loader.py`
 already had — same "consolidate once two callers need it" reasoning as
-`id_map()`/`sql_batch_call()`.
+`id_map()`/`sql_batch_call()`. Also captures `icon` (added 2026-09-15,
+`game_snapshots.weather_icon`/`games.forecast_icon`) — Pirate Weather's
+own standardized icon identifier (`DataPoint.icon`, e.g.
+`"partly-cloudy-day"`, `"rain"`), distinct from `condition`'s free-text
+summary and meant for the web UI to map onto an actual icon set rather
+than parsing a summary string.
 
 `loader_helper.mapping_gap_statement(source, entity_type, raw_value,
 context)` is the other half — every genuine `id_map()`/correction-table
@@ -472,6 +485,16 @@ then delegates):
   worth citing in the UI. Each book's own earliest/latest
   `odds_snapshots` row stands in for "opening"/"closing" (matching the
   table's own MIN/MAX-over-`captured_at` design, see `db/CLAUDE.md`).
+  Also carries `books` (added 2026-09-15, `_latest_book_odds_by_game()`) —
+  each `_ODDS_BOOKMAKERS` book's own **latest** spread/total/moneyline
+  line (`home_point`/`home_price`/`away_point`/`away_price`/
+  `captured_at` per market), for a detailed per-book odds view. Unlike
+  `market_spread`, this isn't a consensus and doesn't track open vs.
+  close — a single book's own line only needs its most recent snapshot,
+  same reasoning as `teams.wins`/`losses`/`ties` being "current, not
+  historical." Confirmed live: over/under line-movement trends
+  (`total_movers` in `write_week_trends()`, see below) already existed
+  before this and needed no changes.
 - `write_historical()` → `meta:historical` — see `db/CLAUDE.md`'s
   `historical_standings` section for what feeds this.
 - `write_admin_status()` → `meta:admin` (added 2026-09-11) — a health-check

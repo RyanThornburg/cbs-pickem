@@ -11,10 +11,37 @@ fetch-and-extract-or-raise, shared by all three.
 
 Three module-level functions build a `CBSClient` and drive it end-to-end
 (fetch, validate against a pydantic model, log, write to disk):
-`get_cbs_weekly(week=0)`, `get_cbs_users()`, and `get_cbs_pool_home(week=0)`.
-`__main__` calls `configure_logging()` then `get_cbs_weekly()`;
-`get_cbs_users()`/`get_cbs_pool_home()` have no CLI entry point yet — call
-them directly (`from api.cbs_client import get_cbs_users, get_cbs_pool_home`).
+`get_cbs_weekly(pool_period_id=None)`, `get_cbs_users()`, and
+`get_cbs_pool_home(pool_period_id=None)`. `__main__` calls
+`configure_logging()` then `get_cbs_weekly()`; `get_cbs_users()`/
+`get_cbs_pool_home()` have no CLI entry point yet — call them directly
+(`from api.cbs_client import get_cbs_users, get_cbs_pool_home`).
+
+**`pool_period_id` genuinely lets you fetch a past week, confirmed live
+2026-09-15** — both the weekly-standings and pool-home pages accept
+`?poolPeriodId=<id>` and return that specific period's data instead of
+always the current one (found by inspecting a saved pool-home payload's
+`poolPeriods` list, then testing the URL directly). Passing it sets
+`CBSClient.pool_period_id` before the fetch (the client already had the
+attribute and the URL-building logic for this - it just always stayed
+`None`, so nothing before now ever actually exercised it). `weeks.cbs_pool_period_id`
+already stores every period's id, not just the current one (`load_cbs_weeks()`
+iterates the full `pool_periods` list on every run), so no extra fetching
+is needed to discover a past week's id - `src/loaders/cbs_loader.py`'s
+`backfill_cbs_week(week_number)` just reads it out of `weeks` and re-runs
+the normal loaders against it. See `src/CLAUDE.md`'s Loaders section.
+
+Deriving the returned week number differs by page, and this bit twice
+while wiring the above up: the weekly-standings page's own `PoolPeriod`
+(`cbs_data.pool_period`) has no `order` field at all - only
+`PoolPeriodSummary` (the `pool_periods` list) and pool-home's richer
+`PoolHomePoolPeriod` do. `get_cbs_weekly()` derives `week_int` by matching
+`cbs_data.pool_period.id` against the summary list, rather than trusting
+a caller-supplied week number the way the removed `pool_period_for_week(week)`
+used to (that trusted the request, not the response - silently wrong if
+the fetch didn't actually return what was asked for). `get_cbs_pool_home()`
+can keep reading `.order` straight off `cbs_data.pool_period` since its
+page's `PoolPeriod` really is the richer `PoolHomePoolPeriod` shape.
 
 Transient fetch failures (network errors, 5xx/429) are retried with
 backoff via `stamina` in `_fetch_html_data()` — but login is deliberately
