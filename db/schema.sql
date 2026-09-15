@@ -102,11 +102,13 @@ CREATE TABLE IF NOT EXISTS games (
     tv_network VARCHAR(50),
     gametracker_url VARCHAR(255),
     status_desc VARCHAR(30), -- raw per-source status string, kept for debugging/audit
-    -- pregame forecast before kickoff (overwriting on each call)
-    -- not keeping historical forecasts, just the latest
-    -- tracking in game weather in the game snapshot table    forecast_temp_f INT,
+    -- pregame forecast before kickoff (overwriting on each call) -
+    -- not keeping historical forecasts, just the latest. In-game
+    -- weather is tracked separately, in the game_snapshots table.
+    forecast_temp_f INT,
     forecast_feels_like_f INT,
     forecast_condition VARCHAR(50),
+    forecast_icon VARCHAR(30), -- Pirate Weather's icon identifier, e.g. 'partly-cloudy-day'
     forecast_precip_type VARCHAR(20),
     forecast_wind_speed_mph INT,
     forecast_wind_gust_mph INT,
@@ -114,7 +116,7 @@ CREATE TABLE IF NOT EXISTS games (
     forecast_precipitation_pct INT,
     forecast_visibility_mi DECIMAL(4,1),
     forecast_alert VARCHAR(255),
-    forecast_captured_at TIMESTAMP
+    forecast_captured_at TIMESTAMP,
     FOREIGN KEY (week_id) REFERENCES weeks(week_id),
     FOREIGN KEY (home_team_id) REFERENCES teams(team_id),
     FOREIGN KEY (away_team_id) REFERENCES teams(team_id),
@@ -144,6 +146,7 @@ CREATE TABLE IF NOT EXISTS game_snapshots (
     temperature_f INT,
     feels_like_f INT,
     weather_condition VARCHAR(50), -- Pirate Weather's summary text, e.g. 'Overcast', 'Possible Drizzle', 'Fog'
+    weather_icon VARCHAR(30), -- Pirate Weather's icon identifier, e.g. 'partly-cloudy-day'
     precip_type VARCHAR(20), -- 'rain', 'snow', 'sleet', 'none'
     wind_speed_mph INT,
     wind_gust_mph INT,

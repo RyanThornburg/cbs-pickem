@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 _UPDATE_FORECAST_SQL = """
 UPDATE games SET
-    forecast_temp_f = ?, forecast_feels_like_f = ?, forecast_condition = ?,
+    forecast_temp_f = ?, forecast_feels_like_f = ?, forecast_condition = ?, forecast_icon = ?,
     forecast_precip_type = ?, forecast_wind_speed_mph = ?, forecast_wind_gust_mph = ?,
     forecast_wind_direction = ?, forecast_precipitation_pct = ?, forecast_visibility_mi = ?,
     forecast_alert = ?, forecast_captured_at = ?

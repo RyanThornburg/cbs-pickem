@@ -25,11 +25,11 @@ INSERT INTO game_snapshots (
     game_id, quarter, time_remaining, status_desc, possession, home_score, away_score,
     down, distance, yard_line, down_distance_text, possession_text,
     is_red_zone, home_timeouts, away_timeouts,
-    temperature_f, feels_like_f, weather_condition, precip_type,
+    temperature_f, feels_like_f, weather_condition, weather_icon, precip_type,
     wind_speed_mph, wind_gust_mph, wind_direction, precipitation_pct,
     visibility_mi, weather_alert
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 # (quarter, time_remaining) identical don't update, nothing happened since prior

@@ -38,7 +38,7 @@ _LIVE_STATUSES = ("IN_PROGRESS", "HALFTIME")
 _GAMES_SQL = """
 SELECT g.game_id, g.status, g.home_score, g.away_score, g.game_time,
     g.cbs_spread, g.tv_network, g.gametracker_url,
-    g.forecast_temp_f, g.forecast_feels_like_f, g.forecast_condition,
+    g.forecast_temp_f, g.forecast_feels_like_f, g.forecast_condition, g.forecast_icon,
     g.forecast_precip_type, g.forecast_wind_speed_mph, g.forecast_wind_gust_mph,
     g.forecast_wind_direction, g.forecast_precipitation_pct,
     g.forecast_visibility_mi, g.forecast_alert, g.forecast_captured_at,
@@ -130,6 +130,20 @@ FROM odds_snapshots os
 JOIN games g ON g.game_id = os.game_id
 JOIN weeks w ON w.week_id = g.week_id
 WHERE w.season_id = ? AND w.week_number = ? AND os.market = ?
+  AND os.bookmaker IN ({",".join("?" * len(_ODDS_BOOKMAKERS))})
+ORDER BY os.captured_at ASC
+"""
+
+# every market for this week's _ODDS_BOOKMAKERS books - unlike _ODDS_MARKET_SQL
+# this isn't for a consensus, just each book's own latest line per market
+_LATEST_BOOK_ODDS_SQL = f"""
+SELECT os.game_id, os.bookmaker, os.market, os.home_point, os.home_price,
+       os.away_point, os.away_price, os.captured_at
+FROM odds_snapshots os
+JOIN games g ON g.game_id = os.game_id
+JOIN weeks w ON w.week_id = g.week_id
+WHERE w.season_id = ? AND w.week_number = ?
+  AND os.market IN ('spread', 'total', 'moneyline')
   AND os.bookmaker IN ({",".join("?" * len(_ODDS_BOOKMAKERS))})
 ORDER BY os.captured_at ASC
 """
@@ -251,6 +265,7 @@ def _snapshot_weather(snapshot: dict[str, Any]) -> dict[str, Any] | None:
         "temp_f": snapshot["temperature_f"],
         "feels_like_f": snapshot["feels_like_f"],
         "condition": snapshot["weather_condition"],
+        "icon": snapshot["weather_icon"],
         "precip_type": snapshot["precip_type"],
         "wind_speed_mph": snapshot["wind_speed_mph"],
         "wind_gust_mph": snapshot["wind_gust_mph"],
@@ -301,6 +316,7 @@ def _game_forecast(game: dict[str, Any]) -> dict[str, Any] | None:
         "temp_f": game["forecast_temp_f"],
         "feels_like_f": game["forecast_feels_like_f"],
         "condition": game["forecast_condition"],
+        "icon": game["forecast_icon"],
         "precip_type": game["forecast_precip_type"],
         "wind_speed_mph": game["forecast_wind_speed_mph"],
         "wind_gust_mph": game["forecast_wind_gust_mph"],
@@ -672,9 +688,42 @@ def _open_close_consensus_by_game(
     return consensus_by_game
 
 
+def _latest_book_odds_by_game(
+    d1: D1Client, week_number: int
+) -> dict[int, list[dict[str, Any]]]:
+    """Per game, each _ODDS_BOOKMAKERS book's latest spread/total/moneyline
+    line. Not a consensus like _open_close_consensus_by_game - a single
+    book's own line doesn't need an open/close split, only its latest
+    snapshot is worth showing per book."""
+    latest_by_game_book_market: dict[tuple[int, str, str], dict[str, Any]] = {}
+    for row in d1.query(
+        _LATEST_BOOK_ODDS_SQL, [SEASON, week_number, *_ODDS_BOOKMAKERS]
+    ).results:
+        key = (row["game_id"], row["bookmaker"], row["market"])
+        latest_by_game_book_market[key] = row  # last-seen wins (ASC order)
+
+    markets_by_game_book: defaultdict[tuple[int, str], dict[str, Any]] = defaultdict(
+        dict
+    )
+    for (game_id, bookmaker, market), row in latest_by_game_book_market.items():
+        markets_by_game_book[(game_id, bookmaker)][market] = {
+            "home_point": row["home_point"],
+            "home_price": row["home_price"],
+            "away_point": row["away_point"],
+            "away_price": row["away_price"],
+            "captured_at": row["captured_at"],
+        }
+
+    books_by_game: defaultdict[int, list[dict[str, Any]]] = defaultdict(list)
+    for (game_id, bookmaker), markets in markets_by_game_book.items():
+        books_by_game[game_id].append({"bookmaker": bookmaker, **markets})
+    return books_by_game
+
+
 def write_week_odds(week_number: int) -> None:
     """Write week:{season}:{weekNN}:odds - each game's cbs_spread (what the
-    pool is graded against) alongside an opening/closing consensus line."""
+    pool is graded against) alongside an opening/closing consensus line and
+    each _ODDS_BOOKMAKERS book's own latest spread/total/moneyline line."""
     d1 = D1Client(**get_d1_config())
 
     games = d1.query(_WEEK_CBS_SPREADS_SQL, [SEASON, week_number]).results
@@ -687,12 +736,14 @@ def write_week_odds(week_number: int) -> None:
         return
 
     consensus_by_game = _open_close_consensus_by_game(d1, week_number)
+    books_by_game = _latest_book_odds_by_game(d1, week_number)
 
     games_json: list[dict[str, Any]] = [
         {
             "game_id": game["game_id"],
             "cbs_spread": game["cbs_spread"],
             "market_spread": consensus_by_game.get(game["game_id"]),
+            "books": books_by_game.get(game["game_id"], []),
         }
         for game in games
     ]

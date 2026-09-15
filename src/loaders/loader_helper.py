@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # weather is deliberately skipped for both rather than guessed at.
 ENCLOSED_ROOF_TYPES = ("Dome", "Retractable")
 
-_NO_WEATHER = (None, None, None, None, None, None, None, None, None, None)
+_NO_WEATHER = (None, None, None, None, None, None, None, None, None, None, None)
 
 _COMPASS_POINTS = [
     "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
@@ -31,14 +31,17 @@ def _bearing_to_compass(bearing: float) -> str:
 
 def capture_weather(
     latitude: float | None, longitude: float | None, roof_type: str | None, context: str
-) -> tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any]:
-    """(temp_f, feels_like_f, condition, precip_type, wind_speed_mph,
+) -> tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any]:
+    """(temp_f, feels_like_f, condition, icon, precip_type, wind_speed_mph,
     wind_gust_mph, wind_direction, precipitation_pct, visibility_mi, alert)
     for a stadium location right now - None across the board for an
     enclosed roof, a stadium with no known coordinates, or any fetch
     failure (weather is enrichment, never worth blocking the caller's
     write over). `context` only labels the log line on failure (e.g.
-    "game_id=123") so it's traceable back to what the fetch was for."""
+    "game_id=123") so it's traceable back to what the fetch was for.
+    `icon` is Pirate Weather's own standardized identifier (e.g.
+    "partly-cloudy-day", "rain", "clear-night") - meant for a UI icon set,
+    distinct from `condition`'s free-text summary."""
     if roof_type in ENCLOSED_ROOF_TYPES or latitude is None or longitude is None:
         return _NO_WEATHER
 
@@ -60,6 +63,7 @@ def capture_weather(
         if current.apparent_temperature is not None
         else None,
         current.summary,
+        current.icon,
         current.precip_type,
         round(current.wind_speed) if current.wind_speed is not None else None,
         round(current.wind_gust) if current.wind_gust is not None else None,
