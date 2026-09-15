@@ -1,7 +1,7 @@
 """Load CBS data
 
 Usage: uv run python -m src.loaders.cbs_loader [local|prod]
-
+Backfill a past week: uv run python -m src.loaders.cbs_loader [local|prod] <week_number>
 """
 
 import logging
@@ -220,11 +220,12 @@ def _pick_status_to_correct(pick_status: str) -> bool | None:
     return None
 
 
-def load_cbs_games() -> None:
-    """run at start of new week"""
+def load_cbs_games(pool_period_id: str | None = None) -> None:
+    """run at start of new week - or, with pool_period_id, backfill a past
+    week (see backfill_cbs_week())"""
     client = D1Client(**get_d1_config())
 
-    data: FootballPickemPoolHome | None = get_cbs_pool_home()
+    data: FootballPickemPoolHome | None = get_cbs_pool_home(pool_period_id)
     if data is None:
         return
 
@@ -353,11 +354,12 @@ def _add_user_picks(
         sql_batch_call(statements + gap_statements, client)
 
 
-def load_cbs_user_picks() -> None:
-    """load users weekly picks"""
+def load_cbs_user_picks(pool_period_id: str | None = None) -> None:
+    """load users weekly picks - or, with pool_period_id, backfill a past
+    week (see backfill_cbs_week())"""
     client = D1Client(**get_d1_config())
 
-    data: FootballPickemManagerPool = get_cbs_weekly()
+    data: FootballPickemManagerPool = get_cbs_weekly(pool_period_id)
 
     if data.standings is None or data.standings.weekly is None:
         logger.warning("No standings/picks data available yet")
@@ -440,8 +442,41 @@ def main() -> None:
     load_cbs_user_picks()
 
 
+_WEEK_POOL_PERIOD_ID_SQL = (
+    "SELECT cbs_pool_period_id FROM weeks WHERE season_id = ? AND week_number = ?"
+)
+
+
+def backfill_cbs_week(week_number: int) -> None:
+    """Backfill a past week's CBS-sourced data (games' cbs_event_id/
+    cbs_spread, user_picks, weekly_performance) using its already-stored
+    weeks.cbs_pool_period_id - confirmed live 2026-09-15 that CBS's
+    weekly-standings/pool-home pages both accept a `poolPeriodId` query
+    param to return a specific past period instead of always the current
+    one. Requires that week to already have a row in `weeks` with
+    cbs_pool_period_id set (load_cbs_weeks() populates it for every
+    period on every run, current or not - not just the current week's)."""
+    client = D1Client(**get_d1_config())
+    row = client.query(_WEEK_POOL_PERIOD_ID_SQL, [SEASON, week_number]).results
+    if not row or row[0]["cbs_pool_period_id"] is None:
+        logger.warning(
+            "No cbs_pool_period_id stored for season %s week %s - can't backfill",
+            SEASON,
+            week_number,
+        )
+        return
+
+    pool_period_id = row[0]["cbs_pool_period_id"]
+    load_cbs_games(pool_period_id)
+    load_cbs_user_picks(pool_period_id)
+    logger.info("Backfilled CBS data for season %s week %s", SEASON, week_number)
+
+
 if __name__ == "__main__":
     configure_logging()
     if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
         sys.exit(1)
-    main()
+    if len(sys.argv) > 2:
+        backfill_cbs_week(int(sys.argv[2]))
+    else:
+        main()

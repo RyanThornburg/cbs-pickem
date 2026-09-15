@@ -326,13 +326,6 @@ class FootballPickemManagerPool(CBSModel):
     )
     standings: FootballPickemManagerPoolStandings | None = None
 
-    def pool_period_for_week(self, week: int) -> PoolPeriodSummary:
-        """find pool period id from week/current status"""
-        pool_periods = self.pool_periods
-        return next(
-            p for p in pool_periods if (p.is_current and week == 0) or (p.order == week)
-        )
-
     @property
     def ranked_entry_count(self) -> int:
         """if entries exist return their count"""

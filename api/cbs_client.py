@@ -15,7 +15,6 @@ from api.cbs_models import (
     FootballPickemManagerPool,
     FootballPickemPoolHome,
     Member,
-    PoolPeriodSummary,
     Team,
 )
 from config.config import (
@@ -239,18 +238,21 @@ def get_cbs_users() -> list[Member]:
         raise
 
 
-def get_cbs_weekly(week: int = 0) -> FootballPickemManagerPool:
-    """fetch and validate weekly data"""
+def get_cbs_weekly(pool_period_id: str | None = None) -> FootballPickemManagerPool:
+    """fetch and validate weekly data - the current period by default"""
     logger.info("Running CBS Pick Data Fetch")
     try:
         cbs_client: CBSClient = _new_client()
+        cbs_client.pool_period_id = pool_period_id
         data = cbs_client.fetch_weekly_data()
         cbs_data: FootballPickemManagerPool = FootballPickemManagerPool.model_validate(
             data
         )
-        # TODO: map to pool summary for actual week details
-        pool_period: PoolPeriodSummary = cbs_data.pool_period_for_week(week)
-        week_int: int = pool_period.order
+        # find pool id from data
+        period_summary = next(
+            p for p in cbs_data.pool_periods if p.id == cbs_data.pool_period.id
+        )
+        week_int: int = period_summary.order
 
         logger.info(
             "Parsed pool %r: week %d | %d games | %d entries",
@@ -266,10 +268,10 @@ def get_cbs_weekly(week: int = 0) -> FootballPickemManagerPool:
         raise
 
 
-def get_cbs_pool_teams(week: int = 0) -> list[Team]:
+def get_cbs_pool_teams(pool_period_id: str | None = None) -> list[Team]:
     logger.info("Fetching Teams from user home page")
     try:
-        cbs_data = get_cbs_pool_home(week)
+        cbs_data = get_cbs_pool_home(pool_period_id)
         if cbs_data is None:
             return []
         pool_events = cbs_data.pool_period.pool_events
@@ -281,8 +283,9 @@ def get_cbs_pool_teams(week: int = 0) -> list[Team]:
         raise
 
 
-# TODO Wire up a weekly mapper (if needed)
-def get_cbs_pool_home() -> FootballPickemPoolHome | None:
+def get_cbs_pool_home(
+    pool_period_id: str | None = None,
+) -> FootballPickemPoolHome | None:
     """
     fetch and validate the pool-home page
     call get_cbs_weekly() for standings/picks.
@@ -291,6 +294,7 @@ def get_cbs_pool_home() -> FootballPickemPoolHome | None:
     logger.info("Running CBS Pool Home Fetch")
     try:
         cbs_client: CBSClient = _new_client()
+        cbs_client.pool_period_id = pool_period_id
         data = cbs_client.fetch_pool_home_data()
         cbs_data: FootballPickemPoolHome = FootballPickemPoolHome.model_validate(data)
         week_int: int = cbs_data.pool_period.order
