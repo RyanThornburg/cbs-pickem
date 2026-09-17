@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 logger = logging.getLogger(__name__)
 
 SEASON = 2026
-ENV = "local"
 # used for second half standings
 # current pool has 3 standings, 1st half, 2nd half and overall
 SECOND_HALF_START_WEEK = 10
@@ -135,9 +134,11 @@ def get_kv_config() -> dict[str, str]:
     }
 
 
+# CBS/Sports IO/The Odds API/Pirate Weather credentials are identical in .env.local and .env.prod
+# no need to pass in env/just keep value same in both .env files
 def get_cbs_config() -> CBSConfig:
     """Returns CBS Sports login credentials and pool id"""
-    if not load_env(ENV):
+    if not load_env():
         raise RuntimeError("CBS config missing/invalid")
 
     return CBSConfig(
@@ -149,21 +150,21 @@ def get_cbs_config() -> CBSConfig:
 
 def get_sports_io_api() -> str:
     """load sports io api from config"""
-    if not load_env(ENV):
+    if not load_env():
         raise RuntimeError("Sports IO API config missing/invalid")
     return os.getenv("SPORTS_IO_API_KEY", "")
 
 
 def get_the_odds_api() -> str:
     """load the odds api key from config"""
-    if not load_env(ENV):
+    if not load_env():
         raise RuntimeError("The Odds API config missing/invalid")
     return os.getenv("THE_ODDS_API_KEY", "")
 
 
 def get_weather_api() -> str:
     """load the weather api key from config"""
-    if not load_env(ENV):
+    if not load_env():
         raise RuntimeError("Weather API config missing/invalid")
     return os.getenv("WEATHER_API_KEY", "")
 

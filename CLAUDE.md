@@ -23,7 +23,8 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management and
 - Capture live game snapshots (score/quarter/weather/field position): `uv run python -m src.loaders.game_snapshots_loader [local|prod]`
 - Load odds (The Odds API only, Sports IO odds not built): `uv run python -m src.loaders.odds_loader [local|prod]`
 - Compute and write all KV keys the web UI reads (`meta:current`, that
-  week's `games`/`leaderboard`/`odds`, `meta:historical`) from D1:
+  week's `games`/`leaderboard`/`odds`/`trends`, `season:{season}:trends`,
+  `meta:historical`, `meta:admin`) from D1:
   `uv run python -m src.kv_writer [local|prod]` — normally called
   piecemeal from `src.orchestration`, not run whole like this except to
   force a full refresh

@@ -11,3 +11,8 @@ test_data.json
 config/.env.local
 config/.env.prod
 .wrangler/
+
+# One-off historical backfill scripts - already run, no ongoing purpose
+# (see root CLAUDE.md's "End of season" section), kept locally only
+src/historical_backfill.py
+src/historical_standings.py

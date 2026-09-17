@@ -419,8 +419,8 @@ when something just failed, not stale.
 Cloudflare KV for `cbs-pickem-web`'s Worker to read — D1 stays the system
 of record, KV is a serving cache (see root `CLAUDE.md`'s Commands list
 and `CLAUDE.local.md`'s "Web UI" section for the overall architecture
-decision). Five keys, each with a `write_*`/`write_current_week_*` pair
-(the latter resolves `weeks.is_current` via `_resolve_current_week()`
+decision). Eight keys total; six have a `write_*`/`write_current_week_*`
+pair (the latter resolves `weeks.is_current` via `_resolve_current_week()`
 then delegates):
 
 - `write_meta_current()` → `meta:current` — `current_week` from
@@ -495,6 +495,30 @@ then delegates):
   historical." Confirmed live: over/under line-movement trends
   (`total_movers` in `write_week_trends()`, see below) already existed
   before this and needed no changes.
+- `write_week_trends()` → `week:{season}:{weekNN}:trends` (added
+  2026-09-13, `d05309d` — never actually folded into this doc until a
+  2026-09-17 full-codebase review caught it; `CLAUDE.local.md`'s "Web UI"
+  section had been saying this key was deferred/not built the whole time)
+  — pick popularity + cold teams (zero picks after reveal) per game,
+  one-sided games (≥ `_ONE_SIDED_THRESHOLD` consensus on one side, floored
+  by `_ONE_SIDED_MIN_PICKS` so an early barely-revealed game can't
+  qualify), "all alone" picks (exactly one user on a side against at
+  least `_ALL_ALONE_MIN_OPPOSING` on the other), and this week's biggest
+  spread/total line movers (open→close ≥ `_LINE_MOVER_MIN_POINTS`, reusing
+  `_open_close_consensus_by_game()` from `write_week_odds()` above so the
+  movers and the odds key's own open/close numbers can't disagree). No
+  `write_current_week_trends()`-only wrapper distinction worth calling out
+  beyond the usual pair — it's the same shape as `write_week_games()`/etc.
+- `write_season_trends()` → `season:{season}:trends` (added 2026-09-13,
+  same commit/doc-gap as above) — season-long pick totals per team, teams
+  nobody in the pool has picked all season, each team's ATS cover record
+  computed straight from `cbs_spread` + final scores via `_ats_side()`
+  (independent of whether the pool ever actually picked that team, unlike
+  the pick-popularity numbers), and every "all alone" pick logged all
+  season. Shares `_split_home_away()`/`_all_alone_entries()`/
+  `_game_team_dicts()` helpers with `write_week_trends()`. Has no
+  `_current_week`-resolving wrapper since it isn't scoped to a week at
+  all — called directly from `orchestration.py`.
 - `write_historical()` → `meta:historical` — see `db/CLAUDE.md`'s
   `historical_standings` section for what feeds this.
 - `write_admin_status()` → `meta:admin` (added 2026-09-11) — a health-check

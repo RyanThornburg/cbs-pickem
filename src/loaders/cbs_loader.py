@@ -210,7 +210,6 @@ def load_cbs_weeks() -> None:
     logger.info("Upserted %d weeks into D1", week_count)
 
 
-# TODO: verify this is correct once data is live
 def _pick_status_to_correct(pick_status: str) -> bool | None:
     """None unless a status is Correct/Incorrect"""
     if pick_status == "CORRECT":
