@@ -273,6 +273,20 @@ Cadences, and why each one is what it is:
   live-poll branch no longer does that itself (see below) — without it, a
   brand new week's first live game would have no way to resolve its
   picks.
+- **CBS user picks, 30 min, quiet periods only** (added 2026-09-19) —
+  `load_cbs_user_picks()` on its own cadence, independent of housekeeping's
+  24h gate (`cbs_picks_quiet_last_poll_at`, `CBS_PICKS_QUIET_INTERVAL_SECONDS`).
+  Added specifically to keep `weekly_performance.has_submitted_picks`
+  fresh (see `kv_writer.py`'s leaderboard `has_submitted_picks` field
+  below) - the CBS live branch already re-polls this every
+  `CBS_LIVE_INTERVAL_SECONDS` while a game is live, but most users submit
+  their picks well before that week's first kickoff, when the live branch
+  never runs at all. Confirmed live 2026-09-19: a user's picks submitted
+  Thursday night (right as that week's only live window was closing)
+  stayed reported as "not submitted" until Sunday's deadline sweep -
+  `has_submitted_picks` was the only thing not covered by any
+  quiet-period polling, unlike `cbs_event_id`/`cbs_spread` which
+  housekeeping already refreshes daily.
 
 **CBS's live branch only calls `load_cbs_user_picks()`**, not
 `load_cbs_games()` — a deliberate scope cut, confirmed live 2026-09-09
@@ -473,6 +487,17 @@ then delegates):
   `is_rookie` flag - redundant with `seasons_played == 1`. Any future
   per-user key should reuse `_prior_seasons_by_user()` the same way,
   adding its own +1 only where the caller can make the same guarantee.
+  Each user also carries `has_submitted_picks` (added 2026-09-19, plain
+  `weekly_performance.has_submitted_picks` for *this* week) alongside
+  `picks` — `picks` itself stays empty pre-lock by design (see
+  `load_cbs_user_picks()` above, the whole point is not leaking picks
+  early), which made it indistinguishable from "hasn't picked at all."
+  Deliberately a sibling boolean rather than encoding the distinction as
+  `null` vs `[]` on `picks` itself - `[]` is truthy in JS, so a consumer
+  doing `if (picks)` would treat "submitted, still hidden" and "never
+  submitted" as the same thing; an explicitly named field can't be
+  misread that way. `picks` itself is unaffected and stays an array
+  either way (never `null`).
 - `write_week_odds()` → `week:{season}:{weekNN}:odds` — per game,
   `cbs_spread` (what the pool is graded against) alongside an
   opening/closing consensus spread. "Consensus" is the **mode**, not a

@@ -53,6 +53,8 @@ ODDS_INTERVAL_SECONDS = 6 * 60 * 60  # 4x/day baseline, all days
 ODDS_PREKICKOFF_LEAD_MINUTES = 30
 ODDS_PREKICKOFF_MIN_GAP_SECONDS = 2 * 60 * 60  # cover the 4pm window gap
 HOUSEKEEPING_INTERVAL_SECONDS = 24 * 60 * 60
+# quiet poll cbs data to see if user has entered picks for ui
+CBS_PICKS_QUIET_INTERVAL_SECONDS = 30 * 60
 # Pregame forecast: coarse baseline for the whole current week (scoped to
 # weeks.is_current in load_pregame_weather() itself - see its own docstring
 # for why that join matters), boosted once a game is close enough that a
@@ -184,6 +186,12 @@ def _capture_odds(client: D1Client, state_key: str) -> None:
 def _run_quiet_period_tasks(client: D1Client) -> None:
     if _should_run(client, "odds_last_call_at", ODDS_INTERVAL_SECONDS):
         _capture_odds(client, "odds_last_call_at")
+
+    if _should_run(
+        client, "cbs_picks_quiet_last_poll_at", CBS_PICKS_QUIET_INTERVAL_SECONDS
+    ):
+        load_cbs_user_picks()
+        _set_state(client, "cbs_picks_quiet_last_poll_at", _now_iso())
 
     if _should_run(client, "housekeeping_last_run_at", HOUSEKEEPING_INTERVAL_SECONDS):
         load_games_data()  # full schedule/weeks refresh - idempotent, safe any day

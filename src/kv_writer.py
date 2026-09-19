@@ -79,7 +79,8 @@ ORDER BY gs.captured_at ASC
 
 # calculate vs adding a running total in db
 _WEEKLY_PERFORMANCE_SQL = """
-SELECT wp.user_id, u.name, w.week_number, wp.picks_correct, wp.trending_score
+SELECT wp.user_id, u.name, w.week_number, wp.picks_correct, wp.trending_score,
+    wp.has_submitted_picks
 FROM weekly_performance wp
 JOIN weeks w ON w.week_id = wp.week_id
 JOIN users u ON u.user_id = wp.user_id
@@ -518,6 +519,7 @@ def compute_week_leaderboard(
     cumulative_score: dict[int, int] = {}
     first_half_score: dict[int, int] = {}
     second_half_score: dict[int, int] = {}
+    has_submitted_picks: dict[int, bool] = {}
 
     for row in performance_rows:
         user_id = row["user_id"]
@@ -533,6 +535,7 @@ def compute_week_leaderboard(
         if row["week_number"] == week_number:
             weekly_score[user_id] = picks_correct
             trending_score[user_id] = row["trending_score"] or 0
+            has_submitted_picks[user_id] = bool(row["has_submitted_picks"])
 
     place = _standard_rank(cumulative_score)
     first_half_place = _standard_rank(first_half_score)
@@ -577,6 +580,7 @@ def compute_week_leaderboard(
             ),
             "in_money_second_half": in_second_half
             and _in_money(second_half_place.get(user_id), SECOND_HALF_PAID_PLACES),
+            "has_submitted_picks": has_submitted_picks.get(user_id, False),
             "picks": picks_by_user.get(user_id, []),
         }
         for user_id in cumulative_score
