@@ -27,6 +27,12 @@ from src.loaders.loader_helper import capture_weather, sql_batch_call
 
 logger = logging.getLogger(__name__)
 
+# Alerts are filtered against [game_time, game_time + this] - a rough upper
+# bound on how long a game actually runs, so an alert that's only active
+# well before or after the game doesn't get attached to its forecast (see
+# loader_helper.capture_weather()'s docstring).
+GAME_DURATION_HOURS = 4
+
 _UPDATE_FORECAST_SQL = """
 UPDATE games SET
     forecast_temp_f = ?, forecast_feels_like_f = ?, forecast_condition = ?, forecast_icon = ?,
@@ -43,7 +49,7 @@ def load_pregame_weather() -> None:
     client = D1Client(**get_d1_config())
 
     upcoming_games = client.query(
-        "SELECT g.game_id, s.latitude, s.longitude, s.roof_type "
+        "SELECT g.game_id, g.game_time, s.latitude, s.longitude, s.roof_type "
         "FROM games g "
         "JOIN stadiums s ON s.stadium_id = g.stadium_id "
         "JOIN weeks w ON w.week_id = g.week_id "
@@ -57,8 +63,16 @@ def load_pregame_weather() -> None:
     statements: list[tuple[str, list[Any] | None]] = []
     skipped = 0
     for row in upcoming_games:
+        game_time = datetime.strptime(row["game_time"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=UTC
+        )
         weather = capture_weather(
-            row["latitude"], row["longitude"], row["roof_type"], f"game_id={row['game_id']}"
+            row["latitude"],
+            row["longitude"],
+            row["roof_type"],
+            f"game_id={row['game_id']}",
+            target_time=game_time,
+            window_hours=GAME_DURATION_HOURS,
         )
         if all(v is None for v in weather):
             skipped += 1  # enclosed stadium, or the fetch failed/came back empty

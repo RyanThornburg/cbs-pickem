@@ -84,7 +84,7 @@ SELECT wp.user_id, u.name, w.week_number, wp.picks_correct, wp.trending_score,
 FROM weekly_performance wp
 JOIN weeks w ON w.week_id = wp.week_id
 JOIN users u ON u.user_id = wp.user_id
-WHERE w.season_id = ? AND w.week_number <= ?
+WHERE w.season_id = ? AND w.week_number <= ? AND u.is_active = TRUE
 """
 
 _LEADERBOARD_PICKS_SQL = """

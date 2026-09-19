@@ -2,10 +2,11 @@
 
 import logging
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from api.weather_api import get_forecast
+from api.weather_api_models import Alert
 from config.config import get_d1_config
 from db.d1_client import D1Client, D1Error
 
@@ -29,19 +30,46 @@ def _bearing_to_compass(bearing: float) -> str:
     return _COMPASS_POINTS[round(bearing / 22.5) % 16]
 
 
+def _alert_overlaps(alert: Alert, window_start: datetime, window_end: datetime) -> bool:
+    """Pirate Weather returns whatever's active/upcoming for the location
+    right now, regardless of the actual game - a Friday-only flood watch
+    fetched while pregame-polling a Sunday game would otherwise get
+    attached to that Sunday game's forecast even though it's long expired
+    by kickoff. Overlap, not containment - an alert only needs to touch
+    the window, not span all of it."""
+    start = datetime.fromtimestamp(alert.time, tz=UTC)
+    end = datetime.fromtimestamp(alert.expires, tz=UTC) if alert.expires else None
+    if end is not None and end < window_start:
+        return False
+    return start <= window_end
+
+
 def capture_weather(
-    latitude: float | None, longitude: float | None, roof_type: str | None, context: str
+    latitude: float | None,
+    longitude: float | None,
+    roof_type: str | None,
+    context: str,
+    target_time: datetime | None = None,
+    window_hours: float = 0,
 ) -> tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any]:
     """(temp_f, feels_like_f, condition, icon, precip_type, wind_speed_mph,
     wind_gust_mph, wind_direction, precipitation_pct, visibility_mi, alert)
-    for a stadium location right now - None across the board for an
-    enclosed roof, a stadium with no known coordinates, or any fetch
-    failure (weather is enrichment, never worth blocking the caller's
-    write over). `context` only labels the log line on failure (e.g.
-    "game_id=123") so it's traceable back to what the fetch was for.
-    `icon` is Pirate Weather's own standardized identifier (e.g.
-    "partly-cloudy-day", "rain", "clear-night") - meant for a UI icon set,
-    distinct from `condition`'s free-text summary."""
+    for a stadium location - None across the board for an enclosed roof, a
+    stadium with no known coordinates, or any fetch failure (weather is
+    enrichment, never worth blocking the caller's write over). `context`
+    only labels the log line on failure (e.g. "game_id=123") so it's
+    traceable back to what the fetch was for. `icon` is Pirate Weather's
+    own standardized identifier (e.g. "partly-cloudy-day", "rain",
+    "clear-night") - meant for a UI icon set, distinct from `condition`'s
+    free-text summary.
+
+    `target_time`/`window_hours` scope which alerts are relevant -
+    `target_time` defaults to now (the live in-game case: only an alert
+    active at this instant matters). Pregame calls pass the game's actual
+    kickoff and a multi-hour window instead, since the forecast/current
+    conditions themselves are also "as of kickoff" for pregame, not "as of
+    whenever this call happened to run" - alerts outside that window are
+    filtered out rather than surfaced as if they applied to the game."""
     if roof_type in ENCLOSED_ROOF_TYPES or latitude is None or longitude is None:
         return _NO_WEATHER
 
@@ -55,7 +83,14 @@ def capture_weather(
     if current is None:
         return _NO_WEATHER
 
-    alert = "; ".join(a.title for a in forecast.alerts) or None
+    window_start = target_time or datetime.now(UTC)
+    window_end = window_start + timedelta(hours=window_hours)
+    alert = (
+        "; ".join(
+            a.title for a in forecast.alerts if _alert_overlaps(a, window_start, window_end)
+        )
+        or None
+    )
 
     return (
         round(current.temperature) if current.temperature is not None else None,
