@@ -503,7 +503,20 @@ then delegates):
   opening/closing consensus spread. "Consensus" is the **mode**, not a
   mean — confirmed this is what was wanted (the value the most books
   agree on, e.g. "6 of 9 at -3", not a blended number that might not
-  match any real line), ties broken by the median of the tied values.
+  match any real line). Ties were originally broken by the median of the
+  tied point values, but that's a real bug fixed 2026-09-19: a 2-way tie
+  between adjacent half-point lines (e.g. -4.5 and -4) medians to -4.25 -
+  not a number any book would ever actually offer, since real spreads
+  only end in .0 or .5. `_consensus_line()` now breaks ties by juice
+  instead - whichever tied point value has a book pricing it closest to
+  standard -110 American odds is the one taken as the consensus, since
+  books deliberately price away from -110 to compensate for offering a
+  more/less generous number (bettor-friendlier costs more juice, stingier
+  is cheaper) - the number still priced near -110 is the real market
+  consensus, not a number nobody's actually offering at a discount or
+  premium. Confirmed live on a real 2-way tie (Washington's closing line,
+  2026-09-19): bovada's -4 at exactly -110 beat betrivers'/fanduel's -4.5
+  at -107/-102, correctly resolving to -4 instead of the old -4.25.
   Restricted to `_ODDS_BOOKMAKERS` (draftkings/fanduel/betmgm/betrivers/
   bovada) — The Odds API also returns several offshore/enthusiast books
   (betus/lowvig/betonlineag/mybookieag) that update fast but aren't names

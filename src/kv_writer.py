@@ -4,7 +4,6 @@ Usage: uv run python -m src.kv_writer [local|prod]
 """
 
 import logging
-import statistics
 import sys
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
@@ -126,7 +125,7 @@ WHERE w.season_id = ? AND w.week_number = ?
 # market is 'spread' or 'total' - home_point holds the Over line for 'total'
 # (see odds_snapshots' own column comment in db/schema.sql)
 _ODDS_MARKET_SQL = f"""
-SELECT os.game_id, os.bookmaker, os.home_point, os.captured_at
+SELECT os.game_id, os.bookmaker, os.home_point, os.home_price, os.captured_at
 FROM odds_snapshots os
 JOIN games g ON g.game_id = os.game_id
 JOIN weeks w ON w.week_id = g.week_id
@@ -633,12 +632,26 @@ def write_current_week_leaderboard() -> None:
     write_week_leaderboard(current_week)
 
 
-def _consensus_line(values: list[float]) -> tuple[float, int]:
-    """mode not average of most books spread, ties broken on median of tie values"""
-    counts = Counter(values)
+_STANDARD_JUICE = -110  # the "no edge" American-odds price a line is priced around
+
+
+def _consensus_line(rows: list[dict[str, Any]]) -> tuple[float, int]:
+    """mode of home_point across books.
+    Ties are decided by the odds/juice offered and consensus closest to -110 or better"""
+    counts = Counter(row["home_point"] for row in rows)
     max_count = max(counts.values())
     tied = sorted(value for value, count in counts.items() if count == max_count)
-    return statistics.median(tied), max_count
+    if len(tied) == 1:
+        return tied[0], max_count
+    best_value = min(
+        tied,
+        key=lambda value: min(
+            abs(row["home_price"] - _STANDARD_JUICE)
+            for row in rows
+            if row["home_point"] == value
+        ),
+    )
+    return best_value, max_count
 
 
 def _open_close_consensus_by_game(
@@ -674,12 +687,8 @@ def _open_close_consensus_by_game(
         closes = closes_by_game.get(game_id)
         if not opens or not closes:
             continue
-        open_line, open_agreement = _consensus_line(
-            [row["home_point"] for row in opens]
-        )
-        close_line, close_agreement = _consensus_line(
-            [row["home_point"] for row in closes]
-        )
+        open_line, open_agreement = _consensus_line(opens)
+        close_line, close_agreement = _consensus_line(closes)
         consensus_by_game[game_id] = {
             "book_count": len(closes),
             "open": open_line,
