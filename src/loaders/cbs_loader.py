@@ -420,7 +420,7 @@ def load_cbs_user_picks(pool_period_id: str | None = None) -> None:
                     user_id,
                     week_id,
                     bool(entry.picks),
-                    entry.score,
+                    len(picks),
                     entry.period_score,
                     entry.trending_score,
                 ],
