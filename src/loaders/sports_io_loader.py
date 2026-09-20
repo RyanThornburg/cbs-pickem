@@ -165,13 +165,24 @@ _SPORTS_IO_STATUS_MAP = {
     "PST": "POSTPONED",
 }
 
+# fallback for when status.short is null but status.long is still usable
+_SPORTS_IO_LONG_STATUS_MAP = {
+    "Delayed": "DELAYED",
+}
 
-def _sports_io_status_to_common(short_status: str | None) -> str | None:
-    """Map Sports IO's game.status.short onto the common games.status vocabulary"""
-    # short status can be none
+
+def _sports_io_status_to_common(short_status: str | None, long_status: str | None) -> str | None:
+    """Map Sports IO's game.status.short (falling back to .long when short is null)
+    onto the common games.status vocabulary"""
     if short_status is None:
-        logger.warning("Sports IO game status.short was null - leaving status unmapped")
-        return None
+        status = _SPORTS_IO_LONG_STATUS_MAP.get(long_status or "")
+        if status is None:
+            logger.warning(
+                "Sports IO game status.short was null and status.long %r is unrecognized "
+                "- leaving status unmapped",
+                long_status,
+            )
+        return status
     status = _SPORTS_IO_STATUS_MAP.get(short_status)
     if status is None:
         logger.warning(
@@ -363,7 +374,7 @@ def load_games_data(live: bool = False) -> None:
                     game.scores.away.quarter_3,
                     game.scores.away.quarter_4,
                     game.scores.away.overtime,
-                    _sports_io_status_to_common(game.game.status.short),
+                    _sports_io_status_to_common(game.game.status.short, game.game.status.long),
                     game.game.status.long,
                     stadium_id,
                     is_international,

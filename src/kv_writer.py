@@ -32,10 +32,10 @@ _PAID_PLACES = {
 }
 
 # A game.status thats "live"
-_LIVE_STATUSES = ("IN_PROGRESS", "HALFTIME")
+_LIVE_STATUSES = ("IN_PROGRESS", "HALFTIME", "DELAYED")
 
 _GAMES_SQL = """
-SELECT g.game_id, g.status, g.home_score, g.away_score, g.game_time,
+SELECT g.game_id, g.status, g.status_desc, g.home_score, g.away_score, g.game_time,
     g.cbs_spread, g.tv_network, g.gametracker_url,
     g.forecast_temp_f, g.forecast_feels_like_f, g.forecast_condition, g.forecast_icon,
     g.forecast_precip_type, g.forecast_wind_speed_mph, g.forecast_wind_gust_mph,
@@ -386,6 +386,7 @@ def write_week_games(week_number: int) -> None:
                 "record": _team_record(game, "away"),
             },
             "status": game["status"],
+            "status_desc": game["status_desc"],
             "home_score": game["home_score"],
             "away_score": game["away_score"],
             "game_time": game["game_time"],
