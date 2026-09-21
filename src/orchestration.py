@@ -129,7 +129,7 @@ def _is_live_window_active(client: D1Client) -> bool:
     )
     result = client.query(
         "SELECT 1 FROM games WHERE game_time <= ? AND game_time >= ? "
-        "AND status NOT IN ('FINAL', 'CANCELLED', 'POSTPONED') LIMIT 1",
+        "AND (status IS NULL OR status NOT IN ('FINAL', 'CANCELLED', 'POSTPONED')) LIMIT 1",
         [now, cutoff],
     )
     return bool(result.results)
@@ -231,7 +231,7 @@ def _run_pre_kickoff_odds_capture(client: D1Client, now: datetime) -> None:
     )
     result = client.query(
         "SELECT 1 FROM games WHERE game_time > ? AND game_time <= ? "
-        "AND status NOT IN ('FINAL', 'CANCELLED', 'POSTPONED') LIMIT 1",
+        "AND (status IS NULL OR status NOT IN ('FINAL', 'CANCELLED', 'POSTPONED')) LIMIT 1",
         [now_iso, lead_cutoff],
     )
     if not result.results:

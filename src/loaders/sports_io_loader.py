@@ -52,7 +52,7 @@ ON CONFLICT(sports_io_game_id) DO UPDATE SET
     away_q3_score = excluded.away_q3_score,
     away_q4_score = excluded.away_q4_score,
     away_ot_score = excluded.away_ot_score,
-    status = excluded.status,
+    status = COALESCE(excluded.status, status),
     status_desc = excluded.status_desc,
     stadium_id = excluded.stadium_id,
     is_international = excluded.is_international
@@ -71,7 +71,7 @@ ON CONFLICT(week_id, home_team_id, away_team_id) DO UPDATE SET
     away_q3_score = excluded.away_q3_score,
     away_q4_score = excluded.away_q4_score,
     away_ot_score = excluded.away_ot_score,
-    status = excluded.status,
+    status = COALESCE(excluded.status, status),
     status_desc = excluded.status_desc,
     stadium_id = excluded.stadium_id,
     is_international = excluded.is_international
