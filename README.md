@@ -1,4 +1,4 @@
-# morlocked (cbs-pickem)
+# cbs-pickem
 
 A little pipeline for my CBS Sports Pick'em pool. Every week each player picks five NFL teams against the spread, and CBS keeps score. We run the contest with first and second half winners in addition to overall. CBS's own site is fine for checking the current/overall standings but to capture second half and other trends I use this to pull everything into a real database and write data to a web UI for displaying: [morlocked.rattsnest.com](https://morlocked.rattsnest.com).
 
