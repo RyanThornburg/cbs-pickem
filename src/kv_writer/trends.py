@@ -444,27 +444,28 @@ def _spread_bucket_trends(
     return {"by_bucket": by_bucket_json, "by_team": by_team_json}
 
 
-def _public_enemy_ranking(
+def _trap_team_ranking(
     team_pick_totals: list[dict[str, Any]], team_ats_record: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Ranks teams by popularity weighted against how badly they're
-    covering - enemy_score = pct_of_all_picks * (1 - cover_pct) - rather
+    covering - trap_score = pct_of_all_picks * (1 - cover_pct) - rather
     than a hard "cover_pct < .500" cutoff, which would return nothing
     early in a season when sample sizes are thin. A high score means "the
-    pool loves this team and it's burning them," not just "unpopular and
-    bad" (a team nobody picks can't be a public enemy) or "popular and
-    fine" (a popular team covering well scores near zero)."""
+    pool loves this team and it's burning them" - a real sports-betting
+    "trap team" - not just "unpopular and bad" (a team nobody picks can't
+    be a trap) or "popular and fine" (a popular team covering well scores
+    near zero)."""
     ats_by_team = {team["id"]: team for team in team_ats_record}
     ranked = []
     for team in team_pick_totals:
         ats = ats_by_team.get(team["id"])
         if not ats or ats["cover_pct"] is None:
             continue
-        enemy_score = team["pct_of_all_picks"] * (1 - ats["cover_pct"])
+        trap_score = team["pct_of_all_picks"] * (1 - ats["cover_pct"])
         ranked.append(
-            {**team, "cover_pct": ats["cover_pct"], "enemy_score": round(enemy_score, 4)}
+            {**team, "cover_pct": ats["cover_pct"], "trap_score": round(trap_score, 4)}
         )
-    ranked.sort(key=lambda e: -e["enemy_score"])
+    ranked.sort(key=lambda e: -e["trap_score"])
     return ranked
 
 
@@ -542,9 +543,9 @@ def write_season_trends() -> None:
     ever picks), cold teams, every all-alone pick logged this season, a
     spread-size breakdown (spread_analysis) comparing straight-up vs ATS
     pick accuracy by bucket/home-away/team (see _spread_bucket_trends()),
-    a popularity-weighted "public enemy" team ranking (see
-    _public_enemy_ranking()), and a per-team believers-vs-faders accuracy
-    split (see _believers_and_faders())."""
+    a popularity-weighted "trap team" ranking (see _trap_team_ranking()),
+    and a per-team believers-vs-faders accuracy split (see
+    _believers_and_faders())."""
     d1 = D1Client(**get_d1_config())
 
     games = d1.query(_SEASON_GAMES_SQL, [SEASON]).results
@@ -627,7 +628,7 @@ def write_season_trends() -> None:
         )
 
     spread_analysis = _spread_bucket_trends(games, picks_by_game)
-    public_enemy = _public_enemy_ranking(team_pick_totals, team_ats_record)
+    trap_team = _trap_team_ranking(team_pick_totals, team_ats_record)
     team_believers_faders = _believers_and_faders(games, picks_by_game, all_teams)
 
     kv = KVClient(**get_kv_config())
@@ -641,13 +642,13 @@ def write_season_trends() -> None:
             "team_ats_record": team_ats_record,
             "all_alone_season": all_alone,
             "spread_analysis": spread_analysis,
-            "public_enemy": public_enemy,
+            "trap_team": trap_team,
             "team_believers_faders": team_believers_faders,
         },
     )
     logger.info(
         "Wrote season:%s:trends (%d teams picked, %d cold, %d ATS records, "
-        "%d all alone, %d spread buckets, %d public enemy ranked, "
+        "%d all alone, %d spread buckets, %d trap team ranked, "
         "%d believers/faders) to KV",
         SEASON,
         len(team_pick_totals),
@@ -655,6 +656,6 @@ def write_season_trends() -> None:
         len(team_ats_record),
         len(all_alone),
         len(spread_analysis["by_bucket"]),
-        len(public_enemy),
+        len(trap_team),
         len(team_believers_faders),
     )

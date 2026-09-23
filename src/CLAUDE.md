@@ -604,12 +604,14 @@ src.kv_writer.__main__`).
   place (2026-09-22 discussion — the pool grades against the spread, not
   straight-up winners, so this was previously unanswered from any KV key).
   Also carries two more additions from the same 2026-09-23 discussion:
-  `public_enemy` (`_public_enemy_ranking()`) — every team ranked by
-  `enemy_score = pct_of_all_picks × (1 − cover_pct)`, a popularity-weighted
-  badness score rather than a hard `cover_pct < .5` cutoff (which would
-  return nothing early in a season when sample sizes are thin) — a high
-  score means the pool loves this team and it's burning them, not just
-  "unpopular and bad" or "popular but fine." And `team_believers_faders`
+  `trap_team` (`_trap_team_ranking()`, renamed from an initial
+  `public_enemy` the same day — "trap team" is the actual sports-betting
+  term for this) — every team ranked by `trap_score = pct_of_all_picks ×
+  (1 − cover_pct)`, a popularity-weighted badness score rather than a hard
+  `cover_pct < .5` cutoff (which would return nothing early in a season
+  when sample sizes are thin) — a high score means the pool loves this
+  team and it's burning them, not just "unpopular and bad" or "popular but
+  fine." And `team_believers_faders`
   (`_believers_and_faders()`) — per team, splits every pick made in one of
   that team's games into believers (picked this team) vs faders (picked
   the opponent), each with its own ATS accuracy; a believer's pick is
@@ -631,9 +633,9 @@ src.kv_writer.__main__`).
   (season-wide `pct`/`picks` only, no streak - see below),
   contrarian-vs-chalk accuracy, `nemesis_team`/`lucky_team` (worst/best
   personal win rate on a team,
-  min 2 picks), `public_enemy` (added 2026-09-23 — same
-  `enemy_score = share_of_picks × (1 − win_pct)` shape as `season:trends`'
-  group-level `public_enemy` above, but personal: the team this user keeps
+  min 2 picks), `trap_team` (added 2026-09-23 — same
+  `trap_score = share_of_picks × (1 − win_pct)` shape as `season:trends`'
+  group-level `trap_team` above, but personal: the team this user keeps
   going back to that keeps burning them, not just whichever team has the
   single worst raw rate the way `nemesis_team` does), best/worst week,
   consistency (score stddev), and clutch (accuracy in each period's

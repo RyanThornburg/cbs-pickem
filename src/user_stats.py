@@ -233,16 +233,17 @@ def _nemesis_and_lucky_team(
     return nemesis, lucky
 
 
-def _public_enemy(records: dict[int, dict[str, Any]]) -> dict[str, Any] | None:
+def _trap_team(records: dict[int, dict[str, Any]]) -> dict[str, Any] | None:
     """The team this user keeps going back to that keeps burning them -
     weighted by how big a share of their picks (among teams that clear
     _MIN_TEAM_PICKS_FOR_RECORD - the same pool records draws from) went to
     that team, not just raw win_pct like nemesis_team above. A team picked
     twice and lost both counts the same toward nemesis_team as a team
     picked ten times and lost eight - but only the second is really a
-    habit that's hurting them, which is what enemy_score (share of picks *
-    (1 - win_pct), same shape as the group-level _public_enemy_ranking()
-    in kv_writer/trends.py) is meant to surface instead."""
+    habit that's hurting them (a real sports-betting "trap team"), which
+    is what trap_score (share of picks * (1 - win_pct), same shape as the
+    group-level _trap_team_ranking() in kv_writer/trends.py) is meant to
+    surface instead."""
     if not records:
         return None
     total_graded = sum(r["wins"] + r["losses"] for r in records.values())
@@ -253,8 +254,8 @@ def _public_enemy(records: dict[int, dict[str, Any]]) -> dict[str, Any] | None:
         key=lambda r: ((r["wins"] + r["losses"]) / total_graded) * (1 - r["win_pct"]),
     )
     pct_of_picks = round((ranked["wins"] + ranked["losses"]) / total_graded, 3)
-    enemy_score = round(pct_of_picks * (1 - ranked["win_pct"]), 4)
-    return {**ranked, "pct_of_picks": pct_of_picks, "enemy_score": enemy_score}
+    trap_score = round(pct_of_picks * (1 - ranked["win_pct"]), 4)
+    return {**ranked, "pct_of_picks": pct_of_picks, "trap_score": trap_score}
 
 
 def _game_side_pick_counts(all_picks_rows: list[dict[str, Any]]) -> dict[int, tuple[int, int]]:
@@ -421,7 +422,7 @@ def compute_user_profiles(
         best_week, worst_week = _best_and_worst_week(completed_weeks)
         team_records = _team_records(user_rows)
         nemesis_team, lucky_team = _nemesis_and_lucky_team(team_records)
-        public_enemy = _public_enemy(team_records)
+        trap_team = _trap_team(team_records)
 
         current_season = {
             "total_picks": total_made,
@@ -436,7 +437,7 @@ def compute_user_profiles(
             else None,
             "nemesis_team": nemesis_team,
             "lucky_team": lucky_team,
-            "public_enemy": public_enemy,
+            "trap_team": trap_team,
             "best_week": best_week,
             "worst_week": worst_week,
             "consistency": _consistency(completed_weeks),
