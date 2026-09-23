@@ -632,16 +632,29 @@ src.kv_writer.__main__`).
   ≥80% accuracy), team-pick streak, home/away/favorite/underdog bias
   (season-wide `pct`/`picks` only, no streak - see below),
   contrarian-vs-chalk accuracy, `nemesis_team`/`lucky_team` (worst/best
-  personal win rate on a team,
-  min 2 picks), `trap_team` (added 2026-09-23 — same
-  `trap_score = share_of_picks × (1 − win_pct)` shape as `season:trends`'
-  group-level `trap_team` above, but personal: the team this user keeps
-  going back to that keeps burning them, not just whichever team has the
-  single worst raw rate the way `nemesis_team` does), best/worst week,
-  consistency (score stddev), and clutch (accuracy in each period's
-  deciding week). Full field-by-field reference (including which fields
-  are tendency vs accuracy — a real point of past confusion) lives in a
-  published Artifact, not this file — ask before assuming it's current.
+  personal win rate on a team, min 2 picks), `trap_team` (added
+  2026-09-23 — same `trap_score = share_of_picks × (1 − win_pct)` shape
+  as `season:trends`' group-level `trap_team` above, but personal: the
+  team this user keeps going back to that keeps burning them, not just
+  whichever team has the single worst raw rate the way `nemesis_team`
+  does), best/worst week, consistency (score stddev), and clutch
+  (accuracy in each period's deciding week). Full field-by-field reference
+  (including which fields are tendency vs accuracy — a real point of past
+  confusion) lives in a published Artifact, not this file — ask before
+  assuming it's current.
+  **`nemesis_team`/`lucky_team`/`trap_team` all guarded against a
+  same-day-caught edge case (2026-09-23):** `min()`/`max()` over a user's
+  per-team records always return *something*, even when there's only one
+  qualifying team (or a tie) — a user whose only qualifying team went 2-0
+  was showing up with that same team as their own "nemesis," despite
+  never having lost on it. Each is now `None` unless the direction
+  actually holds: `nemesis_team` requires `win_pct < 0.5`, `lucky_team`
+  requires `win_pct > 0.5`, `trap_team` requires `trap_score > 0` — an
+  exact `.500` team, or a team that's never actually burned anyone,
+  correctly reports `None` rather than a misleading pick. Confirmed live
+  against prod: the exact user/team pair that surfaced this (a 2-0 team
+  forced into `trap_team`/`nemesis_team`) now reports `None` for both and
+  only appears in `lucky_team`, where it belongs.
   **`head_to_head` was removed 2026-09-23** — it compared whole-week
   scores between every pair of users (who scored higher that week), which
   turned out to carry no information beyond what the leaderboard already

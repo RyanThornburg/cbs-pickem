@@ -226,11 +226,21 @@ def _team_records(user_rows: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
 def _nemesis_and_lucky_team(
     records: dict[int, dict[str, Any]],
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """min()/max() alone would always return *something* - with only one
+    qualifying team (or a tie), the same team could come back as both
+    nemesis and lucky regardless of whether it's actually been good or bad
+    for this user (e.g. a perfect 2-0 team forced into "nemesis" just for
+    being the only candidate). Guarded so each direction only fires when
+    the record actually points that way - a losing record for nemesis, a
+    winning one for lucky; an exact .500 team is neither."""
     if not records:
         return None, None
     nemesis = min(records.values(), key=lambda r: (r["win_pct"], -r["losses"]))
     lucky = max(records.values(), key=lambda r: (r["win_pct"], -r["losses"]))
-    return nemesis, lucky
+    return (
+        nemesis if nemesis["win_pct"] < 0.5 else None,
+        lucky if lucky["win_pct"] > 0.5 else None,
+    )
 
 
 def _trap_team(records: dict[int, dict[str, Any]]) -> dict[str, Any] | None:
@@ -243,7 +253,12 @@ def _trap_team(records: dict[int, dict[str, Any]]) -> dict[str, Any] | None:
     habit that's hurting them (a real sports-betting "trap team"), which
     is what trap_score (share of picks * (1 - win_pct), same shape as the
     group-level _trap_team_ranking() in kv_writer/trends.py) is meant to
-    surface instead."""
+    surface instead.
+
+    Same max()-always-returns-something risk as nemesis_team above: a
+    trap_score of 0 means this team hasn't actually burned them at all
+    (e.g. it's their only qualifying team and they're 2-0 on it), so that
+    case returns None rather than a "trap" that isn't one."""
     if not records:
         return None
     total_graded = sum(r["wins"] + r["losses"] for r in records.values())
@@ -255,6 +270,8 @@ def _trap_team(records: dict[int, dict[str, Any]]) -> dict[str, Any] | None:
     )
     pct_of_picks = round((ranked["wins"] + ranked["losses"]) / total_graded, 3)
     trap_score = round(pct_of_picks * (1 - ranked["win_pct"]), 4)
+    if trap_score == 0:
+        return None
     return {**ranked, "pct_of_picks": pct_of_picks, "trap_score": trap_score}
 
 
