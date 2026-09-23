@@ -136,8 +136,9 @@ to `schema.sql` after a database's first `setup.sh` run needs its own
 one-off `ALTER TABLE` against that already-provisioned database — there's
 no migration runner in this repo, so this has been done ad hoc via
 `D1Client.batch()` each time (e.g. `games.forecast_*` and
-`teams.wins`/`losses`/`ties`, both added 2026-09-15 - applied to local,
-**not yet applied to prod**).
+`teams.wins`/`losses`/`ties`, both added 2026-09-15 - applied to local at
+the time, confirmed live 2026-09-21 (`PRAGMA table_info`) that both have
+since been applied to prod too).
 
 ## `mapping_gaps` tracks lookup misses for review
 
@@ -247,11 +248,15 @@ Added 2026-09-10 for a historical winners/standings page, backfilled once
 from `data/{year}/{year}_standings.json` (2013-2025) via
 `src/historical_backfill.py` (see `src/CLAUDE.md` and root `CLAUDE.md`'s
 "End of season" section for how this gets extended going forward).
-Deliberately a separate table from `user_stats` rather than backfilled
-into it — `user_stats`'s other columns (streaks, home/away splits) are
-`NOT NULL DEFAULT 0` and need real per-pick data this archive doesn't
-have; storing a false `0` there for "we don't know" would be worse than
-not having the column at all.
+Deliberately a separate table from the derived per-user stats
+`src/user_stats.py` computes (streaks, home/away splits, etc.) rather than
+one combined table - those need real per-pick data this pre-2026 archive
+doesn't have, and `historical_standings` only ever holds a season's final
+rank/score, nothing week-by-week. (An earlier, never-populated
+`user_stats` table briefly existed with this same reasoning behind why it
+stayed separate - dropped 2026-09-21 once `src/user_stats.py` was built,
+since everything it would have held is computed fresh into KV instead of
+persisted, see `src/CLAUDE.md`'s KV writer section.)
 
 `historical_standings.first_half_rank`/`first_half_score`/
 `second_half_rank`/`second_half_score` are nullable for the same reason,

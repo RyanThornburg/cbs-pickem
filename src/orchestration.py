@@ -22,6 +22,7 @@ from src.kv_writer import (
     write_incomplete_weeks_games,
     write_meta_current,
     write_season_trends,
+    write_user_profiles,
 )
 from src.loaders.cbs_loader import load_cbs_games, load_cbs_user_picks, load_cbs_weeks
 from src.loaders.game_snapshots_loader import load_game_snapshots
@@ -63,6 +64,12 @@ CBS_PICKS_QUIET_INTERVAL_SECONDS = 30 * 60
 WEATHER_PREGAME_BASELINE_INTERVAL_SECONDS = 4 * 60 * 60
 WEATHER_PREGAME_NEAR_INTERVAL_SECONDS = 60 * 60
 WEATHER_PREGAME_NEAR_WINDOW_HOURS = 24
+# Per-user profile KV keys (streaks/tendencies) - deliberately not on every
+# tick like most other write_* calls below: one KV write per active user
+# every single minute-cron tick would be a lot of avoidable write volume for
+# data that only actually changes when picks get made/graded, not on every
+# live score tick. Same cadence class as CBS_PICKS_QUIET_INTERVAL_SECONDS.
+USER_PROFILES_INTERVAL_SECONDS = 30 * 60
 
 _UPSERT_STATE_SQL = """
 INSERT INTO orchestration_state (key, value) VALUES (?, ?)
@@ -341,6 +348,20 @@ def _run_finished_game_stats(client: D1Client) -> None:
         )
 
 
+def _run_user_profiles_refresh(client: D1Client) -> None:
+    """Recompute + rewrite every active user's user:{user_id}:season:{season}
+    KV key on its own cadence (USER_PROFILES_INTERVAL_SECONDS), unconditional
+    - live or quiet - so it isn't suppressed by an ongoing game the way the
+    quiet-only tasks are."""
+    if not _should_run(
+        client, "user_profiles_last_write_at", USER_PROFILES_INTERVAL_SECONDS
+    ):
+        return
+
+    write_user_profiles()
+    _set_state(client, "user_profiles_last_write_at", _now_iso())
+
+
 def main() -> None:
     client = D1Client(**get_d1_config())
     now = datetime.now(UTC)
@@ -369,6 +390,7 @@ def main() -> None:
     write_current_week_leaderboard()
     write_current_week_trends()
     write_season_trends()
+    _run_user_profiles_refresh(client)
     write_admin_status()
 
 

@@ -22,6 +22,7 @@ from config.config import (
 )
 from db.d1_client import D1Client
 from db.kv_client import KVClient
+from src.user_stats import compute_user_profiles
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +210,51 @@ LIMIT 20
 # cadence.
 _ODDS_STALE_SECONDS = 12 * 60 * 60
 _HOUSEKEEPING_STALE_SECONDS = 48 * 60 * 60
+
+def _career_record_by_user(d1: D1Client) -> dict[int, dict[str, Any]]:
+    """Per-user career record from historical_standings (prior, closed
+    seasons only - the current in-progress season never has a row here
+    until season_close_out.py runs at year-end). Shared by write_historical()
+    (meta:historical's career list) and src/user_stats.py's
+    compute_user_profiles() (each user's own profile key)."""
+    career: dict[int, dict[str, Any]] = {}
+    for row in d1.query(_HISTORICAL_SQL).results:
+        record = career.setdefault(
+            row["user_id"],
+            {
+                "user_id": row["user_id"],
+                "name": row["name"],
+                "is_active": bool(row["is_active"]),
+                "appearances": [],
+                "titles": 0,
+                "best_finish": None,
+                "best_finish_years": [],
+                "season_history": [],
+            },
+        )
+        record["appearances"].append(row["season_id"])
+        if row["final_rank"] == 1:
+            record["titles"] += 1
+        if record["best_finish"] is None or row["final_rank"] < record["best_finish"]:
+            record["best_finish"] = row["final_rank"]
+            record["best_finish_years"] = [row["season_id"]]
+        elif row["final_rank"] == record["best_finish"]:
+            record["best_finish_years"].append(row["season_id"])
+        # rows already come back ordered by season_id (query's own ORDER BY)
+        record["season_history"].append(
+            {
+                "season": row["season_id"],
+                "incomplete": bool(row["historical_data_incomplete"]),
+                "rank": row["final_rank"],
+                "score": row["final_score"],
+                "first_half_rank": row["first_half_rank"],
+                "first_half_score": row["first_half_score"],
+                "second_half_rank": row["second_half_rank"],
+                "second_half_score": row["second_half_score"],
+            }
+        )
+    return career
+
 
 # historical season records
 _HISTORICAL_SQL = """
@@ -1152,7 +1198,7 @@ def write_historical() -> None:
     champions_by_season: dict[int, dict[str, Any]] = {}
     first_half_champions_by_season: dict[int, dict[str, Any]] = {}
     second_half_champions_by_season: dict[int, dict[str, Any]] = {}
-    career: dict[int, dict[str, Any]] = {}
+    career = _career_record_by_user(d1)
 
     for row in rows:
         season_key = str(row["season_id"])
@@ -1207,27 +1253,6 @@ def write_historical() -> None:
             second_half["names"].append(row["name"])
             second_half["score"] = row["second_half_score"]
 
-        record = career.setdefault(
-            row["user_id"],
-            {
-                "user_id": row["user_id"],
-                "name": row["name"],
-                "is_active": bool(row["is_active"]),
-                "appearances": [],
-                "titles": 0,
-                "best_finish": None,
-                "best_finish_years": [],
-            },
-        )
-        record["appearances"].append(row["season_id"])
-        if row["final_rank"] == 1:
-            record["titles"] += 1
-        if record["best_finish"] is None or row["final_rank"] < record["best_finish"]:
-            record["best_finish"] = row["final_rank"]
-            record["best_finish_years"] = [row["season_id"]]
-        elif row["final_rank"] == record["best_finish"]:
-            record["best_finish_years"].append(row["season_id"])
-
     champions = sorted(champions_by_season.values(), key=lambda c: c["year"])
     first_half_champions = sorted(
         first_half_champions_by_season.values(), key=lambda c: c["year"]
@@ -1252,6 +1277,34 @@ def write_historical() -> None:
         len(years),
         len(career),
     )
+
+
+def write_user_profiles() -> None:
+    """Write user:{user_id}:season:{season} for every active user - career
+    record (years played/titles/best finish, from historical_standings) plus
+    this season's streaks/tendencies (hot streak, team-pick streak, home/
+    away/favorite/underdog bias, contrarian accuracy, nemesis/lucky team,
+    consistency, clutch, head-to-head). All the actual computation lives in
+    src/user_stats.py's compute_user_profiles() - this just supplies the
+    career data and does the KV writes, one per user (see
+    orchestration.py's own cadence for this - it's deliberately not on
+    every tick like most other write_* functions here, since a per-user
+    KV write for every active user on every minute-cron tick would be a lot
+    of avoidable KV write volume for data that only actually changes when
+    picks get made/graded)."""
+    d1 = D1Client(**get_d1_config())
+    career_by_user = _career_record_by_user(d1)
+    profiles = compute_user_profiles(d1, career_by_user)
+    if not profiles:
+        logger.warning("No active users found - not writing user profile keys")
+        return
+
+    kv = KVClient(**get_kv_config())
+    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for user_id, profile in profiles.items():
+        kv.write(f"user:{user_id}:season:{SEASON}", {**profile, "updated_at": now})
+
+    logger.info("Wrote %d user:*:season:%s profile keys to KV", len(profiles), SEASON)
 
 
 def _seconds_since(iso_value: str | None, now: datetime) -> float | None:
@@ -1362,6 +1415,7 @@ def main() -> None:
     write_current_week_trends()
     write_season_trends()
     write_historical()
+    write_user_profiles()
     write_admin_status()
 
 

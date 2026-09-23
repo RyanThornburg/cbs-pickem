@@ -258,35 +258,6 @@ BEGIN
     UPDATE weekly_performance SET updated_at = CURRENT_TIMESTAMP WHERE performance_id = OLD.performance_id;
 END;
 
--- Season-long user statistics
-CREATE TABLE IF NOT EXISTS user_stats (
-    stat_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INT NOT NULL,
-    season_id INT NOT NULL,
-    total_picks INT DEFAULT 0,
-    total_correct INT DEFAULT 0,
-    accuracy_pct DECIMAL(5,2) DEFAULT 0,
-    current_streak INT DEFAULT 0,
-    current_streak_type VARCHAR(10) DEFAULT 'NONE', -- 'WIN', 'LOSS', 'NONE'
-    longest_win_streak INT DEFAULT 0,
-    home_team_picks INT DEFAULT 0,
-    away_team_picks INT DEFAULT 0,
-    favorite_picks INT DEFAULT 0,
-    underdog_picks INT DEFAULT 0,
-    best_week_score INT DEFAULT 0,
-    worst_week_score INT DEFAULT 5,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(user_id),
-    FOREIGN KEY (season_id) REFERENCES seasons(season_id),
-    UNIQUE (user_id, season_id)
-);
-
-CREATE TRIGGER IF NOT EXISTS trg_user_stats_updated_at
-AFTER UPDATE ON user_stats
-BEGIN
-    UPDATE user_stats SET updated_at = CURRENT_TIMESTAMP WHERE stat_id = OLD.stat_id;
-END;
-
 -- Final standings from prior seasons
 CREATE TABLE IF NOT EXISTS historical_standings (
     historical_standing_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -403,4 +374,3 @@ CREATE INDEX IF NOT EXISTS idx_game_team_stats_game ON game_team_stats(game_id);
 CREATE INDEX IF NOT EXISTS idx_picks_user ON user_picks(user_id);
 CREATE INDEX IF NOT EXISTS idx_picks_game ON user_picks(game_id);
 CREATE INDEX IF NOT EXISTS idx_weekly_performance_week ON weekly_performance(week_id);
-CREATE INDEX IF NOT EXISTS idx_user_stats_season ON user_stats(season_id);
