@@ -571,6 +571,14 @@ src.kv_writer.__main__`).
   movers and the odds key's own open/close numbers can't disagree). No
   `write_current_week_trends()`-only wrapper distinction worth calling out
   beyond the usual pair — it's the same shape as `write_week_games()`/etc.
+  Also carries `lone_geniuses`/`lone_fools` (added 2026-09-23) — the graded
+  subset of `all_alone` (which now carries a `correct` field on every
+  entry, computed via `_ats_side()` the moment its game goes FINAL, `None`
+  before that): a "genius" went alone against a real crowd and covered, a
+  "fool" went alone and didn't. Both sorted by `opposing_count` descending
+  — biggest crowd defied first — specifically so a UI can grab index `[0]`
+  of either list for a one-line weekly headline without any client-side
+  filtering.
 - `write_season_trends()` → `season:{season}:trends` (added 2026-09-13,
   same commit/doc-gap as above) — season-long pick totals per team, teams
   nobody in the pool has picked all season, each team's ATS cover record
@@ -595,8 +603,61 @@ src.kv_writer.__main__`).
   to win, and at what spread size," the thing prompting this in the first
   place (2026-09-22 discussion — the pool grades against the spread, not
   straight-up winners, so this was previously unanswered from any KV key).
+  Also carries two more additions from the same 2026-09-23 discussion:
+  `public_enemy` (`_public_enemy_ranking()`) — every team ranked by
+  `enemy_score = pct_of_all_picks × (1 − cover_pct)`, a popularity-weighted
+  badness score rather than a hard `cover_pct < .5` cutoff (which would
+  return nothing early in a season when sample sizes are thin) — a high
+  score means the pool loves this team and it's burning them, not just
+  "unpopular and bad" or "popular but fine." And `team_believers_faders`
+  (`_believers_and_faders()`) — per team, splits every pick made in one of
+  that team's games into believers (picked this team) vs faders (picked
+  the opponent), each with its own ATS accuracy; a believer's pick is
+  correct exactly when this team covered and a fader's is correct exactly
+  when it didn't (the same boolean either way, since there are only two
+  sides), so it can never disagree with `team_ats_record`'s own
+  `cover_pct`. Sorted by how far apart the two groups' accuracy is, so the
+  most divergent (and most interesting) teams sort first.
 - `write_historical()` → `meta:historical` — see `db/CLAUDE.md`'s
   `historical_standings` section for what feeds this.
+- `write_user_profiles()` → `user:{user_id}:season:{season}`, one key per
+  active user (added 2026-09-21 — never actually documented here until
+  now; see `CLAUDE.local.md`'s "`user_stats` has no loader" entry for the
+  original write-up). All the real computation is `src/user_stats.py`'s
+  `compute_user_profiles()`; this function just supplies each user's
+  career record (`historical.py`'s `career_record_by_user()`) and does the
+  per-user KV writes. Covers career record, rolling hot streak (weeks at
+  ≥80% accuracy), team-pick streak, home/away/favorite/underdog bias
+  (season-wide `pct`/`picks` only, no streak - see below),
+  contrarian-vs-chalk accuracy, `nemesis_team`/`lucky_team` (worst/best
+  personal win rate on a team,
+  min 2 picks), `public_enemy` (added 2026-09-23 — same
+  `enemy_score = share_of_picks × (1 − win_pct)` shape as `season:trends`'
+  group-level `public_enemy` above, but personal: the team this user keeps
+  going back to that keeps burning them, not just whichever team has the
+  single worst raw rate the way `nemesis_team` does), best/worst week,
+  consistency (score stddev), and clutch (accuracy in each period's
+  deciding week). Full field-by-field reference (including which fields
+  are tendency vs accuracy — a real point of past confusion) lives in a
+  published Artifact, not this file — ask before assuming it's current.
+  **`head_to_head` was removed 2026-09-23** — it compared whole-week
+  scores between every pair of users (who scored higher that week), which
+  turned out to carry no information beyond what the leaderboard already
+  shows directly; a pick-disagreement-based replacement was considered but
+  dropped in favor of the team-centric `team_believers_faders` above,
+  which covers the same "who's actually right when people disagree" idea
+  without needing a `user_id` pairing.
+  **`pick_bias.*.current_streak`/`longest_streak` were also removed
+  2026-09-23** — caught the same day the caveat below is dated: these
+  picks are only orderable by each game's `game_time` (kickoff), not the
+  user's actual decision order (CBS exposes no per-pick timestamp at all,
+  since a pick can be changed anytime before its game locks), and the
+  streak calc didn't even reset at week boundaries the way
+  `team_pick_streak`/`hot_streak` deliberately do - it could silently
+  chain the last pick of one week into the next as if back to back. A
+  streak claim that can't be stood behind is worse than no streak claim;
+  `pick_bias.*.pct` (season-wide share, no ordering involved) is
+  unaffected and is what's actually reliable here.
 - `write_admin_status()` → `meta:admin` (added 2026-09-11) — a health-check
   summary for an eventual admin page: when each `orchestration.py` task
   last ran (from `orchestration_state`) plus recent `mapping_gaps`/

@@ -114,16 +114,23 @@ def _is_favorite(row: dict[str, Any], is_home: bool) -> bool | None:
 
 
 def _bias_block(matches: list[bool]) -> dict[str, Any] | None:
-    """pct + current/longest streak for one pick classification (home/away/
-    favorite/underdog). None if the user has no decided picks for it yet."""
+    """Season-wide pct + pick count for one pick classification (home/away/
+    favorite/underdog). None if the user has no decided picks for it yet.
+
+    Deliberately no streak here (removed 2026-09-23, previously computed by
+    _current_and_longest_streak) - these picks are only orderable by each
+    game's kickoff time, not the user's actual decision order (CBS exposes
+    no per-pick timestamp at all, since a pick can be changed anytime
+    before its game locks), and the old streak calc didn't even reset at
+    week boundaries the way team_pick_streak/hot_streak deliberately do -
+    it could silently chain the last pick of one week into the next as if
+    back to back. A streak claim we can't stand behind is worse than none;
+    pct alone is the part of this that's actually reliable."""
     if not matches:
         return None
-    current, longest = _current_and_longest_streak(matches)
     return {
         "pct": round(sum(matches) / len(matches), 3),
         "picks": len(matches),
-        "current_streak": current,
-        "longest_streak": longest,
     }
 
 
@@ -217,14 +224,37 @@ def _team_records(user_rows: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
 
 
 def _nemesis_and_lucky_team(
-    user_rows: list[dict[str, Any]],
+    records: dict[int, dict[str, Any]],
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    records = _team_records(user_rows)
     if not records:
         return None, None
     nemesis = min(records.values(), key=lambda r: (r["win_pct"], -r["losses"]))
     lucky = max(records.values(), key=lambda r: (r["win_pct"], -r["losses"]))
     return nemesis, lucky
+
+
+def _public_enemy(records: dict[int, dict[str, Any]]) -> dict[str, Any] | None:
+    """The team this user keeps going back to that keeps burning them -
+    weighted by how big a share of their picks (among teams that clear
+    _MIN_TEAM_PICKS_FOR_RECORD - the same pool records draws from) went to
+    that team, not just raw win_pct like nemesis_team above. A team picked
+    twice and lost both counts the same toward nemesis_team as a team
+    picked ten times and lost eight - but only the second is really a
+    habit that's hurting them, which is what enemy_score (share of picks *
+    (1 - win_pct), same shape as the group-level _public_enemy_ranking()
+    in kv_writer/trends.py) is meant to surface instead."""
+    if not records:
+        return None
+    total_graded = sum(r["wins"] + r["losses"] for r in records.values())
+    if not total_graded:
+        return None
+    ranked = max(
+        records.values(),
+        key=lambda r: ((r["wins"] + r["losses"]) / total_graded) * (1 - r["win_pct"]),
+    )
+    pct_of_picks = round((ranked["wins"] + ranked["losses"]) / total_graded, 3)
+    enemy_score = round(pct_of_picks * (1 - ranked["win_pct"]), 4)
+    return {**ranked, "pct_of_picks": pct_of_picks, "enemy_score": enemy_score}
 
 
 def _game_side_pick_counts(all_picks_rows: list[dict[str, Any]]) -> dict[int, tuple[int, int]]:
@@ -333,39 +363,6 @@ def _clutch(completed_weeks: list[dict[str, Any]], money_weeks: set[int]) -> dic
     }
 
 
-def _head_to_head_for_user(
-    user_id: int, scores_by_week: list[dict[int, int]], names_by_user: dict[int, str]
-) -> list[dict[str, Any]]:
-    records: defaultdict[int, dict[str, int]] = defaultdict(
-        lambda: {"wins": 0, "losses": 0, "ties": 0}
-    )
-    for scores in scores_by_week:
-        if user_id not in scores:
-            continue
-        own_score = scores[user_id]
-        for opponent_id, opponent_score in scores.items():
-            if opponent_id == user_id:
-                continue
-            if own_score > opponent_score:
-                records[opponent_id]["wins"] += 1
-            elif own_score < opponent_score:
-                records[opponent_id]["losses"] += 1
-            else:
-                records[opponent_id]["ties"] += 1
-
-    result = [
-        {
-            "opponent_user_id": opponent_id,
-            "opponent_name": names_by_user.get(opponent_id, "Unknown"),
-            "weeks_compared": rec["wins"] + rec["losses"] + rec["ties"],
-            **rec,
-        }
-        for opponent_id, rec in records.items()
-    ]
-    result.sort(key=lambda r: -(r["wins"] - r["losses"]))
-    return result
-
-
 def compute_user_profiles(
     d1: D1Client, career_by_user: dict[int, dict[str, Any]]
 ) -> dict[int, dict[str, Any]]:
@@ -384,12 +381,8 @@ def compute_user_profiles(
 
     all_weekly = d1.query(_SEASON_WEEKLY_PERFORMANCE_SQL, [SEASON]).results
     weekly_by_user: defaultdict[int, list[dict[str, Any]]] = defaultdict(list)
-    scores_by_week: defaultdict[int, dict[int, int]] = defaultdict(dict)
     for row in all_weekly:
         weekly_by_user[row["user_id"]].append(row)
-        if row["week_is_complete"]:
-            scores_by_week[row["week_number"]][row["user_id"]] = row["picks_correct"] or 0
-    scores_by_week_list = list(scores_by_week.values())
 
     # same "sum picks_correct across every week" cumulative score
     # src/kv_writer/leaderboard.py's compute_week_leaderboard() ranks on - not gated on
@@ -426,7 +419,9 @@ def compute_user_profiles(
         total_made = sum(row["picks_made"] or 0 for row in weekly_rows)
         total_correct = sum(row["picks_correct"] or 0 for row in weekly_rows)
         best_week, worst_week = _best_and_worst_week(completed_weeks)
-        nemesis_team, lucky_team = _nemesis_and_lucky_team(user_rows)
+        team_records = _team_records(user_rows)
+        nemesis_team, lucky_team = _nemesis_and_lucky_team(team_records)
+        public_enemy = _public_enemy(team_records)
 
         current_season = {
             "total_picks": total_made,
@@ -441,11 +436,11 @@ def compute_user_profiles(
             else None,
             "nemesis_team": nemesis_team,
             "lucky_team": lucky_team,
+            "public_enemy": public_enemy,
             "best_week": best_week,
             "worst_week": worst_week,
             "consistency": _consistency(completed_weeks),
             "clutch": _clutch(completed_weeks, money_weeks),
-            "head_to_head": _head_to_head_for_user(user_id, scores_by_week_list, users),
         }
 
         profiles[user_id] = {

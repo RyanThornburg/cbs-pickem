@@ -101,7 +101,19 @@ def _all_alone_entries(
     away_picks: list[dict[str, Any]],
     week_number: int | None = None,
 ) -> list[dict[str, Any]]:
-    """One user alone on a side while the other side has at least _ALL_ALONE_MIN_OPPOSING"""
+    """One user alone on a side while the other side has at least
+    _ALL_ALONE_MIN_OPPOSING. `correct` is None until the game goes FINAL
+    with a real spread (same _ats_side() rules used everywhere else), then
+    True/False for whether this lone pick covered - what write_week_trends()
+    uses to split lone_geniuses from lone_fools."""
+    side = _ats_side(game)
+    covering_team_id = (
+        game["home_id"]
+        if side == "home"
+        else game["away_id"]
+        if side == "away"
+        else None
+    )
     entries: list[dict[str, Any]] = []
     for picks, opposing, team_id, abbr in (
         (home_picks, away_picks, game["home_id"], game["home_abbr"]),
@@ -116,6 +128,7 @@ def _all_alone_entries(
             "picked_team_id": team_id,
             "abbr": abbr,
             "opposing_count": len(opposing),
+            "correct": None if covering_team_id is None else team_id == covering_team_id,
         }
         if week_number is not None:
             entry["week_number"] = week_number
@@ -212,6 +225,17 @@ def write_week_trends(week_number: int) -> None:
     pick_popularity.sort(key=lambda e: -e["pick_count"])
     one_sided_games.sort(key=lambda e: -e["consensus_pct"])
 
+    # graded subsets of `loners` - a "quick display" headline just takes
+    # index [0] of whichever list, ranked by how big a crowd they defied.
+    lone_geniuses = sorted(
+        (loner for loner in loners if loner["correct"] is True),
+        key=lambda e: -e["opposing_count"],
+    )
+    lone_fools = sorted(
+        (loner for loner in loners if loner["correct"] is False),
+        key=lambda e: -e["opposing_count"],
+    )
+
     game_lookup = {game["game_id"]: game for game in games}
     spread_movers = _movers_from_consensus(
         open_close_consensus_by_game(d1, week_number, market="spread"), game_lookup
@@ -230,19 +254,23 @@ def write_week_trends(week_number: int) -> None:
             "cold_teams": cold_teams,
             "one_sided_games": one_sided_games,
             "all_alone": loners,
+            "lone_geniuses": lone_geniuses,
+            "lone_fools": lone_fools,
             "spread_movers": spread_movers,
             "total_movers": total_movers,
         },
     )
     logger.info(
         "Wrote week:%s:%02d:trends (%d popular, %d cold, %d one-sided, "
-        "%d all alone, %d spread movers, %d total movers) to KV",
+        "%d all alone [%d genius, %d fool], %d spread movers, %d total movers) to KV",
         SEASON,
         week_number,
         len(pick_popularity),
         len(cold_teams),
         len(one_sided_games),
         len(loners),
+        len(lone_geniuses),
+        len(lone_fools),
         len(spread_movers),
         len(total_movers),
     )
@@ -416,13 +444,107 @@ def _spread_bucket_trends(
     return {"by_bucket": by_bucket_json, "by_team": by_team_json}
 
 
+def _public_enemy_ranking(
+    team_pick_totals: list[dict[str, Any]], team_ats_record: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Ranks teams by popularity weighted against how badly they're
+    covering - enemy_score = pct_of_all_picks * (1 - cover_pct) - rather
+    than a hard "cover_pct < .500" cutoff, which would return nothing
+    early in a season when sample sizes are thin. A high score means "the
+    pool loves this team and it's burning them," not just "unpopular and
+    bad" (a team nobody picks can't be a public enemy) or "popular and
+    fine" (a popular team covering well scores near zero)."""
+    ats_by_team = {team["id"]: team for team in team_ats_record}
+    ranked = []
+    for team in team_pick_totals:
+        ats = ats_by_team.get(team["id"])
+        if not ats or ats["cover_pct"] is None:
+            continue
+        enemy_score = team["pct_of_all_picks"] * (1 - ats["cover_pct"])
+        ranked.append(
+            {**team, "cover_pct": ats["cover_pct"], "enemy_score": round(enemy_score, 4)}
+        )
+    ranked.sort(key=lambda e: -e["enemy_score"])
+    return ranked
+
+
+def _new_side_counter() -> dict[str, int]:
+    return {"correct": 0, "total": 0}
+
+
+def _finalize_side(counter: dict[str, int]) -> dict[str, Any]:
+    return {
+        "pick_count": counter["total"],
+        "accuracy": round(counter["correct"] / counter["total"], 3)
+        if counter["total"]
+        else None,
+    }
+
+
+def _believers_and_faders(
+    games: list[dict[str, Any]],
+    picks_by_game: dict[int, list[dict[str, Any]]],
+    all_teams: dict[int, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Per team, splits every pick made in one of that team's games into
+    believers (picked this team) vs faders (picked the opponent instead),
+    each with their own ATS accuracy on those picks. A believer's pick is
+    correct exactly when this team covered; a fader's pick is correct
+    exactly when it didn't - the same boolean either way, since there are
+    only two sides, so this can never disagree with team_ats_record's own
+    cover_pct for the team. Sorted by how far apart the two groups'
+    accuracy is - the teams where believing and fading give the most
+    different results are the most interesting to surface first."""
+    believers: defaultdict[int, dict[str, int]] = defaultdict(_new_side_counter)
+    faders: defaultdict[int, dict[str, int]] = defaultdict(_new_side_counter)
+
+    for game in games:
+        side = _ats_side(game)
+        if side is None or side == "push":
+            continue
+        covering_team_id = game["home_id"] if side == "home" else game["away_id"]
+
+        for pick in picks_by_game.get(game["game_id"], []):
+            picked = pick["picked_team_id"]
+            if picked == game["home_id"]:
+                opponent = game["away_id"]
+            elif picked == game["away_id"]:
+                opponent = game["home_id"]
+            else:
+                continue
+
+            correct = picked == covering_team_id
+            for counter, team_id in ((believers, picked), (faders, opponent)):
+                counter[team_id]["total"] += 1
+                counter[team_id]["correct"] += int(correct)
+
+    results = [
+        {
+            **team,
+            "believers": _finalize_side(believers[team_id]),
+            "faders": _finalize_side(faders[team_id]),
+        }
+        for team_id, team in all_teams.items()
+        if believers[team_id]["total"] or faders[team_id]["total"]
+    ]
+    results.sort(
+        key=lambda e: -abs(
+            (e["believers"]["accuracy"] or 0) - (e["faders"]["accuracy"] or 0)
+        )
+    )
+    return results
+
+
 def write_season_trends() -> None:
     """Write season:{season}:trends - season-long pick popularity, ATS
     cover record per team (from cbs_spread + final scores, independent of
     who actually picked them - works even for a team nobody in the pool
-    ever picks), cold teams, every all-alone pick logged this season, and
-    a spread-size breakdown (spread_analysis) comparing straight-up vs ATS
-    pick accuracy by bucket/home-away/team - see _spread_bucket_trends()."""
+    ever picks), cold teams, every all-alone pick logged this season, a
+    spread-size breakdown (spread_analysis) comparing straight-up vs ATS
+    pick accuracy by bucket/home-away/team (see _spread_bucket_trends()),
+    a popularity-weighted "public enemy" team ranking (see
+    _public_enemy_ranking()), and a per-team believers-vs-faders accuracy
+    split (see _believers_and_faders())."""
     d1 = D1Client(**get_d1_config())
 
     games = d1.query(_SEASON_GAMES_SQL, [SEASON]).results
@@ -505,6 +627,8 @@ def write_season_trends() -> None:
         )
 
     spread_analysis = _spread_bucket_trends(games, picks_by_game)
+    public_enemy = _public_enemy_ranking(team_pick_totals, team_ats_record)
+    team_believers_faders = _believers_and_faders(games, picks_by_game, all_teams)
 
     kv = KVClient(**get_kv_config())
     kv.write(
@@ -517,15 +641,20 @@ def write_season_trends() -> None:
             "team_ats_record": team_ats_record,
             "all_alone_season": all_alone,
             "spread_analysis": spread_analysis,
+            "public_enemy": public_enemy,
+            "team_believers_faders": team_believers_faders,
         },
     )
     logger.info(
         "Wrote season:%s:trends (%d teams picked, %d cold, %d ATS records, "
-        "%d all alone, %d spread buckets) to KV",
+        "%d all alone, %d spread buckets, %d public enemy ranked, "
+        "%d believers/faders) to KV",
         SEASON,
         len(team_pick_totals),
         len(cold_teams_season),
         len(team_ats_record),
         len(all_alone),
         len(spread_analysis["by_bucket"]),
+        len(public_enemy),
+        len(team_believers_faders),
     )
