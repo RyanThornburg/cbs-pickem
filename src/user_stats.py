@@ -12,17 +12,21 @@ from config.config import SEASON, SECOND_HALF_START_WEEK
 from db.d1_client import D1Client
 
 _HOT_STREAK_THRESHOLD_PCT = 0.8  # "80% or better" - the user's own bar
-_MIN_TEAM_PICKS_FOR_RECORD = 2  # floor so a single 0-1/1-0 isn't a "nemesis"/"lucky team"
+_MIN_TEAM_PICKS_FOR_RECORD = 2  # floor so a single 0-1/1-0 doesn't qualify as a team record
 
 _SEASON_USER_PICKS_SQL = """
 SELECT up.user_id, u.name, w.week_number, g.game_id, g.game_time,
     g.home_team_id, g.away_team_id, g.cbs_spread, up.picked_team_id, up.is_correct,
-    t.abbreviation AS team_abbr, t.nick_name AS team_name
+    t.abbreviation AS team_abbr, t.nick_name AS team_name,
+    ht.abbreviation AS home_abbr, ht.nick_name AS home_name,
+    at.abbreviation AS away_abbr, at.nick_name AS away_name
 FROM user_picks up
 JOIN users u ON u.user_id = up.user_id
 JOIN games g ON g.game_id = up.game_id
 JOIN weeks w ON w.week_id = g.week_id
 JOIN teams t ON t.team_id = up.picked_team_id
+JOIN teams ht ON ht.team_id = g.home_team_id
+JOIN teams at ON at.team_id = g.away_team_id
 WHERE w.season_id = ? AND u.is_active = TRUE
 ORDER BY up.user_id, g.game_time
 """
@@ -102,6 +106,15 @@ def _consecutive_week_runs(weeks: list[int], latest_week: int) -> tuple[int, int
 
 def _team_dict(row: dict[str, Any]) -> dict[str, Any]:
     return {"id": row["picked_team_id"], "abbr": row["team_abbr"], "name": row["team_name"]}
+
+
+def _game_team_dict(team_id: int, row: dict[str, Any]) -> dict[str, Any]:
+    """Resolves either team in this row's game by id - unlike _team_dict()
+    (keyed on the picked team only), this can also build a dict for the
+    team the user picked AGAINST, needed for _team_readability() below."""
+    if team_id == row["home_team_id"]:
+        return {"id": team_id, "abbr": row["home_abbr"], "name": row["home_name"]}
+    return {"id": team_id, "abbr": row["away_abbr"], "name": row["away_name"]}
 
 
 def _is_favorite(row: dict[str, Any], is_home: bool) -> bool | None:
@@ -223,56 +236,123 @@ def _team_records(user_rows: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
     return records
 
 
-def _nemesis_and_lucky_team(
-    records: dict[int, dict[str, Any]],
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """min()/max() alone would always return *something* - with only one
-    qualifying team (or a tie), the same team could come back as both
-    nemesis and lucky regardless of whether it's actually been good or bad
-    for this user (e.g. a perfect 2-0 team forced into "nemesis" just for
-    being the only candidate). Guarded so each direction only fires when
-    the record actually points that way - a losing record for nemesis, a
-    winning one for lucky; an exact .500 team is neither."""
-    if not records:
-        return None, None
-    nemesis = min(records.values(), key=lambda r: (r["win_pct"], -r["losses"]))
-    lucky = max(records.values(), key=lambda r: (r["win_pct"], -r["losses"]))
-    return (
-        nemesis if nemesis["win_pct"] < 0.5 else None,
-        lucky if lucky["win_pct"] > 0.5 else None,
-    )
+def _team_habit_ranking(
+    records: dict[int, dict[str, Any]], reward_wins: bool
+) -> tuple[dict[str, Any], float, float] | None:
+    """Shared core for _trap_team()/_lucky_team() - ranks by (share of
+    this user's graded picks that went to a team) * either win_pct
+    (reward_wins=True, lucky_team) or (1 - win_pct) (reward_wins=False,
+    trap_team). A team picked twice and lost both would count the same
+    toward a pure-rate metric as a team picked ten times and lost eight,
+    but only the second is really a habit - this formula (same shape as
+    the group-level _trap_team_ranking() in kv_writer/trends.py) is what
+    tells them apart.
 
-
-def _trap_team(records: dict[int, dict[str, Any]]) -> dict[str, Any] | None:
-    """The team this user keeps going back to that keeps burning them -
-    weighted by how big a share of their picks (among teams that clear
-    _MIN_TEAM_PICKS_FOR_RECORD - the same pool records draws from) went to
-    that team, not just raw win_pct like nemesis_team above. A team picked
-    twice and lost both counts the same toward nemesis_team as a team
-    picked ten times and lost eight - but only the second is really a
-    habit that's hurting them (a real sports-betting "trap team"), which
-    is what trap_score (share of picks * (1 - win_pct), same shape as the
-    group-level _trap_team_ranking() in kv_writer/trends.py) is meant to
-    surface instead.
-
-    Same max()-always-returns-something risk as nemesis_team above: a
-    trap_score of 0 means this team hasn't actually burned them at all
-    (e.g. it's their only qualifying team and they're 2-0 on it), so that
-    case returns None rather than a "trap" that isn't one."""
+    max() alone would always return *something*, even when nothing this
+    user picked has actually rewarded or burned them (e.g. their only
+    qualifying team went 2-0 - not a trap, but max() would return it
+    anyway as the "best available" candidate) - or, just as misleading, a
+    team sitting at an exact .500 record, which a raw "score == 0" check
+    wouldn't catch (its score is nonzero on both sides, so it could come
+    back as *both* someone's trap_team and their lucky_team). Requires the
+    win_pct to genuinely point the claimed direction - same guard
+    blind_spot_team/sweet_spot_team use below."""
     if not records:
         return None
     total_graded = sum(r["wins"] + r["losses"] for r in records.values())
     if not total_graded:
         return None
-    ranked = max(
-        records.values(),
-        key=lambda r: ((r["wins"] + r["losses"]) / total_graded) * (1 - r["win_pct"]),
-    )
-    pct_of_picks = round((ranked["wins"] + ranked["losses"]) / total_graded, 3)
-    trap_score = round(pct_of_picks * (1 - ranked["win_pct"]), 4)
-    if trap_score == 0:
+
+    def score(r: dict[str, Any]) -> float:
+        rate = r["win_pct"] if reward_wins else 1 - r["win_pct"]
+        return ((r["wins"] + r["losses"]) / total_graded) * rate
+
+    ranked = max(records.values(), key=score)
+    holds = ranked["win_pct"] > 0.5 if reward_wins else ranked["win_pct"] < 0.5
+    if not holds:
         return None
+    pct_of_picks = round((ranked["wins"] + ranked["losses"]) / total_graded, 3)
+    return ranked, pct_of_picks, round(score(ranked), 4)
+
+
+def _trap_team(records: dict[int, dict[str, Any]]) -> dict[str, Any] | None:
+    """The team this user keeps going back to that keeps burning them - a
+    real sports-betting "trap team." See _team_habit_ranking() for the
+    shared formula/guard; trap_score rewards a losing rate instead of a
+    winning one."""
+    result = _team_habit_ranking(records, reward_wins=False)
+    if result is None:
+        return None
+    ranked, pct_of_picks, trap_score = result
     return {**ranked, "pct_of_picks": pct_of_picks, "trap_score": trap_score}
+
+
+def _lucky_team(records: dict[int, dict[str, Any]]) -> dict[str, Any] | None:
+    """Mirror of _trap_team() - the team this user keeps going back to
+    that keeps rewarding them instead. lucky_score rewards a winning rate
+    the same way trap_score rewards a losing one."""
+    result = _team_habit_ranking(records, reward_wins=True)
+    if result is None:
+        return None
+    ranked, pct_of_picks, lucky_score = result
+    return {**ranked, "pct_of_picks": pct_of_picks, "lucky_score": lucky_score}
+
+
+def _team_readability(user_rows: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    """Combined believer+fader accuracy per team this user's picks have
+    touched - picking team P and fading P's opponent O are the same real
+    bet (P covers exactly when O doesn't), so every graded pick
+    contributes the identical correctness to both teams' tallies at once.
+    Same _MIN_TEAM_PICKS_FOR_RECORD floor as _team_records(), just judged
+    on either side of a matchup instead of only picks-for. Feeds
+    _blind_spot_and_sweet_spot()."""
+    tallies: defaultdict[int, dict[str, int]] = defaultdict(
+        lambda: {"correct": 0, "total": 0}
+    )
+    team_dict_by_id: dict[int, dict[str, Any]] = {}
+    for row in user_rows:
+        if row["is_correct"] is None:
+            continue
+        picked = row["picked_team_id"]
+        opponent = (
+            row["away_team_id"] if picked == row["home_team_id"] else row["home_team_id"]
+        )
+        correct = int(row["is_correct"])
+        for team_id in (picked, opponent):
+            tallies[team_id]["total"] += 1
+            tallies[team_id]["correct"] += correct
+            team_dict_by_id[team_id] = _game_team_dict(team_id, row)
+
+    records: dict[int, dict[str, Any]] = {}
+    for team_id, tally in tallies.items():
+        if tally["total"] < _MIN_TEAM_PICKS_FOR_RECORD:
+            continue
+        records[team_id] = {
+            "team": team_dict_by_id[team_id],
+            "picks": tally["total"],
+            "accuracy": round(tally["correct"] / tally["total"], 3),
+        }
+    return records
+
+
+def _blind_spot_and_sweet_spot(
+    readability: dict[int, dict[str, Any]],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """blind_spot_team: the team this user reads worst no matter which
+    side they take (lowest combined accuracy from _team_readability()).
+    sweet_spot_team: the mirror, reads best either way. Same
+    min()/max()-always-returns-something guard as trap_team/lucky_team -
+    an exact .500 team, or no qualifying team, reports None for whichever
+    side (or both) doesn't actually hold. Ties broken toward more picks -
+    stronger evidence either way."""
+    if not readability:
+        return None, None
+    blind_spot = min(readability.values(), key=lambda r: (r["accuracy"], -r["picks"]))
+    sweet_spot = max(readability.values(), key=lambda r: (r["accuracy"], r["picks"]))
+    return (
+        blind_spot if blind_spot["accuracy"] < 0.5 else None,
+        sweet_spot if sweet_spot["accuracy"] > 0.5 else None,
+    )
 
 
 def _game_side_pick_counts(all_picks_rows: list[dict[str, Any]]) -> dict[int, tuple[int, int]]:
@@ -438,8 +518,10 @@ def compute_user_profiles(
         total_correct = sum(row["picks_correct"] or 0 for row in weekly_rows)
         best_week, worst_week = _best_and_worst_week(completed_weeks)
         team_records = _team_records(user_rows)
-        nemesis_team, lucky_team = _nemesis_and_lucky_team(team_records)
         trap_team = _trap_team(team_records)
+        lucky_team = _lucky_team(team_records)
+        readability = _team_readability(user_rows)
+        blind_spot_team, sweet_spot_team = _blind_spot_and_sweet_spot(readability)
 
         current_season = {
             "total_picks": total_made,
@@ -452,9 +534,10 @@ def compute_user_profiles(
             "contrarian": _contrarian_block(user_rows, side_counts_by_game)
             if user_rows
             else None,
-            "nemesis_team": nemesis_team,
-            "lucky_team": lucky_team,
             "trap_team": trap_team,
+            "lucky_team": lucky_team,
+            "blind_spot_team": blind_spot_team,
+            "sweet_spot_team": sweet_spot_team,
             "best_week": best_week,
             "worst_week": worst_week,
             "consistency": _consistency(completed_weeks),

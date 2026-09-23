@@ -631,30 +631,50 @@ src.kv_writer.__main__`).
   per-user KV writes. Covers career record, rolling hot streak (weeks at
   ≥80% accuracy), team-pick streak, home/away/favorite/underdog bias
   (season-wide `pct`/`picks` only, no streak - see below),
-  contrarian-vs-chalk accuracy, `nemesis_team`/`lucky_team` (worst/best
-  personal win rate on a team, min 2 picks), `trap_team` (added
-  2026-09-23 — same `trap_score = share_of_picks × (1 − win_pct)` shape
-  as `season:trends`' group-level `trap_team` above, but personal: the
-  team this user keeps going back to that keeps burning them, not just
-  whichever team has the single worst raw rate the way `nemesis_team`
-  does), best/worst week, consistency (score stddev), and clutch
-  (accuracy in each period's deciding week). Full field-by-field reference
-  (including which fields are tendency vs accuracy — a real point of past
-  confusion) lives in a published Artifact, not this file — ask before
-  assuming it's current.
-  **`nemesis_team`/`lucky_team`/`trap_team` all guarded against a
-  same-day-caught edge case (2026-09-23):** `min()`/`max()` over a user's
-  per-team records always return *something*, even when there's only one
-  qualifying team (or a tie) — a user whose only qualifying team went 2-0
-  was showing up with that same team as their own "nemesis," despite
-  never having lost on it. Each is now `None` unless the direction
-  actually holds: `nemesis_team` requires `win_pct < 0.5`, `lucky_team`
-  requires `win_pct > 0.5`, `trap_team` requires `trap_score > 0` — an
-  exact `.500` team, or a team that's never actually burned anyone,
-  correctly reports `None` rather than a misleading pick. Confirmed live
-  against prod: the exact user/team pair that surfaced this (a 2-0 team
-  forced into `trap_team`/`nemesis_team`) now reports `None` for both and
-  only appears in `lucky_team`, where it belongs.
+  contrarian-vs-chalk accuracy, best/worst week, consistency (score
+  stddev), clutch (accuracy in each period's deciding week), and four
+  team-callout fields forming a 2×2 (picks-for-this-team-only vs
+  either-side-of-the-matchup) × (bad vs good) — see below. Full
+  field-by-field reference (including which fields are tendency vs
+  accuracy — a real point of past confusion) lives in a published
+  Artifact, not this file — ask before assuming it's current.
+
+  **`trap_team`/`lucky_team`** (`_team_habit_ranking()`, shared core) —
+  weighted by how big a share of this user's graded picks (among teams
+  clearing `_MIN_TEAM_PICKS_FOR_RECORD`) went to a team, not just raw
+  `win_pct`: `trap_score`/`lucky_score = share_of_picks × (1 − win_pct)`
+  or `× win_pct` respectively. A team picked twice and lost both would
+  count the same toward a pure-rate metric as a team picked ten times and
+  lost eight, but only the second is really a habit that's hurting (or
+  helping) them - same shape as the group-level `trap_team` in
+  `season:trends` above, but personal. Superseded the original
+  `nemesis_team`/`lucky_team` (pure `win_pct`, no volume weighting) on
+  2026-09-23, once a real example showed the pure-rate version could rank
+  a team that caused 3 losses above one that caused 7, just because the
+  3-loss team's *rate* happened to be worse on a smaller sample.
+
+  **`blind_spot_team`/`sweet_spot_team`** (`_team_readability()` +
+  `_blind_spot_and_sweet_spot()`, added 2026-09-23) — combined
+  believer+fader accuracy per team: picking team P and fading P's
+  opponent O are the same real bet (P covers exactly when O doesn't), so
+  every graded pick contributes the identical correctness to *both*
+  teams' tallies at once. The team with the lowest/highest combined
+  accuracy is the one this user reads worst/best regardless of which side
+  they take on it - a genuinely different question from `trap_team`
+  ("which team's games should I stop picking *for*") vs this ("which
+  team's games should I stop picking at all, either way").
+
+  Both pairs share the same guard, all caught from one real example
+  (2026-09-21: a user's only qualifying team was undefeated at 2-0, yet
+  `min()` was still forced to return it as their own "nemesis"; a
+  follow-up pass the same day caught that an exact `.500` team could pass
+  `trap_team`'s and `lucky_team`'s guards *simultaneously*, since a raw
+  `score == 0` check doesn't catch a nonzero score on both sides).
+  `trap_team`/`blind_spot_team` require the record to genuinely be
+  losing; `lucky_team`/`sweet_spot_team` require it to genuinely be
+  winning; an exact `.500` team (or no qualifying team) reports `None`
+  for whichever side, or both, doesn't actually hold. Confirmed live
+  against prod for both fixes.
   **`head_to_head` was removed 2026-09-23** — it compared whole-week
   scores between every pair of users (who scored higher that week), which
   turned out to carry no information beyond what the leaderboard already

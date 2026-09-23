@@ -16,10 +16,10 @@ def write_user_profiles() -> None:
     """Write user:{user_id}:season:{season} for every active user - career
     record (years played/titles/best finish, from historical_standings) plus
     this season's streaks/tendencies (hot streak, team-pick streak, home/
-    away/favorite/underdog bias, contrarian accuracy, nemesis/lucky team,
-    consistency, clutch, head-to-head). All the actual computation lives in
-    src/user_stats.py's compute_user_profiles() - this just supplies the
-    career data and does the KV writes, one per user (see
+    away/favorite/underdog bias, contrarian accuracy, trap_team/lucky_team,
+    blind_spot_team/sweet_spot_team, consistency, clutch). All the actual
+    computation lives in src/user_stats.py's compute_user_profiles() - this
+    just supplies the career data and does the KV writes, one per user (see
     orchestration.py's own cadence for this - it's deliberately not on
     every tick like most other write_* functions here, since a per-user
     KV write for every active user on every minute-cron tick would be a lot
