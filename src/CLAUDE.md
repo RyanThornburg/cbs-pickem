@@ -277,7 +277,7 @@ Cadences, and why each one is what it is:
   `load_cbs_user_picks()` on its own cadence, independent of housekeeping's
   24h gate (`cbs_picks_quiet_last_poll_at`, `CBS_PICKS_QUIET_INTERVAL_SECONDS`).
   Added specifically to keep `weekly_performance.has_submitted_picks`
-  fresh (see `kv_writer.py`'s leaderboard `has_submitted_picks` field
+  fresh (see `kv_writer/leaderboard.py`'s `has_submitted_picks` field
   below) - the CBS live branch already re-polls this every
   `CBS_LIVE_INTERVAL_SECONDS` while a game is live, but most users submit
   their picks well before that week's first kickoff, when the live branch
@@ -429,13 +429,37 @@ when something just failed, not stale.
 
 ## KV writer
 
-`src/kv_writer.py` computes derived JSON blobs from D1 and writes them to
+`src/kv_writer/` computes derived JSON blobs from D1 and writes them to
 Cloudflare KV for `cbs-pickem-web`'s Worker to read — D1 stays the system
 of record, KV is a serving cache (see root `CLAUDE.md`'s Commands list
 and `CLAUDE.local.md`'s "Web UI" section for the overall architecture
 decision). Eight keys total; six have a `write_*`/`write_current_week_*`
-pair (the latter resolves `weeks.is_current` via `_resolve_current_week()`
-then delegates):
+pair (the latter resolves `weeks.is_current` via `resolve_current_week()`
+then delegates).
+
+**Split into one module per key, 2026-09-23** (was a single 1400+ line
+`src/kv_writer.py`): `games.py`, `leaderboard.py`, `odds.py`, `trends.py`,
+`historical.py`, `user_profiles.py`, `admin.py`, plus `shared.py` for the
+handful of things genuinely used across more than one of those (`GAMES_SQL`/
+`PICKS_SQL` — the literal same query used by both `games.py` and
+`trends.py`, not duplicated; `resolve_current_week()`; `game_team_dicts()`/
+`split_home_away()`; `write_meta_current()` itself, since `meta:current` is
+just `resolve_current_week()` plus two pool-rule constants, not worth its
+own file). Two further cross-module dependencies were kept as direct
+imports rather than folded into `shared.py`, since each is really owned by
+one domain that the other legitimately depends on: `trends.py` imports
+`odds.py`'s `open_close_consensus_by_game()` for its spread/total movers
+(so the movers and `week:*:odds`'s own open/close numbers can never
+disagree), and `user_profiles.py` imports `historical.py`'s
+`career_record_by_user()`. `__init__.py` re-exports every public
+`write_*`/`compute_week_leaderboard` name so `orchestration.py`'s and
+`season_close_out.py`'s existing `from src.kv_writer import ...` lines
+didn't need to change. The CLI entry point (`main()`, the
+`if __name__ == "__main__":` block) lives in `__main__.py`, not
+`__init__.py` — `python -m src.kv_writer` runs a package's `__main__.py`
+unconditionally, never `__init__.py`, regardless of what guard is written
+there (confirmed live: `__init__.py` alone raises `No module named
+src.kv_writer.__main__`).
 
 - `write_meta_current()` → `meta:current` — `current_week` from
   `weeks.is_current`, plus `second_half_start_week` and `paid_places`
@@ -543,7 +567,7 @@ then delegates):
   qualify), "all alone" picks (exactly one user on a side against at
   least `_ALL_ALONE_MIN_OPPOSING` on the other), and this week's biggest
   spread/total line movers (open→close ≥ `_LINE_MOVER_MIN_POINTS`, reusing
-  `_open_close_consensus_by_game()` from `write_week_odds()` above so the
+  `open_close_consensus_by_game()` from `write_week_odds()` above so the
   movers and the odds key's own open/close numbers can't disagree). No
   `write_current_week_trends()`-only wrapper distinction worth calling out
   beyond the usual pair — it's the same shape as `write_week_games()`/etc.
@@ -553,10 +577,24 @@ then delegates):
   computed straight from `cbs_spread` + final scores via `_ats_side()`
   (independent of whether the pool ever actually picked that team, unlike
   the pick-popularity numbers), and every "all alone" pick logged all
-  season. Shares `_split_home_away()`/`_all_alone_entries()`/
-  `_game_team_dicts()` helpers with `write_week_trends()`. Has no
+  season. Shares `split_home_away()`/`_all_alone_entries()`/
+  `game_team_dicts()` helpers with `write_week_trends()`. Has no
   `_current_week`-resolving wrapper since it isn't scoped to a week at
-  all — called directly from `orchestration.py`.
+  all — called directly from `orchestration.py`. Also carries
+  `spread_analysis` (added 2026-09-23, `_spread_bucket_trends()`) —
+  compares straight-up pick accuracy (picked the actual winner) against
+  ATS pick accuracy (picked the side that covered `cbs_spread`) bucketed
+  by spread size (`0-3`/`3-7`/`7-14`/`14+`, hand-picked cutoffs same as
+  the other trend thresholds), both dimensions computed straight from
+  `_ats_side()`/final scores rather than trusting `user_picks.is_correct`
+  — same source of truth `team_ats_record` above already uses, so a pick's
+  ATS correctness can't disagree with a team's own cover record. Each
+  bucket carries `overall`/`home_picks`/`away_picks` accuracy splits, plus
+  a separate `by_team` breakdown (same accuracy pair, per team per
+  bucket) — answers "does picking the spread actually differ from picking
+  to win, and at what spread size," the thing prompting this in the first
+  place (2026-09-22 discussion — the pool grades against the spread, not
+  straight-up winners, so this was previously unanswered from any KV key).
 - `write_historical()` → `meta:historical` — see `db/CLAUDE.md`'s
   `historical_standings` section for what feeds this.
 - `write_admin_status()` → `meta:admin` (added 2026-09-11) — a health-check
@@ -607,8 +645,8 @@ different loaders can change what it shows, across however many weeks
 aren't yet complete — see above.
 
 `config.OVERALL_PAID_PLACES`/`FIRST_HALF_PAID_PLACES`/
-`SECOND_HALF_PAID_PLACES` (added 2026-09-11, `_PAID_PLACES` in
-`kv_writer.py`) are hand-set pool-admin rules, same convention as
+`SECOND_HALF_PAID_PLACES` (added 2026-09-11, `PAID_PLACES` in
+`kv_writer/shared.py`) are hand-set pool-admin rules, same convention as
 `SECOND_HALF_START_WEEK` — currently 5/3/3, matching what the pool
 actually pays out. Change these, not the leaderboard math, if the pool's
 payout structure ever changes.

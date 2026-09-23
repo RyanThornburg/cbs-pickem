@@ -185,7 +185,7 @@ exceptions (e.g. a failed odds capture) rather than lookup misses -
 row (`occurrences`/`last_seen_at` bumped) instead of flooding the table.
 Written next to the existing `logger.exception()` at each catch site, not
 instead of it - the log has the full traceback for debugging, this table
-is the queryable "is anything broken" summary `src/kv_writer.py`'s
+is the queryable "is anything broken" summary `src/kv_writer/admin.py`'s
 `meta:admin` key surfaces (see `src/CLAUDE.md`'s KV writer section).
 First (only, as of this writing) call site: `orchestration.py`'s
 `_capture_odds()`, via a small `_record_system_event()` helper kept local
@@ -225,7 +225,7 @@ D1 supports `INSERT ... RETURNING` — confirmed live 2026-09-10
 `poolPeriod.isCurrent` flag — `cbs_loader.load_cbs_weeks()` writes it for
 every period on every run (CBS reports `false` for all but one, so no
 separate "clear the old current week" step is needed). This is what
-`kv_writer._resolve_current_week()` reads to answer "which week is live
+`kv_writer.shared.resolve_current_week()` reads to answer "which week is live
 right now" instead of guessing from `game_time`.
 
 `load_cbs_weeks()` also corrects `seasons.name` from CBS's real pool name
