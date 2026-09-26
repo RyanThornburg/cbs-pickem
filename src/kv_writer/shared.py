@@ -37,7 +37,7 @@ PAID_PLACES = {
 # the exact same query, not duplicated on purpose.
 GAMES_SQL = """
 SELECT g.game_id, g.status, g.status_desc, g.home_score, g.away_score, g.game_time,
-    g.cbs_spread, g.tv_network, g.gametracker_url,
+    g.cbs_spread, g.tv_network, g.gametracker_url, g.neutral_site,
     g.forecast_temp_f, g.forecast_feels_like_f, g.forecast_condition, g.forecast_icon,
     g.forecast_precip_type, g.forecast_wind_speed_mph, g.forecast_wind_gust_mph,
     g.forecast_wind_direction, g.forecast_precipitation_pct,

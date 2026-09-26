@@ -130,6 +130,18 @@ already never took `env` (see `config/CLAUDE.md`).
   `game_snapshots_loader.py` via `loader_helper.capture_weather()` (see
   below) rather than duplicating it — both loaders used near-identical
   weather-extraction code before this was pulled out.
+- `espn_loader.py` (added 2026-09-26) - `load_espn_games()` sets
+  `games.neutral_site` (ESPN's `competitions[].neutralSite`) and links
+  `games.espn_event_id` up front, one ESPN scoreboard call per week
+  (`get_scoreboard(week)`). Runs from daily housekeeping (after
+  `load_games_data()`, so the rows exist) scoped to `is_complete = 0`
+  weeks, since neither value changes once a game is played; the CLI form
+  covers every week for a first run/backfill. Matches by
+  `(home_abbrev, away_abbrev)` within a week, same as
+  `game_snapshots_loader.py`. A failed week fetch is logged and skipped.
+  Confirmed live 2026-09-26: all 272 games linked, the 9 `neutralSite`
+  games are exactly the 9 `is_international` games, and ESPN's home/away
+  designation matches Sports IO's for all of them.
 
 `load_games_data(env, live=True)` fetches via
 `_get_live_window_games()`, not `get_live_games()` — confirmed live
@@ -485,6 +497,10 @@ src.kv_writer.__main__`).
   *current* record as of the last daily housekeeping sync, not the
   record as it stood entering that specific game - no per-week history
   kept, same reasoning as the pregame forecast overwriting in place.
+  `neutral_site` (added 2026-09-26, `games.neutral_site` from
+  `src/loaders/espn_loader.py`) flags international and domestic
+  neutral-site games alike; `stadium.country` is what tells the two
+  apart if the UI ever needs to.
 - `write_week_leaderboard()` → `week:{season}:{weekNN}:leaderboard` —
   cumulative/first-half/second-half scores and tie-aware `place`
   (`_standard_rank()`, standard competition ranking: ties share a place,

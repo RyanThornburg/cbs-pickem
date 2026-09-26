@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS games (
     is_complete BOOLEAN AS (status = 'FINAL'),
     has_final_stats BOOLEAN NOT NULL DEFAULT FALSE, -- set once game_team_stats has been reloaded after this game went FINAL (see orchestration._run_finished_game_stats) - not a generated column since it tracks something game_team_stats did, not games itself
     is_international BOOLEAN DEFAULT FALSE,
+    neutral_site BOOLEAN DEFAULT FALSE, -- from ESPN's competitions[].neutralSite (src/loaders/espn_loader.py) - international games plus any domestic neutral-site game
     tv_network VARCHAR(50),
     gametracker_url VARCHAR(255),
     status_desc VARCHAR(30), -- raw per-source status string, kept for debugging/audit

@@ -392,3 +392,11 @@ first sighting (there's no other shared id up front), then
 `games.espn_event_id` gets backfilled so later runs join directly instead
 of re-matching by name every time — same "match once, then join by id"
 pattern as `odds_loader.py`'s `odds_api_event_id`.
+
+`get_scoreboard(week)` (added 2026-09-26) fetches a specific
+regular-season week of `config.SEASON` via
+`?seasontype=2&week=N&dates={SEASON}`; with no week it's the current
+week, as before. Confirmed live that a single date-range query for the
+whole season (`?dates=YYYYMMDD-YYYYMMDD`) returns a 400, so a full-season
+sync is one call per week. `competitions[].neutralSite` is what
+`src/loaders/espn_loader.py` persists to `games.neutral_site`.

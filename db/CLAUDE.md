@@ -138,7 +138,9 @@ no migration runner in this repo, so this has been done ad hoc via
 `D1Client.batch()` each time (e.g. `games.forecast_*` and
 `teams.wins`/`losses`/`ties`, both added 2026-09-15 - applied to local at
 the time, confirmed live 2026-09-21 (`PRAGMA table_info`) that both have
-since been applied to prod too).
+since been applied to prod too). `games.neutral_site` (added 2026-09-26)
+applied to both local and prod the same day, and backfilled on both via
+`src.loaders.espn_loader`.
 
 ## `mapping_gaps` tracks lookup misses for review
 

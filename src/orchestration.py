@@ -25,6 +25,7 @@ from src.kv_writer import (
     write_user_profiles,
 )
 from src.loaders.cbs_loader import load_cbs_games, load_cbs_user_picks, load_cbs_weeks
+from src.loaders.espn_loader import load_espn_games
 from src.loaders.game_snapshots_loader import load_game_snapshots
 from src.loaders.odds_loader import load_the_odds_api_odds
 from src.loaders.pregame_weather_loader import load_pregame_weather
@@ -205,6 +206,7 @@ def _run_quiet_period_tasks(client: D1Client) -> None:
         load_teams()  # refresh team win/loss/tie records, same cadence
         load_cbs_weeks()
         load_cbs_games()
+        load_espn_games()  # neutral_site for incomplete weeks
         write_meta_current()
         # write_current_week_games() not needed here - run_tick() now
         # calls it unconditionally on every tick regardless of branch

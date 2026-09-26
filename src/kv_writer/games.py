@@ -165,6 +165,7 @@ def write_week_games(week_number: int) -> None:
             "cbs_spread": game["cbs_spread"],
             "tv_network": game["tv_network"],
             "gametracker_url": game["gametracker_url"],
+            "neutral_site": bool(game["neutral_site"]),
             "stadium": _game_stadium(game),
             "forecast": _game_forecast(game),
             "picks": {

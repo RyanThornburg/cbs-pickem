@@ -19,6 +19,7 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management and
 - Fetch/validate The Odds API data (spreads/totals odds, not persisted): `uv run python -m api.the_odds_api_client`
 - Fetch/validate a Pirate Weather forecast, not persisted: `uv run python -m api.weather_api`
 - Fetch/validate ESPN's public scoreboard, not persisted: `uv run python -m api.espn_client`
+- Sync ESPN neutral-site flags/event ids onto every game this season: `uv run python -m src.loaders.espn_loader [local|prod]`
 - Load NFL stadiums (static seed): `uv run python -m src.loaders.stadiums_loader [local|prod]`
 - Capture live game snapshots (score/quarter/weather/field position): `uv run python -m src.loaders.game_snapshots_loader [local|prod]`
 - Load odds (The Odds API only, Sports IO odds not built): `uv run python -m src.loaders.odds_loader [local|prod]`
