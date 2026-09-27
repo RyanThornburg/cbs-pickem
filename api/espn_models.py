@@ -27,6 +27,29 @@ class EspnModel(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
 
+class LastPlayType(EspnModel):
+    text: str | None = None
+
+
+class WinProbability(EspnModel):
+    # fractions 0-1, not percents
+    home_win_percentage: float | None = Field(default=None, alias="homeWinPercentage")
+    away_win_percentage: float | None = Field(default=None, alias="awayWinPercentage")
+    tie_percentage: float | None = Field(default=None, alias="tiePercentage")
+
+
+class LastPlayDrive(EspnModel):
+    description: str | None = None
+
+
+class LastPlay(EspnModel):
+    id: str | None = None
+    text: str | None = None
+    type: LastPlayType | None = None
+    probability: WinProbability | None = None
+    drive: LastPlayDrive | None = None
+
+
 class Situation(EspnModel):
     down: int | None = None
     distance: int | None = None
@@ -40,6 +63,7 @@ class Situation(EspnModel):
     # "possession", not "possessionTeamId" despite that being the more
     # descriptive name
     possession_team_id: str | None = Field(default=None, alias="possession")
+    last_play: LastPlay | None = Field(default=None, alias="lastPlay")
 
 
 class StatusType(EspnModel):
@@ -82,6 +106,49 @@ class Event(EspnModel):
     date: str
     short_name: str = Field(alias="shortName")
     competitions: list[Competition] = Field(default_factory=list[Competition])
+
+
+# --- /summary?event={id} (one game) ---
+class PlayPeriod(EspnModel):
+    number: int
+
+
+class PlayClock(EspnModel):
+    display_value: str = Field(alias="displayValue")
+
+
+class SummaryPlay(EspnModel):
+    id: str
+    period: PlayPeriod | None = None
+    clock: PlayClock | None = None
+    home_score: int | None = Field(default=None, alias="homeScore")
+    away_score: int | None = Field(default=None, alias="awayScore")
+    scoring_play: bool = Field(default=False, alias="scoringPlay")
+
+
+class SummaryDrive(EspnModel):
+    plays: list[SummaryPlay] = Field(default_factory=list[SummaryPlay])
+
+
+class SummaryDrives(EspnModel):
+    previous: list[SummaryDrive] = Field(default_factory=list[SummaryDrive])
+    current: SummaryDrive | None = None
+
+
+class WinProbabilityPoint(EspnModel):
+    # fraction 0-1; one point per play, keyed to a drive play by play_id,
+    # plus one pre-kickoff point that matches no play (confirmed live
+    # across all 43 FINAL 2026 games as of 2026-09-27)
+    home_win_percentage: float = Field(alias="homeWinPercentage")
+    tie_percentage: float | None = Field(default=None, alias="tiePercentage")
+    play_id: str = Field(alias="playId")
+
+
+class Summary(EspnModel):
+    win_probability: list[WinProbabilityPoint] = Field(
+        default_factory=list[WinProbabilityPoint], alias="winprobability"
+    )
+    drives: SummaryDrives | None = None
 
 
 class Scoreboard(EspnModel):

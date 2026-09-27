@@ -141,6 +141,14 @@ the time, confirmed live 2026-09-21 (`PRAGMA table_info`) that both have
 since been applied to prod too). `games.neutral_site` (added 2026-09-26)
 applied to both local and prod the same day, and backfilled on both via
 `src.loaders.espn_loader`.
+New tables need no `ALTER`: `schema.sql`'s `CREATE TABLE IF NOT EXISTS`
+creates them on an existing database, so re-running `./setup.sh` is
+enough. `game_scoring_plays`, `game_player_stats` and
+`game_win_probability` (all added 2026-09-27) were applied that way to
+both local and prod the same day.
+`game_snapshots.last_play_text`/`last_play_type`/`drive_text`/
+`home_win_pct`/`away_win_pct`/`last_play_id`/`weather_captured_at` (added
+2026-09-27) applied to both local and prod the same day.
 `games.forecast_window_*`/`forecast_source`/`forecast_hours_json` (added 2026-09-27) applied
 to both local and prod the same day.
 Same day, `games.forecast_alert`/`game_snapshots.weather_alert` (joined

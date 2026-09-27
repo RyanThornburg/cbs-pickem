@@ -17,12 +17,14 @@ from api.api_helper import (
     ApiServerError,
     fetch_and_validate_one,
 )
-from api.espn_models import Scoreboard
+from api.espn_models import Scoreboard, Summary
 from config.config import SEASON, configure_logging
 
 SOURCE = "espn"
 
 API_URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
+# one game's full detail (drives/plays, per-play win probability, box score)
+SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary"
 
 # regular season - same scope as the pool itself
 REGULAR_SEASON_TYPE = 2
@@ -47,6 +49,10 @@ class EspnClient:
         if week is not None:
             params = {"seasontype": REGULAR_SEASON_TYPE, "week": week, "dates": SEASON}
         return self._fetch(API_URL, params).json()
+
+    def get_summary(self, event_id: str) -> dict[str, Any]:
+        """one game's summary - only its drives/win probability are modeled"""
+        return self._fetch(SUMMARY_URL, {"event": event_id}).json()
 
     @stamina.retry(
         on=(ApiRateLimitError, ApiServerError, requests.exceptions.RequestException)
@@ -74,6 +80,13 @@ def get_scoreboard(week: int | None = None) -> Scoreboard:
     """current week's NFL scoreboard, or a specific regular-season week's"""
     return fetch_and_validate_one(
         "ESPN scoreboard", lambda: EspnClient().get_scoreboard(week), Scoreboard
+    )
+
+
+def get_summary(event_id: str) -> Summary:
+    """one game's summary by ESPN event id (games.espn_event_id)"""
+    return fetch_and_validate_one(
+        "ESPN summary", lambda: EspnClient().get_summary(event_id), Summary
     )
 
 

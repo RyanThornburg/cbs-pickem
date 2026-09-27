@@ -2,7 +2,6 @@
 
 import json
 import logging
-import sys
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -345,13 +344,16 @@ def capture_pregame_forecast(
 def sql_batch_call(
     statements: list[tuple[str, list[Any] | None]], client: D1Client | None = None
 ) -> None:
-    """Run a batch of (sql, params) statements"""
+    """Run a batch of (sql, params) statements. A D1Error is logged and
+    re-raised, not turned into sys.exit() - SystemExit isn't an Exception,
+    so exiting here used to slip past orchestration.py's try/except around
+    tasks meant to fail softly and end the whole tick."""
     client = client or D1Client(**get_d1_config())
     try:
         client.batch(statements)
     except D1Error:
         logger.exception("Loading data failed")
-        sys.exit(1)
+        raise
 
 
 def id_map(client: D1Client, table: str, column: str, pk_column: str) -> dict[Any, int]:

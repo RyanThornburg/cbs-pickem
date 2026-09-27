@@ -267,8 +267,9 @@ class TeamStatistics(SportsIOModel):
 
 # --- /games/events ---
 class Player(SportsIOModel):
-    id: int
-    name: str
+    # a handful of 2025 events had null player fields (confirmed live)
+    id: int | None = None
+    name: str | None = None
     image: str | None = None
 
 
@@ -278,13 +279,41 @@ class EventScore(SportsIOModel):
 
 
 class GameEvent(SportsIOModel):
-    quarter: str
-    minute: str
+    quarter: str  # "First".."Fourth", "Overtime"
+    # time left in the quarter - null on ~15% of 2025's scoring plays
+    # (confirmed live), so order comes from the list, not the clock
+    minute: str | None = None
     team: TeamRef
     player: Player
     type: str
     comment: str | None = None
     score: EventScore
+
+
+# --- /games/statistics/players ---
+class PlayerStat(SportsIOModel):
+    # always a string when present - "292", "8.6", "19/34", "2-19" - and
+    # null for some stats a player didn't record (confirmed live)
+    name: str
+    value: str | None = None
+
+
+class PlayerStatLine(SportsIOModel):
+    player: Player
+    statistics: list[PlayerStat]
+
+
+class PlayerStatGroup(SportsIOModel):
+    # "Passing", "Rushing", "Receiving", "Fumbles", "Interceptions",
+    # "Defensive", "Kick_returns", "Punt_returns", "Kicking", "Punting" -
+    # a group is simply absent when no player on that team has a line in it
+    name: str
+    players: list[PlayerStatLine]
+
+
+class TeamPlayerStatistics(SportsIOModel):
+    team: TeamRef
+    groups: list[PlayerStatGroup]
 
 
 # --- /odds ---

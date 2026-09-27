@@ -8,6 +8,7 @@ Usage: uv run python -m src.loaders.game_snapshots_loader [local|prod]
 
 import logging
 import sys
+from datetime import UTC, datetime
 from typing import Any
 
 from api.cbs_client import get_cbs_pool_home
@@ -25,32 +26,62 @@ INSERT INTO game_snapshots (
     game_id, quarter, time_remaining, status_desc, possession, home_score, away_score,
     down, distance, yard_line, down_distance_text, possession_text,
     is_red_zone, home_timeouts, away_timeouts,
+    last_play_text, last_play_type, drive_text, home_win_pct, away_win_pct,
+    last_play_id,
     temperature_f, feels_like_f, weather_condition, weather_icon, precip_type,
     wind_speed_mph, wind_gust_mph, wind_direction, precipitation_pct,
-    visibility_mi, weather_alerts_json
+    visibility_mi, weather_alerts_json, weather_captured_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?)
 """
 
-# (quarter, time_remaining) identical don't update, nothing happened since prior
+# latest snapshot per live game - {} is filled with one ? per game_id
 _LATEST_SNAPSHOT_SQL = """
-SELECT game_id, quarter, time_remaining FROM game_snapshots
-WHERE snapshot_id IN (SELECT MAX(snapshot_id) FROM game_snapshots GROUP BY game_id)
+SELECT * FROM game_snapshots
+WHERE snapshot_id IN (
+    SELECT MAX(snapshot_id) FROM game_snapshots WHERE game_id IN ({}) GROUP BY game_id
+)
 """
 
-_NO_SITUATION = (None, None, None, None, None, None, None, None)
+# weather barely changes minute to minute - snapshots between refreshes
+# carry the previous reading forward instead of spending a Pirate Weather call
+WEATHER_REFRESH_SECONDS = 5 * 60
+
+# game_snapshots' weather columns, in capture_weather()'s tuple order
+_WEATHER_COLUMNS = (
+    "temperature_f",
+    "feels_like_f",
+    "weather_condition",
+    "weather_icon",
+    "precip_type",
+    "wind_speed_mph",
+    "wind_gust_mph",
+    "wind_direction",
+    "precipitation_pct",
+    "visibility_mi",
+    "weather_alerts_json",
+)
+
+_NO_SITUATION = (None,) * 14
 
 
-def _situation_fields(
-    situation: Situation | None,
-) -> tuple[Any, Any, Any, Any, Any, Any, Any, Any]:
+def _win_pct(fraction: float | None) -> float | None:
+    return None if fraction is None else round(fraction * 100, 1)
+
+
+def _situation_fields(situation: Situation | None) -> tuple[Any, ...]:
     """(down, distance, yard_line, down_distance_text, possession_text,
-    is_red_zone, home_timeouts, away_timeouts). None across the board if
-    ESPN has no situation for this game right now - e.g. between plays
-    like halftime, or if ESPN's abbreviation-matched event wasn't found."""
+    is_red_zone, home_timeouts, away_timeouts, last_play_text,
+    last_play_type, drive_text, home_win_pct, away_win_pct, last_play_id).
+    None across the board if ESPN has no situation for this game right
+    now - e.g. between plays like halftime, or if ESPN's
+    abbreviation-matched event wasn't found."""
     if situation is None:
         return _NO_SITUATION
 
+    last_play = situation.last_play
+    probability = last_play.probability if last_play else None
     return (
         situation.down,
         situation.distance,
@@ -60,7 +91,42 @@ def _situation_fields(
         situation.is_red_zone,
         situation.home_timeouts,
         situation.away_timeouts,
+        # ESPN sometimes pads this with a leading space
+        last_play.text.strip() if last_play and last_play.text else None,
+        last_play.type.text if last_play and last_play.type else None,
+        last_play.drive.description if last_play and last_play.drive else None,
+        _win_pct(probability.home_win_percentage) if probability else None,
+        _win_pct(probability.away_win_percentage) if probability else None,
+        last_play.id if last_play else None,
     )
+
+
+def _snapshot_weather(
+    row: dict[str, Any], previous: dict[str, Any] | None
+) -> tuple[Any, ...]:
+    """capture_weather()'s tuple plus weather_captured_at. Reuses the
+    previous snapshot's reading while it's under WEATHER_REFRESH_SECONDS
+    old. weather_captured_at stays null for an enclosed roof or a failed
+    fetch, so those retry on the next snapshot (enclosed never calls out)."""
+    if previous is not None and previous["weather_captured_at"] is not None:
+        captured = datetime.strptime(
+            previous["weather_captured_at"], "%Y-%m-%d %H:%M:%S"
+        ).replace(tzinfo=UTC)
+        if (datetime.now(UTC) - captured).total_seconds() < WEATHER_REFRESH_SECONDS:
+            return (
+                *(previous[column] for column in _WEATHER_COLUMNS),
+                previous["weather_captured_at"],
+            )
+
+    weather = capture_weather(
+        row["latitude"], row["longitude"], row["roof_type"], f"game_id={row['game_id']}"
+    )
+    captured_at = (
+        datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        if any(value is not None for value in weather)
+        else None
+    )
+    return (*weather, captured_at)
 
 
 _UPDATE_GAME_ESPN_ID_SQL = "UPDATE games SET espn_event_id = ? WHERE game_id = ?"
@@ -117,9 +183,12 @@ def load_game_snapshots() -> None:
     espn_by_id, espn_by_teams = _fetch_espn_scoreboard_lookup()
     espn_backfill_statements: list[tuple[str, list[Any] | None]] = []
 
+    game_ids = [row["game_id"] for row in live_games]
     latest_by_game_id = {
-        row["game_id"]: (row["quarter"], row["time_remaining"])
-        for row in client.query(_LATEST_SNAPSHOT_SQL).results
+        row["game_id"]: row
+        for row in client.query(
+            _LATEST_SNAPSHOT_SQL.format(", ".join("?" * len(game_ids))), game_ids
+        ).results
     }
 
     statements: list[tuple[str, list[Any] | None]] = []
@@ -134,17 +203,6 @@ def load_game_snapshots() -> None:
                 row["cbs_event_id"],
             )
             continue
-
-        if latest_by_game_id.get(row["game_id"]) == (
-            event.game_period,
-            event.time_remaining,
-        ):
-            skipped_unchanged += 1
-            continue
-
-        weather = capture_weather(
-            row["latitude"], row["longitude"], row["roof_type"], f"game_id={row['game_id']}"
-        )
 
         if row["espn_event_id"] is not None:
             situation = espn_by_id.get(row["espn_event_id"])
@@ -181,6 +239,26 @@ def load_game_snapshots() -> None:
                     (_UPDATE_GAME_ESPN_ID_SQL, [espn_event_id, row["game_id"]])
                 )
 
+        # nothing happened since the prior snapshot - CBS's clock lags ESPN,
+        # so a new ESPN play alone still counts as a change
+        situation_fields = _situation_fields(situation)
+        previous = latest_by_game_id.get(row["game_id"])
+        if previous is not None and (
+            previous["quarter"],
+            previous["time_remaining"],
+            previous["home_score"],
+            previous["away_score"],
+            previous["last_play_id"],
+        ) == (
+            event.game_period,
+            event.time_remaining,
+            event.home_team_score,
+            event.away_team_score,
+            situation_fields[-1],
+        ):
+            skipped_unchanged += 1
+            continue
+
         statements.append(
             (
                 _INSERT_SNAPSHOT_SQL,
@@ -192,8 +270,8 @@ def load_game_snapshots() -> None:
                     event.possession if event.possession != "NONE" else None,
                     event.home_team_score,
                     event.away_team_score,
-                    *_situation_fields(situation),
-                    *weather,
+                    *situation_fields,
+                    *_snapshot_weather(row, previous),
                 ],
             )
         )
@@ -203,7 +281,7 @@ def load_game_snapshots() -> None:
 
     if skipped_unchanged:
         logger.info(
-            "Skipped %d snapshot(s) - clock unchanged since last capture",
+            "Skipped %d snapshot(s) - nothing changed since last capture",
             skipped_unchanged,
         )
 

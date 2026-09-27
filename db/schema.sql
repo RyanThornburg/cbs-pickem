@@ -154,6 +154,13 @@ CREATE TABLE IF NOT EXISTS game_snapshots (
     is_red_zone BOOLEAN DEFAULT FALSE,
     home_timeouts INT,
     away_timeouts INT,
+    -- from ESPN's situation.lastPlay (null when ESPN has no situation)
+    last_play_text VARCHAR(255), -- e.g. 'Timeout #2 by SF at 01:41.'
+    last_play_type VARCHAR(30), -- e.g. 'Timeout', 'Pass Reception', 'End of Half'
+    drive_text VARCHAR(50), -- current drive, e.g. '6 plays, 15 yards, 1:22'
+    home_win_pct DECIMAL(4,1), -- ESPN win probability after that play, 0-100
+    away_win_pct DECIMAL(4,1),
+    last_play_id VARCHAR(30), -- ESPN's play id, part of the "anything changed" check
     temperature_f INT,
     feels_like_f INT,
     weather_condition VARCHAR(50), -- Pirate Weather's summary text, e.g. 'Overcast', 'Possible Drizzle', 'Fog'
@@ -165,6 +172,7 @@ CREATE TABLE IF NOT EXISTS game_snapshots (
     precipitation_pct INT,
     visibility_mi DECIMAL(4,1),
     weather_alerts_json TEXT, -- JSON list of game-relevant alerts active at capture time: [{title, severity, starts, expires, uri}], '[]' if none
+    weather_captured_at TIMESTAMP, -- when the weather columns were actually fetched - carried forward with them between refreshes (WEATHER_REFRESH_SECONDS), null for enclosed/failed
     FOREIGN KEY (game_id) REFERENCES games(game_id)
 );
 
@@ -229,6 +237,62 @@ CREATE TABLE IF NOT EXISTS game_team_stats (
     UNIQUE (game_id, team_id)
 );
 
+
+-- Scoring plays for a game, from Sports IO's /games/events, in the order
+-- Sports IO returns them (every scoring play raises the combined score, so
+-- that order is chronological - confirmed live across all of 2025). No
+-- Sports IO id to dedup on: src/loaders/scoring_plays_loader.py replaces a
+-- game's rows wholesale whenever its latest play's score falls behind
+-- games.home_score/away_score, which also picks up Sports IO's corrections.
+CREATE TABLE IF NOT EXISTS game_scoring_plays (
+    scoring_play_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id INT NOT NULL,
+    sequence INT NOT NULL, -- 1-based position in Sports IO's list
+    quarter INT, -- 1-4, 5=OT, same scale as game_snapshots.quarter
+    clock VARCHAR(10), -- time left in the quarter, e.g. '8:26' - null on ~15% of plays
+    team_id INT, -- team that scored
+    type VARCHAR(30), -- Sports IO's raw type: 'TD', 'FG', 'SF'/'Safety', '2PTC', ...
+    description TEXT, -- e.g. 'Roman Wilson 38 Yd pass from Aaron Rodgers (Chris Boswell Kick)'
+    player_name VARCHAR(100),
+    home_score INT NOT NULL, -- score after this play
+    away_score INT NOT NULL,
+    captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (game_id) REFERENCES games(game_id),
+    FOREIGN KEY (team_id) REFERENCES teams(team_id),
+    UNIQUE (game_id, sequence)
+);
+
+-- Per-player box score for a game, from Sports IO's
+-- /games/statistics/players - one row per game/team/stat group/player
+-- (a QB who also ran has a Passing row and a Rushing row). Stats are a
+-- JSON object rather than columns since every group has its own set (see
+-- src/loaders/player_stats_loader.py for the key/value normalization).
+CREATE TABLE IF NOT EXISTS game_player_stats (
+    player_stat_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id INT NOT NULL,
+    team_id INT NOT NULL,
+    stat_group VARCHAR(20) NOT NULL, -- Sports IO's group name: 'Passing', 'Rushing', 'Receiving', 'Defensive', 'Kicking', 'Punting', ...
+    player_name VARCHAR(100) NOT NULL,
+    sports_io_player_id INT,
+    player_image VARCHAR(255), -- Sports IO headshot URL
+    stats_json TEXT NOT NULL, -- e.g. {"comp_att": "19/34", "yards": 292, "passing_touch_downs": 3, ...}
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (game_id) REFERENCES games(game_id),
+    FOREIGN KEY (team_id) REFERENCES teams(team_id),
+    UNIQUE (game_id, team_id, stat_group, player_name)
+);
+
+-- ESPN's per-play win probability curve for a finished game (summary
+-- endpoint), one row per game. JSON rather than a child table since it's
+-- only ever read whole and written once, same reasoning as
+-- games.forecast_hours_json. The live value per snapshot is
+-- game_snapshots.home_win_pct - this is the complete, gap-free version.
+CREATE TABLE IF NOT EXISTS game_win_probability (
+    game_id INTEGER PRIMARY KEY,
+    points_json TEXT NOT NULL, -- [{period, clock, home_win_pct, home_score, away_score, scoring_play}], chronological
+    captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (game_id) REFERENCES games(game_id)
+);
 
 -- User picks for each game
 CREATE TABLE IF NOT EXISTS user_picks (

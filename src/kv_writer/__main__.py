@@ -8,6 +8,7 @@ from src.kv_writer import (
     write_admin_status,
     write_current_week_games,
     write_current_week_leaderboard,
+    write_current_week_game_details,
     write_current_week_odds,
     write_current_week_trends,
     write_historical,
@@ -21,6 +22,7 @@ def main() -> None:
     "write data to kv"
     write_meta_current()
     write_current_week_games()
+    write_current_week_game_details()
     write_current_week_leaderboard()
     write_current_week_odds()
     write_current_week_trends()

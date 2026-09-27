@@ -293,8 +293,29 @@ directly 2026-09-09, none have a punts/punt-yards/punt-average category.
 The only punt-related data found anywhere is incidental play-by-play text
 on ESPN's heavy `/core/nfl/game` endpoint (e.g. `"M.Dickson punts 42
 yards..."`) when a punt happened to be the most recent play — not a real
-stat, and that endpoint isn't used (see ESPN section below). Don't assume
-this is just an unwired field; there's no clean source for it right now.
+stat, and that endpoint isn't used (see ESPN section below). **Correction
+2026-09-27:** that check only covered *team* box scores - Sports IO's
+per-player `/games/statistics/players` has a `Punting` group per team
+(total/yards/average/touchbacks/in20/lg), now stored (see below).
+
+`/games/events` (`get_game_events()`, scoring plays - loaded by
+`src/loaders/scoring_plays_loader.py` since 2026-09-27) and
+`/games/statistics/players` (`get_player_statistics()`, per-player box
+score - `src/loaders/player_stats_loader.py`) were both checked against
+real data before trusting the models, and each surfaced something:
+- Events: `minute` is null on ~15% of scoring plays (all of 2025: 355 of
+  2,339) and a handful of `player` fields are null - `GameEvent` crashed
+  on a real safety until both were made optional. Events come back in
+  chronological order and every one raises the combined score (0
+  exceptions across 272 games), which is what the loader's "is anything
+  new" check relies on. Quarter is `"First"`..`"Fourth"`/`"Overtime"`.
+  Types seen: `TD`, `FG`, `SF` *and* `Safety`, `2PTC`, one truncated
+  `"Pass Interception Re"`. No event id.
+- Player stats: one entry per team, `groups[]` each with `players[]`,
+  each `statistics[]` of `{name, value}` where `value` is always a string
+  or null (never a number). Group and stat names are listed in
+  `src/CLAUDE.md`'s player stats loader note. Real partial stats mid-game,
+  and they matched ESPN's live leaders exactly (checked 2026-09-27).
 
 `get_live_games()` (`/games?live=all`) **cannot ever report a game going
 FINAL** — confirmed live 2026-09-11: Sports IO's `live=all` filter is
@@ -410,3 +431,23 @@ week, as before. Confirmed live that a single date-range query for the
 whole season (`?dates=YYYYMMDD-YYYYMMDD`) returns a 400, so a full-season
 sync is one call per week. `competitions[].neutralSite` is what
 `src/loaders/espn_loader.py` persists to `games.neutral_site`.
+
+`situation.lastPlay` (modeled 2026-09-27 as `LastPlay`) carries the most
+recent play's `id`/`text`/`type.text`, the current drive's
+`drive.description` and `probability` (`homeWinPercentage`/
+`awayWinPercentage`/`tiePercentage`, fractions 0-1) - ESPN's live win
+probability, already in the scoreboard response, no extra call. `text`
+sometimes has a leading space. `situation.yardLine` is yards from the
+**home** team's goal line (0-100) regardless of possession, confirmed
+against ESPN's own drive log; 0 means no spot.
+
+`get_summary(event_id)` (added 2026-09-27) reads the per-game summary
+endpoint (`.../nfl/summary?event={id}`), only for the finished-game win
+probability curve (`src/loaders/win_probability_loader.py`). Only
+`winprobability` and `drives` are modeled; the response also has a box
+score, leaders, scoring plays, odds and more, deliberately unused since
+Sports IO covers those. Each `winprobability` entry is `{homeWinPercentage,
+tiePercentage, playId}` - no clock or score of its own, so it's joined to
+`drives.previous[].plays[]` by play id. Exactly one entry per game matches
+no play: ESPN's pre-kickoff value (confirmed across all 43 FINAL 2026
+games, 159-226 entries each).

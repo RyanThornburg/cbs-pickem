@@ -25,6 +25,7 @@ from api.sports_io_models import (
     Odds,
     Standing,
     Team,
+    TeamPlayerStatistics,
     TeamStatistics,
 )
 from config.config import SEASON, configure_logging, get_sports_io_api
@@ -51,6 +52,7 @@ class Endpoint(Enum):
     GAMES = ("/games", Game)
     TEAM_STATISTICS = ("/games/statistics/teams", TeamStatistics)
     GAME_EVENTS = ("/games/events", GameEvent)
+    PLAYER_STATISTICS = ("/games/statistics/players", TeamPlayerStatistics)
     ODDS = ("/odds", Odds)
 
     def __init__(self, path: str, model: type[BaseModel]):
@@ -106,6 +108,10 @@ class SportsIOClient:
     def get_game_events(self, game_id: int):
         """scoring plays"""
         return self._request(Endpoint.GAME_EVENTS, id=game_id)
+
+    def get_player_statistics(self, game_id: int):
+        """per-player box score, grouped by team then stat group"""
+        return self._request(Endpoint.PLAYER_STATISTICS, id=game_id)
 
     def get_odds(self, game_id: int):
         """pre-game odds from api"""
@@ -282,6 +288,15 @@ def get_game_events(game_id: int) -> list[GameEvent]:
         "game events",
         lambda: _new_client().get_game_events(game_id),
         Endpoint.GAME_EVENTS.model,
+    )
+
+
+def get_player_statistics(game_id: int) -> list[TeamPlayerStatistics]:
+    """one entry per team - real partial stats mid-game, like team stats"""
+    return fetch_and_validate(
+        "player statistics",
+        lambda: _new_client().get_player_statistics(game_id),
+        Endpoint.PLAYER_STATISTICS.model,
     )
 
 

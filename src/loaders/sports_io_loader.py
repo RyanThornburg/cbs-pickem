@@ -485,13 +485,15 @@ def _game_ids_by_status(client: D1Client, statuses: tuple[str, ...]) -> dict[int
 
 def _load_stats_for_game_ids(
     game_ids: dict[int, int], client: D1Client, label: str
-) -> None:
+) -> set[int]:
     """game_ids: sports_io_game_id -> internal game_id. `label` is just for
-    log messages (e.g. "week 3", "live")."""
+    log messages (e.g. "week 3", "live"). Returns the internal game_ids
+    that got at least one stats row, for the caller's KV write."""
     team_ids = id_map(client, "teams", "sports_io_team_id", "team_id")
 
     statements: list[tuple[str, list[Any] | None]] = []
     gap_statements: list[tuple[str, list[Any] | None]] = []
+    loaded: set[int] = set()
     for sports_io_game_id, game_id in game_ids.items():
         for team_stats in get_team_statistics(sports_io_game_id):
             team_id = team_ids.get(team_stats.team.id)
@@ -512,21 +514,23 @@ def _load_stats_for_game_ids(
                 continue
 
             statements.append(_game_team_stats_statement(game_id, team_id, team_stats))
+            loaded.add(game_id)
 
     if not statements:
         logger.warning("No game stats to load (%s)", label)
         if gap_statements:
             sql_batch_call(gap_statements, client)
-        return
+        return loaded
 
     sql_batch_call(statements + gap_statements, client)
     logger.info("Upserted %d game_team_stats rows (%s)", len(statements), label)
+    return loaded
 
 
-def load_game_statistics(week: int) -> None:
+def load_game_statistics(week: int) -> set[int]:
     """load per-team box score stats for every game in a week - meant for
     the end-of-week/game-finished capture, not live polling (see
-    load_live_game_statistics for that)."""
+    load_live_game_statistics for that). Returns the game_ids loaded."""
     client = D1Client(**get_d1_config())
 
     week_row = client.query(
@@ -535,28 +539,28 @@ def load_game_statistics(week: int) -> None:
     ).results
     if not week_row:
         logger.warning("No weeks row for season=%s week=%s", SEASON, week)
-        return
+        return set()
     week_id = week_row[0]["week_id"]
 
     game_ids = _fetch_week_game_id_map(week_id, client)
     if not game_ids:
         logger.warning("No games with a sports_io_game_id for week %s yet", week)
-        return
+        return set()
 
-    _load_stats_for_game_ids(game_ids, client, f"week {week}")
+    return _load_stats_for_game_ids(game_ids, client, f"week {week}")
 
 
-def load_live_game_statistics() -> None:
+def load_live_game_statistics() -> set[int]:
     """load per-team box score stats for every currently-live game - Sports
     IO's stats endpoint returns real partial stats mid-game (confirmed live
-    2026-09-09), not just final box scores."""
+    2026-09-09), not just final box scores. Returns the game_ids loaded."""
     client = D1Client(**get_d1_config())
     game_ids = _game_ids_by_status(client, ("IN_PROGRESS", "HALFTIME"))
     if not game_ids:
         logger.info("No live games to load stats for")
-        return
+        return set()
 
-    _load_stats_for_game_ids(game_ids, client, "live")
+    return _load_stats_for_game_ids(game_ids, client, "live")
 
 
 def main() -> None:

@@ -11,6 +11,11 @@ __main__.py, never __init__.py, regardless of what an `if __name__ ==
 "__main__":` block here might say."""
 
 from src.kv_writer.admin import write_admin_status
+from src.kv_writer.game_details import (
+    write_current_week_game_details,
+    write_game_details,
+    write_week_game_details,
+)
 from src.kv_writer.games import (
     write_current_week_games,
     write_incomplete_weeks_games,
@@ -34,15 +39,18 @@ from src.kv_writer.user_profiles import write_user_profiles
 __all__ = [
     "compute_week_leaderboard",
     "write_admin_status",
+    "write_current_week_game_details",
     "write_current_week_games",
     "write_current_week_leaderboard",
     "write_current_week_odds",
     "write_current_week_trends",
+    "write_game_details",
     "write_historical",
     "write_incomplete_weeks_games",
     "write_meta_current",
     "write_season_trends",
     "write_user_profiles",
+    "write_week_game_details",
     "write_week_games",
     "write_week_leaderboard",
     "write_week_odds",

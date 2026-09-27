@@ -19,6 +19,7 @@ from src.kv_writer import (
     write_current_week_leaderboard,
     write_current_week_odds,
     write_current_week_trends,
+    write_game_details,
     write_incomplete_weeks_games,
     write_meta_current,
     write_season_trends,
@@ -28,13 +29,19 @@ from src.loaders.cbs_loader import load_cbs_games, load_cbs_user_picks, load_cbs
 from src.loaders.espn_loader import load_espn_games
 from src.loaders.game_snapshots_loader import load_game_snapshots
 from src.loaders.odds_loader import load_the_odds_api_odds
+from src.loaders.player_stats_loader import (
+    load_live_player_stats,
+    load_week_player_stats,
+)
 from src.loaders.pregame_weather_loader import load_pregame_weather
+from src.loaders.scoring_plays_loader import load_scoring_plays
 from src.loaders.sports_io_loader import (
     load_game_statistics,
     load_games_data,
     load_live_game_statistics,
 )
 from src.loaders.teams_loader import main as load_teams
+from src.loaders.win_probability_loader import load_final_win_probability
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +54,19 @@ LIVE_WINDOW_HOURS = 4
 
 SPORTS_IO_LIVE_INTERVAL_SECONDS = 60
 CBS_LIVE_INTERVAL_SECONDS = 120
-GAME_SNAPSHOT_INTERVAL_SECONDS = (
-    3 * 60
-)  # score/quarter/weather don't need finer granularity
+# every tick - the loader itself skips a game when nothing changed, and
+# throttles weather separately (game_snapshots_loader.WEATHER_REFRESH_SECONDS)
+GAME_SNAPSHOT_INTERVAL_SECONDS = 60
+LIVE_GAME_STATS_INTERVAL_SECONDS = 3 * 60
+# ~1 Sports IO call per live game per minute - roughly 2,000 on a full
+# Sunday, well inside the 7,500/day Pro quota
+LIVE_PLAYER_STATS_INTERVAL_SECONDS = 60
+# cron fires every 60s but each cursor is stamped when its task *finishes*,
+# so the next tick lands a few seconds short of the interval (the whole tick
+# up to that point, not just this task) - without this
+# slack a 60s task ran every 2 minutes and a 3-minute one every 4
+# (confirmed live against game_snapshots spacing, 2026-09-27)
+_SHOULD_RUN_SLACK_SECONDS = 30
 ODDS_INTERVAL_SECONDS = 6 * 60 * 60  # 4x/day baseline, all days
 # Extra capture right before each distinct kickoff cluster (TNF, Sunday windows, MNF)
 ODDS_PREKICKOFF_LEAD_MINUTES = 30
@@ -110,7 +127,8 @@ def _should_run(client: D1Client, key: str, min_interval_seconds: int) -> bool:
     if last is None:
         return True
     last_dt = datetime.strptime(last, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-    return (datetime.now(UTC) - last_dt).total_seconds() >= min_interval_seconds
+    elapsed = (datetime.now(UTC) - last_dt).total_seconds()
+    return elapsed >= min_interval_seconds - _SHOULD_RUN_SLACK_SECONDS
 
 
 def _current_week_deadline_utc(now_utc: datetime) -> datetime:
@@ -174,10 +192,49 @@ def _run_live_updates(client: D1Client) -> None:
         _set_state(client, "game_snapshot_last_capture_at", _now_iso())
 
     if _should_run(
-        client, "live_game_stats_last_capture_at", GAME_SNAPSHOT_INTERVAL_SECONDS
+        client, "live_game_stats_last_capture_at", LIVE_GAME_STATS_INTERVAL_SECONDS
     ):
-        load_live_game_statistics()
+        _write_game_details(client, load_live_game_statistics())
         _set_state(client, "live_game_stats_last_capture_at", _now_iso())
+
+    if _should_run(
+        client, "live_player_stats_last_capture_at", LIVE_PLAYER_STATS_INTERVAL_SECONDS
+    ):
+        # enrichment, like odds/weather - never worth ending the tick over
+        try:
+            _write_game_details(client, load_live_player_stats())
+            _set_state(client, "live_player_stats_last_success_at", _now_iso())
+        except Exception as exc:
+            logger.exception("Live player stats capture failed - continuing without it")
+            _record_system_event(client, "live_player_stats", str(exc))
+        finally:
+            _set_state(client, "live_player_stats_last_capture_at", _now_iso())
+
+
+def _write_game_details(client: D1Client, game_ids: set[int]) -> None:
+    """game:{season}:{game_id}:details for games whose box score, player
+    stats or win probability just changed. A KV failure here is recorded,
+    not raised - the D1 write it follows already happened, and the next
+    change rewrites the key anyway."""
+    try:
+        write_game_details(game_ids)
+    except Exception as exc:
+        logger.exception("Game details KV write failed - continuing without it")
+        _record_system_event(client, "game_details_write", str(exc))
+
+
+def _run_win_probability_capture(client: D1Client) -> None:
+    """Every tick - load_final_win_probability() only calls ESPN for FINAL
+    games that don't have a curve yet (one D1 query otherwise). ESPN is
+    undocumented, so a failure is recorded, never raised."""
+    try:
+        _write_game_details(client, load_final_win_probability())
+        _set_state(client, "win_probability_last_success_at", _now_iso())
+    except Exception as exc:
+        logger.exception("Win probability capture failed - continuing without it")
+        _record_system_event(client, "win_probability_capture", str(exc))
+    finally:
+        _set_state(client, "win_probability_last_run_at", _now_iso())
 
 
 def _capture_odds(client: D1Client, state_key: str, success_key: str) -> None:
@@ -194,6 +251,21 @@ def _capture_odds(client: D1Client, state_key: str, success_key: str) -> None:
         _record_system_event(client, "odds_capture", str(exc))
     finally:
         _set_state(client, state_key, _now_iso())
+
+
+def _run_scoring_plays_refresh(client: D1Client) -> None:
+    """Every tick, live window or not - load_scoring_plays() only calls
+    Sports IO for games whose score moved since their last fetch (one D1
+    query otherwise), and a game's last score can land after the live
+    window closes. Enrichment, so a failure is recorded, never raised."""
+    try:
+        load_scoring_plays()
+        _set_state(client, "scoring_plays_last_success_at", _now_iso())
+    except Exception as exc:
+        logger.exception("Scoring plays refresh failed - continuing without it")
+        _record_system_event(client, "scoring_plays_refresh", str(exc))
+    finally:
+        _set_state(client, "scoring_plays_last_run_at", _now_iso())
 
 
 def _run_quiet_period_tasks(client: D1Client) -> None:
@@ -335,7 +407,15 @@ def _run_finished_game_stats(client: D1Client) -> None:
         "WHERE g.status = 'FINAL' AND g.has_final_stats = FALSE"
     )
     for row in result.results:
-        load_game_statistics(row["week_number"])
+        game_ids = load_game_statistics(row["week_number"])
+        # final player box scores ride along with the final team stats -
+        # soft-fail so has_final_stats below still gets set
+        try:
+            game_ids |= load_week_player_stats(row["week_number"])
+        except Exception as exc:
+            logger.exception("Final player stats capture failed - continuing")
+            _record_system_event(client, "final_player_stats", str(exc))
+        _write_game_details(client, game_ids)
         client.batch(
             [
                 (
@@ -384,6 +464,8 @@ def main() -> None:
     _run_pre_kickoff_odds_capture(client, now)
     _run_pregame_weather_capture(client, now)
     _run_deadline_sweep(client, now)
+    # before the games KV write below, so a new score's play lands the same tick
+    _run_scoring_plays_refresh(client)
     # Must run before _run_finished_game_stats() marks a week is_complete -
     # this call's own query reads is_complete as of *before* that update, so
     # the exact tick a week's last game goes FINAL still gets one final KV
@@ -392,6 +474,7 @@ def main() -> None:
     # is_complete's flip timing matters for this ordering).
     write_incomplete_weeks_games()
     _run_finished_game_stats(client)
+    _run_win_probability_capture(client)
     # Unconditional, not just from inside the CBS live branch - is_current
     # can flip to a new week (housekeeping runs daily, independent of
     # live/quiet state) days before that week's first game goes live and

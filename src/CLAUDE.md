@@ -110,12 +110,68 @@ already never took `env` (see `config/CLAUDE.md`).
   score from CBS's pool-home page, down/distance/field position from
   ESPN's scoreboard (the only source that has it — see `api/CLAUDE.md`),
   weather from Pirate Weather at the stadium's lat/lng (skipped entirely
-  for Dome/Retractable roofs). Skips writing a new row if
-  `(quarter, time_remaining)` is identical to the last capture for that
-  game — the clock hasn't moved, so nothing happened. A CBS or ESPN fetch
+  for Dome/Retractable roofs). Skips writing a new row if CBS's quarter/
+  clock/score **and** ESPN's `last_play_id` are all identical to the last
+  capture for that game - nothing happened. ESPN's play id is in the check
+  because CBS's clock lags ESPN (confirmed live 2026-09-27: CBS sat on the
+  same clock across several new ESPN plays). Weather is refreshed at most
+  every `WEATHER_REFRESH_SECONDS` (5 min) per game; rows in between carry
+  the previous reading forward, `weather_captured_at` saying when it was
+  actually fetched - keeps the 60s cadence from multiplying Pirate Weather
+  calls (20,000/month plan). The "last capture" lookup only reads the
+  latest row for the currently-live game ids. A CBS or ESPN fetch
   failure degrades gracefully (that source's fields come back null,
   everything else still gets captured) rather than aborting the whole
   snapshot.
+- `player_stats_loader.py` (added 2026-09-27) — per-player box scores
+  from Sports IO's `/games/statistics/players` into `game_player_stats`,
+  one row per game/team/stat group/player with the stats as JSON. Groups:
+  Passing, Rushing, Receiving, Fumbles, Interceptions, Defensive,
+  Kick_returns, Punt_returns, Kicking, Punting (a group is just absent
+  when nobody on that team has a line in it). Stat names are snake_cased
+  (`"passing touch downs"` → `passing_touch_downs`), numeric strings
+  become numbers, compound ones stay strings (`comp_att: "19/34"`,
+  `sacks: "2-19"`), null stays null (common - confirmed live over a
+  41-game 2025 sample). Live values match ESPN's exactly and update
+  mid-game (confirmed live 2026-09-27). Polled every minute, so it diffs
+  against the stored rows and only upserts rows whose stats changed and
+  deletes lines Sports IO dropped - a few rows per game per minute rather
+  than ~90. One `sql_batch_call` per game, since a week at once is ~1,300
+  statements. `load_live_player_stats()`/`load_week_player_stats(week)`
+  both return the changed game_ids for the KV write. Weeks 1-3 of 2026
+  loaded on prod 2026-09-27.
+- `win_probability_loader.py` (added 2026-09-27) — ESPN's full per-play
+  win probability curve from its summary endpoint
+  (`api.espn_client.get_summary()`), one `game_win_probability` row per
+  FINAL game (JSON, written once). Each ESPN point is keyed to a drive
+  play by `playId` for its period/clock/score; the one point that matches
+  no play is ESPN's pre-kickoff value (confirmed live across all 43 FINAL
+  2026 games: 159-226 points each, exactly one unmatched). Only fetches
+  FINAL games without a row, within `RETRY_WINDOW_DAYS` of kickoff - so
+  it's one D1 query when there's nothing to do, and a game ESPN never has
+  a curve for stops being retried. The live value was already on every
+  `game_snapshots` row; this is the gap-free version. Week CLI arg
+  replaces a week's curves; weeks 1-3 of 2026 loaded on prod 2026-09-27.
+- `scoring_plays_loader.py` (added 2026-09-27) — `load_scoring_plays()`
+  replaces a game's `game_scoring_plays` rows from Sports IO's
+  `/games/events`, but only for live (or FINAL within
+  `FINAL_RECHECK_HOURS` of kickoff) games whose latest stored play isn't
+  at the current `games.home_score`/`away_score` - so with nothing new
+  it's one D1 query and no API calls, cheap enough for every tick. That
+  score check is sound because every scoring play raises the combined
+  score and Sports IO returns them in order (confirmed live across all
+  272 2025 regular-season games, 0 exceptions). Delete-and-replace rather
+  than upsert since events have no id, and it picks up Sports IO's own
+  corrections. An empty event list never wipes stored rows (Sports IO's
+  events can lag the score by a tick). `minute` is null on ~15% of plays
+  (2025: 355 of 2,339) - stored as a null `clock`, order comes from
+  `sequence`. Quarter names map `First`..`Fourth`/`Overtime` → 1-5, an
+  unknown one is a `mapping_gaps` row. Types seen: `TD`, `FG`, `SF` and
+  `Safety` (both), `2PTC`, and one truncated `Pass Interception Re` -
+  stored raw. `backfill_week_scoring_plays(week)` (CLI: a week number
+  after the env) skips the score check, for weeks that predate this -
+  weeks 1-3 of 2026 backfilled on prod 2026-09-27 (46 games, every FINAL
+  game's last play matched its final score).
 - `pregame_weather_loader.py` (added 2026-09-15) — `load_pregame_weather()`
   captures a forecast for the *current* week's `SCHEDULED` games onto
   `games.forecast_*`, overwriting in place each run rather than keeping
@@ -201,7 +257,11 @@ with a wrong or null FK. `load_cbs_games()`/`sports_io_loader.py`'s
 `load_games_data()` use the same pattern for their `weeks`/`teams`
 lookups. `sql_batch_call(statements, client=None)` runs a batch
 atomically, building its own `D1Client` if the caller doesn't already
-have one open for its own queries.
+have one open for its own queries. A `D1Error` is logged and re-raised
+(2026-09-27) - it used to `sys.exit(1)`, and since `SystemExit` isn't an
+`Exception`, that slipped past `orchestration.py`'s soft-fail try/excepts
+(odds, Sports IO live poll, pregame weather, scoring plays) and ended the
+whole tick. Standalone runs still exit non-zero, just with a traceback.
 
 `loader_helper.capture_weather(latitude, longitude, roof_type, context)`
 (added 2026-09-15) is the shared weather-fetch used by both
@@ -299,11 +359,38 @@ Cadences, and why each one is what it is:
   "this week's deadline" is the *upcoming* Sunday for Tue–Sat, today for
   Sunday itself, and yesterday for Monday. The deadline calc itself is
   still used by `_run_deadline_sweep()` below, just no longer gates this.
-- **`game_snapshots`/live `game_team_stats`, 3 min, live only** — score
-  moves every play, but weather/box-score stats don't need finer
-  granularity than that, and `game_snapshots_loader.py` has its own
-  additional dedup on top (skips a row entirely if the game clock hasn't
-  moved since the last capture).
+- **`game_snapshots`, 1 min, live only** (was 3 min until 2026-09-27) -
+  more points for the win-probability/margin charts. The loader dedups on
+  its own (no row if nothing changed) and throttles weather separately,
+  see `game_snapshots_loader.py` above.
+- **Live `game_team_stats`, 3 min, live only** - its own
+  `LIVE_GAME_STATS_INTERVAL_SECONDS` now that snapshots moved to 1 min.
+- **Live player stats, 1 min, live only** (added 2026-09-27) -
+  `LIVE_PLAYER_STATS_INTERVAL_SECONDS`, one Sports IO call per live game,
+  roughly 2,000 on a full Sunday against the 7,500/day quota. Rewrites
+  the changed games' `game:{season}:{game_id}:details` KV keys right
+  after (the live team stats step does the same for its games).
+  try/except with its own success cursor (`live_player_stats_capture` in
+  `meta:admin`). The final capture rides along in
+  `_run_finished_game_stats()` next to the final team stats, also
+  soft-fail so `has_final_stats` still gets set.
+- **Win probability curve, every tick, live window or not** (added
+  2026-09-27) - `_run_win_probability_capture()`, see
+  `win_probability_loader.py` above. Runs after `_run_finished_game_stats()`.
+  try/except with its own success cursor (`win_probability_capture` in
+  `meta:admin`).
+- **Scoring plays, every tick, live window or not** -
+  `_run_scoring_plays_refresh()`, see `scoring_plays_loader.py` above for
+  why that's cheap. Runs before `write_incomplete_weeks_games()` so a new
+  score's play reaches KV the same tick. try/except with its own success
+  cursor, surfaced in `meta:admin` as `scoring_plays_refresh`.
+- **`_should_run()` has 30s of slack** (`_SHOULD_RUN_SLACK_SECONDS`, added
+  2026-09-27). Each cursor is stamped when its task finishes, so on a
+  60s cron the next tick always lands a few seconds short - without the
+  slack every interval silently rounded up a whole tick (confirmed live:
+  "3 min" snapshots were 4 min apart, so the "1 min" Sports IO live poll
+  was really every 2 min). Harmless for long intervals, and can't
+  double-run anything since cron only ticks once a minute.
 - **Odds, 6 hr baseline, quiet periods only** — a flat interval, plus a
   separate always-on pre-kickoff capture (see
   `_run_pre_kickoff_odds_capture()` below) for the game-day boost.
@@ -558,6 +645,54 @@ src.kv_writer.__main__`).
   `src/loaders/espn_loader.py`) flags international and domestic
   neutral-site games alike; `stadium.country` is what tells the two
   apart if the UI ever needs to.
+  Scoreboard additions (2026-09-27): `linescore` (`{home, away}` each
+  `{q1, q2, q3, q4, ot}` from `games.*_qN_score`/`*_ot_score`, `None`
+  before kickoff, unplayed quarters null). The team box score was briefly
+  here too but moved to the per-game details key the same day (see
+  below) to keep this key to what the scoreboard shows. The `live`
+  block also carries `yard_line` and `possession_text`. `yard_line` is
+  ESPN's `situation.yardLine` as-is: yards from the **home** team's goal
+  line (0-100) regardless of possession - confirmed live against ESPN's
+  drive log (SF home: "SF 20" → 20, "ARI 27" → 73). Safe to read in our
+  home/away frame since `espn_loader` only links an event whose home/away
+  abbreviations match ours. ESPN's 0 ("no spot") is emitted as null. At
+  halftime/between quarters it's still the last spot with `possession`
+  null, so the UI should key the ball marker off possession, not just a
+  non-null `yard_line`. `scoring_plays` (added 2026-09-27) is every
+  `game_scoring_plays` row for the game, chronological (`quarter`/`clock`/
+  `team_id`/`type`/`description`/`player_name` and the score *after* the
+  play) - `[]` until someone scores. With `cbs_spread` it gives the exact
+  point the cover flipped. Also `last_play` (`{text, type}`), `drive_text`
+  and `win_probability` (`{home, away}`, 0-100), all from ESPN's
+  scoreboard `situation.lastPlay` (the same response already polled for
+  down/distance - no extra endpoint), stored per snapshot in
+  `game_snapshots.last_play_*`/`drive_text`/`*_win_pct` so win
+  probability can be charted over time (live, sampled per snapshot - the
+  complete per-play curve is in the details key once FINAL). `leaders`
+  is the top passer/rusher/receiver per team by yards (same line shape
+  as the details key's players, `None` until player stats exist).
+- `write_game_details(game_ids)` → `game:{season}:{game_id}:details`
+  (added 2026-09-27, `src/kv_writer/game_details.py`) — everything about
+  one game the scoreboard itself doesn't need, ~50KB a game, only fetched
+  when someone opens a game: `{game_id, updated_at, box_score, players,
+  win_probability}`, each part `None` until its data exists (a game with
+  none of them is skipped, not written empty).
+  `box_score` is `{home, away}`, every `game_team_stats` column minus its
+  ids. `players` is `{home, away}`, each a `{group: [player lines]}` map
+  (group keys lowercased: `passing`, `kick_returns`, ...), each line
+  `{name, sports_io_player_id, image, stats}`, ranked by that group's
+  main stat (yards, tackles for `defensive`, points for `kicking`).
+  `win_probability` is ESPN's full per-play curve from
+  `game_win_probability`, only once the game is FINAL: chronological
+  `{period, clock, home_win_pct, home_score, away_score, scoring_play}`,
+  starting with a pre-kickoff point (period 0, no clock, 0-0).
+  Written write-through for changed games only, via orchestration's
+  `_write_game_details()` (soft-fail) from the live team stats, live
+  player stats, finished-game and win-probability steps;
+  `write_week_game_details`/`write_current_week_game_details` for a full
+  refresh (the latter is in `python -m src.kv_writer`). Weeks 1-3 of 2026
+  written to prod 2026-09-27 (an earlier `game:{season}:{game_id}:players`
+  key from the same day was superseded and deleted).
 - `write_week_leaderboard()` → `week:{season}:{weekNN}:leaderboard` —
   cumulative/first-half/second-half scores and tie-aware `place`
   (`_standard_rank()`, standard competition ranking: ties share a place,

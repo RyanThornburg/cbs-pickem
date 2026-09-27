@@ -45,6 +45,15 @@ class KVClient:
         if not data.get("success"):
             raise KVError(data.get("errors"))
 
+    def delete(self, key: str) -> None:
+        """Delete a single key - a no-op if it doesn't exist."""
+        response = self._session.delete(self._value_url(key))
+        response.raise_for_status()
+        data: dict[str, Any] = response.json()
+
+        if not data.get("success"):
+            raise KVError(data.get("errors"))
+
     def read(self, key: str) -> dict[str, Any] | None:
         """Read a single key's JSON value, or None if the key doesn't exist."""
         response = self._session.get(self._value_url(key))

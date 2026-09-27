@@ -22,6 +22,9 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management and
 - Sync ESPN neutral-site flags/event ids onto every game this season: `uv run python -m src.loaders.espn_loader [local|prod]`
 - Load NFL stadiums (static seed): `uv run python -m src.loaders.stadiums_loader [local|prod]`
 - Capture live game snapshots (score/quarter/weather/field position): `uv run python -m src.loaders.game_snapshots_loader [local|prod]`
+- Load per-player box scores (Sports IO `/games/statistics/players`) for live games, or a whole week: `uv run python -m src.loaders.player_stats_loader [local|prod] [week_number]`
+- Capture ESPN's full win probability curve for FINAL games (or replace a whole week's): `uv run python -m src.loaders.win_probability_loader [local|prod] [week_number]`
+- Refresh scoring plays for games whose score moved (Sports IO `/games/events`), or backfill a whole week: `uv run python -m src.loaders.scoring_plays_loader [local|prod] [week_number]`
 - Load odds (The Odds API only, Sports IO odds not built): `uv run python -m src.loaders.odds_loader [local|prod]`
 - Compute and write all KV keys the web UI reads (`meta:current`, that
   week's `games`/`leaderboard`/`odds`/`trends`, `season:{season}:trends`,

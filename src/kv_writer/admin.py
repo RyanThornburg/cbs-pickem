@@ -95,8 +95,9 @@ def write_admin_status() -> None:
 
     # last_at is the scheduling cursor, bumped on every attempt. The tasks
     # wrapped in a try/except in orchestration.py (odds, Sports IO live
-    # poll, pregame weather) set that cursor in a finally, so it moves
-    # even when the attempt failed - they also keep a separate *_success_at
+    # poll, pregame weather, scoring plays, live player stats, win
+    # probability) set that cursor in a finally, so it moves even when the attempt failed - they
+    # also keep a separate *_success_at
     # cursor set only when the call worked. Every other task only sets its
     # cursor after succeeding (an exception propagates and skips the set),
     # so for those last_success_at is the same value as last_at. Staleness
@@ -164,6 +165,18 @@ def write_admin_status() -> None:
         "live_game_stats_capture": {
             "last_at": state.get("live_game_stats_last_capture_at"),
             "last_success_at": state.get("live_game_stats_last_capture_at"),
+        },
+        "live_player_stats_capture": {
+            "last_at": state.get("live_player_stats_last_capture_at"),
+            "last_success_at": state.get("live_player_stats_last_success_at"),
+        },
+        "win_probability_capture": {
+            "last_at": state.get("win_probability_last_run_at"),
+            "last_success_at": state.get("win_probability_last_success_at"),
+        },
+        "scoring_plays_refresh": {
+            "last_at": state.get("scoring_plays_last_run_at"),
+            "last_success_at": state.get("scoring_plays_last_success_at"),
         },
         "deadline_last_synced_sunday": state.get("deadline_last_synced_sunday"),
     }

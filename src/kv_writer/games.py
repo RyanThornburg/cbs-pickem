@@ -8,6 +8,7 @@ from typing import Any
 from config.config import SEASON, get_d1_config, get_kv_config
 from db.d1_client import D1Client
 from db.kv_client import KVClient
+from src.kv_writer.game_details import player_line
 from src.kv_writer.shared import GAMES_SQL, PICKS_SQL, now_iso, resolve_current_week
 
 logger = logging.getLogger(__name__)
@@ -15,13 +16,39 @@ logger = logging.getLogger(__name__)
 # A game.status thats "live"
 _LIVE_STATUSES = ("IN_PROGRESS", "HALFTIME", "DELAYED")
 
-_SNAPSHOTS_SQL = """
+# latest snapshot per game only - snapshots are written up to every minute
+# per live game, so reading the whole week's history each tick adds up fast
+_LATEST_SNAPSHOTS_SQL = """
 SELECT gs.*
 FROM game_snapshots gs
-JOIN games g ON g.game_id = gs.game_id
+WHERE gs.snapshot_id IN (
+    SELECT MAX(gs2.snapshot_id)
+    FROM game_snapshots gs2
+    JOIN games g ON g.game_id = gs2.game_id
+    JOIN weeks w ON w.week_id = g.week_id
+    WHERE w.season_id = ? AND w.week_number = ?
+    GROUP BY gs2.game_id
+)
+"""
+
+_SCORING_PLAYS_SQL = """
+SELECT p.game_id, p.quarter, p.clock, p.team_id, p.type, p.description,
+    p.player_name, p.home_score, p.away_score
+FROM game_scoring_plays p
+JOIN games g ON g.game_id = p.game_id
 JOIN weeks w ON w.week_id = g.week_id
 WHERE w.season_id = ? AND w.week_number = ?
-ORDER BY gs.captured_at ASC
+ORDER BY p.game_id, p.sequence
+"""
+
+_LEADER_ROWS_SQL = """
+SELECT gps.game_id, gps.team_id, gps.stat_group, gps.player_name,
+    gps.sports_io_player_id, gps.player_image, gps.stats_json
+FROM game_player_stats gps
+JOIN games g ON g.game_id = gps.game_id
+JOIN weeks w ON w.week_id = g.week_id
+WHERE w.season_id = ? AND w.week_number = ?
+  AND gps.stat_group IN ('Passing', 'Rushing', 'Receiving')
 """
 
 _INCOMPLETE_WEEKS_SQL = (
@@ -118,6 +145,52 @@ def _game_forecast(game: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _game_linescore(game: dict[str, Any]) -> dict[str, Any] | None:
+    """None before kickoff (every quarter column still null). Quarters not
+    played yet stay null, ot stays null unless the game went to overtime."""
+    sides = {
+        side: {
+            period: game[f"{side}_{period}_score"]
+            for period in ("q1", "q2", "q3", "q4", "ot")
+        }
+        for side in ("home", "away")
+    }
+    if all(value is None for scores in sides.values() for value in scores.values()):
+        return None
+    return sides
+
+
+def _game_leaders(
+    game: dict[str, Any], rows_by_team: dict[int, list[dict[str, Any]]]
+) -> dict[str, Any] | None:
+    """Top passer/rusher/receiver per team by yards - None until player
+    stats exist. The full player box score is in the per-game details
+    key (game:{season}:{game_id}:details, src/kv_writer/game_details.py)."""
+    if not rows_by_team:
+        return None
+
+    def leader(team_id: int, group: str) -> dict[str, Any] | None:
+        lines = [
+            player_line(row)
+            for row in rows_by_team.get(team_id, [])
+            if row["stat_group"] == group
+        ]
+        lines = [line for line in lines if isinstance(line["stats"].get("yards"), int)]
+        return max(lines, key=lambda line: line["stats"]["yards"], default=None)
+
+    return {
+        side: {
+            category: leader(game[f"{side}_id"], group)
+            for category, group in (
+                ("passing", "Passing"),
+                ("rushing", "Rushing"),
+                ("receiving", "Receiving"),
+            )
+        }
+        for side in ("home", "away")
+    }
+
+
 def _snapshot_live_block(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {
         "quarter": snapshot["quarter"],
@@ -126,9 +199,25 @@ def _snapshot_live_block(snapshot: dict[str, Any]) -> dict[str, Any]:
         "down": snapshot["down"],
         "distance": snapshot["distance"],
         "down_distance_text": snapshot["down_distance_text"],
+        # ESPN's yardLine: yards from the home team's goal line (0-100),
+        # regardless of who has the ball. 0 is ESPN's "no spot" (e.g.
+        # halftime), never a real ball position.
+        "yard_line": snapshot["yard_line"] or None,
+        "possession_text": snapshot["possession_text"],
         "is_red_zone": bool(snapshot["is_red_zone"]),
         "home_timeouts": snapshot["home_timeouts"],
         "away_timeouts": snapshot["away_timeouts"],
+        "last_play": {
+            "text": snapshot["last_play_text"],
+            "type": snapshot["last_play_type"],
+        },
+        "drive_text": snapshot["drive_text"],
+        # ESPN, 0-100, as of last_play - null for a snapshot from before this
+        # was captured or when ESPN had no situation
+        "win_probability": {
+            "home": snapshot["home_win_pct"],
+            "away": snapshot["away_win_pct"],
+        },
         "weather": _snapshot_weather(snapshot),
     }
 
@@ -153,10 +242,22 @@ def write_week_games(week_number: int) -> None:
     for pick in d1.query(PICKS_SQL, [SEASON, week_number]).results:
         picks_by_game[pick["game_id"]].append(pick)
 
-    # last row per game_id wins - rows come back ordered by captured_at ASC
-    latest_snapshot_by_game: dict[int, dict[str, Any]] = {}
-    for snapshot in d1.query(_SNAPSHOTS_SQL, [SEASON, week_number]).results:
-        latest_snapshot_by_game[snapshot["game_id"]] = snapshot
+    latest_snapshot_by_game = {
+        snapshot["game_id"]: snapshot
+        for snapshot in d1.query(_LATEST_SNAPSHOTS_SQL, [SEASON, week_number]).results
+    }
+
+    plays_by_game: defaultdict[int, list[dict[str, Any]]] = defaultdict(list)
+    for play in d1.query(_SCORING_PLAYS_SQL, [SEASON, week_number]).results:
+        plays_by_game[play["game_id"]].append(
+            {k: v for k, v in play.items() if k != "game_id"}
+        )
+
+    leader_rows: defaultdict[int, defaultdict[int, list[dict[str, Any]]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for row in d1.query(_LEADER_ROWS_SQL, [SEASON, week_number]).results:
+        leader_rows[row["game_id"]][row["team_id"]].append(row)
 
     games_json: list[dict[str, Any]] = []
     for game in games:
@@ -179,6 +280,10 @@ def write_week_games(week_number: int) -> None:
             "status_desc": game["status_desc"],
             "home_score": game["home_score"],
             "away_score": game["away_score"],
+            "linescore": _game_linescore(game),
+            "leaders": _game_leaders(game, leader_rows[game["game_id"]]),
+            # chronological, score is after each play - [] until someone scores
+            "scoring_plays": plays_by_game[game["game_id"]],
             "game_time": game["game_time"],
             "cbs_spread": game["cbs_spread"],
             "tv_network": game["tv_network"],
