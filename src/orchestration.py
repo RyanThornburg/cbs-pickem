@@ -150,6 +150,7 @@ def _run_live_updates(client: D1Client) -> None:
         # Sports IO has sent malformed/unexpected game data mid-slate
         try:
             load_games_data(live=True)
+            _set_state(client, "sports_io_live_last_success_at", _now_iso())
         except Exception as exc:
             logger.exception("Live games poll failed - continuing without it")
             _record_system_event(client, "sports_io_live_poll", str(exc))
@@ -179,11 +180,15 @@ def _run_live_updates(client: D1Client) -> None:
         _set_state(client, "live_game_stats_last_capture_at", _now_iso())
 
 
-def _capture_odds(client: D1Client, state_key: str) -> None:
-    """Odds aren't required/shouldn't block, don't raise but log error"""
+def _capture_odds(client: D1Client, state_key: str, success_key: str) -> None:
+    """Odds aren't required/shouldn't block, don't raise but log error.
+    state_key is the scheduling cursor (set on every attempt, see finally);
+    success_key is only set when the capture actually worked, so meta:admin
+    can tell a task that keeps failing apart from one that's healthy."""
     try:
         load_the_odds_api_odds()
         write_current_week_odds()
+        _set_state(client, success_key, _now_iso())
     except Exception as exc:
         logger.exception("Odds capture failed - continuing without it")
         _record_system_event(client, "odds_capture", str(exc))
@@ -193,7 +198,7 @@ def _capture_odds(client: D1Client, state_key: str) -> None:
 
 def _run_quiet_period_tasks(client: D1Client) -> None:
     if _should_run(client, "odds_last_call_at", ODDS_INTERVAL_SECONDS):
-        _capture_odds(client, "odds_last_call_at")
+        _capture_odds(client, "odds_last_call_at", "odds_last_success_at")
 
     if _should_run(
         client, "cbs_picks_quiet_last_poll_at", CBS_PICKS_QUIET_INTERVAL_SECONDS
@@ -247,7 +252,9 @@ def _run_pre_kickoff_odds_capture(client: D1Client, now: datetime) -> None:
         return
 
     logger.info("Running pre-kickoff odds capture")
-    _capture_odds(client, "odds_prekickoff_last_call_at")
+    _capture_odds(
+        client, "odds_prekickoff_last_call_at", "odds_prekickoff_last_success_at"
+    )
 
 
 def _run_pregame_weather_capture(client: D1Client, now: datetime) -> None:
@@ -279,6 +286,7 @@ def _run_pregame_weather_capture(client: D1Client, now: datetime) -> None:
 
     try:
         load_pregame_weather()
+        _set_state(client, "weather_pregame_last_success_at", _now_iso())
     except Exception as exc:
         logger.exception("Pregame weather capture failed - continuing without it")
         _record_system_event(client, "pregame_weather_capture", str(exc))

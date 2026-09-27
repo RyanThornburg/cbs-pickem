@@ -161,9 +161,11 @@ somewhere reviewable instead of only ever showing up as a
 one `(sql, params)` upsert targeting `UNIQUE(source, entity_type,
 raw_value)` — first sighting inserts a row, every later sighting just
 bumps `occurrences`/`last_seen_at`, so a value that misses on every run
-(e.g. Sports IO's `team.id: 0` placeholder for undetermined future
-playoff matchups) accumulates one durable row instead of flooding the
-table.
+accumulates one durable row instead of flooding the table. (The
+original example, Sports IO's `team.id: 0` placeholder for undetermined
+playoff matchups, no longer happens: `load_games_data()` skips playoff
+games entirely since 2026-09-27, and those rows were deleted from local
+and prod.)
 
 Called **next to** the existing `logger.warning()` at a lookup-miss site,
 not instead of it — the two serve different audiences (the log is

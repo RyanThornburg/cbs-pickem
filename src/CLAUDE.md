@@ -89,7 +89,13 @@ already never took `env` (see `config/CLAUDE.md`).
   games only, meant for polling) both upsert `game_team_stats` through
   the same shared `_load_stats_for_game_ids()` helper — Sports IO's stats
   endpoint returns real partial stats mid-game, not just final box
-  scores, confirmed live.
+  scores, confirmed live. Only regular-season games are loaded
+  (2026-09-27): anything whose `game.week` isn't `Week N`
+  (`_regular_season_week_number()`) is dropped along with preseason,
+  since this pool is regular season only. Playoff games were never
+  mappable anyway (named weeks like "Wild Card" with no `weeks` row,
+  `team.id: 0` placeholders for undetermined matchups) and used to log
+  the same five known-noise `mapping_gaps` rows on every daily run.
 - `odds_loader.py` — `load_the_odds_api_odds()` upserts `odds_snapshots`
   from The Odds API (spreads/totals/moneyline, American odds format
   requested directly via `oddsFormat=american` rather than converting
@@ -384,7 +390,14 @@ reviewably today, same "surface it somewhere, don't let it scroll by"
 motivation as `mapping_gaps` (`db/CLAUDE.md`). The state key is updated
 whether the capture succeeded or failed, specifically so a persistent
 failure (e.g. a missing key) logs once per interval instead of retrying -
-and failing - on every single minute-cron tick until it's fixed.
+and failing - on every single minute-cron tick until it's fixed. Because
+that makes the scheduling cursor mean "last attempt," each try/except
+task also sets a second key only on success (2026-09-27):
+`odds_last_success_at`/`odds_prekickoff_last_success_at` (passed to
+`_capture_odds()` as `success_key`), `sports_io_live_last_success_at`, and
+`weather_pregame_last_success_at`. Nothing schedules off these - they
+exist for `meta:admin` (see "KV writer" below), so a task that fails
+every time doesn't look healthy just because its cursor keeps moving.
 
 `_run_pregame_weather_capture()` (added 2026-09-15) queries for any
 `SCHEDULED` game within `WEATHER_PREGAME_NEAR_WINDOW_HOURS` (24) of
@@ -756,21 +769,31 @@ src.kv_writer.__main__`).
 - `write_admin_status()` → `meta:admin` (added 2026-09-11) — a health-check
   summary for an eventual admin page: when each `orchestration.py` task
   last ran (from `orchestration_state`) plus recent `mapping_gaps`/
-  `system_events` rows to review. Staleness is only flagged for odds
-  (combining its two cursors - the flat baseline and the pre-kickoff
-  capture, since either one running recently means odds data is fresh)
-  and housekeeping, using thresholds deliberately looser than
-  `orchestration.py`'s own intervals (`_ODDS_STALE_SECONDS`/
-  `_HOUSEKEEPING_STALE_SECONDS`, not imported from there to avoid a
-  circular import - `orchestration.py` already imports from this module).
-  The four live-only pollers (Sports IO/CBS live polls, `game_snapshots`,
-  live `game_team_stats`) just report their raw last-run timestamp with
-  no stale flag - "should this have run" for those depends on live-window
-  history, which isn't worth the complexity for a first pass; most of the
-  time they simply won't have run recently because nothing's live, and
-  that's correct, not a problem. Unlike every other `write_*` function
-  here, this one isn't called after a specific D1 write - it's called
-  unconditionally at the end of `run_tick()`, same as
+  `system_events` rows to review. Every task reports `last_at` (the
+  scheduling cursor) and `last_success_at` (added 2026-09-27). The three
+  try/except tasks (odds, Sports IO live poll, pregame weather) bump their
+  scheduling cursor in a `finally`, so `last_at` moves even when the
+  attempt failed; they also set a separate `*_last_success_at` state key
+  only when the call worked (see Orchestration above). Every other task
+  only sets its cursor after succeeding, so its `last_success_at` is just
+  the same value as `last_at`. Staleness always compares against the
+  success cursor, and is flagged for the tasks expected to run regardless
+  of live/quiet state: odds (combining its two cursors - the flat
+  baseline and the pre-kickoff capture, since either one succeeding
+  recently means odds data is fresh), housekeeping, the CBS quiet picks
+  poll, pregame weather, and user profiles (the last three added
+  2026-09-27 - they were in `orchestration_state` but never surfaced).
+  Thresholds (`_*_STALE_SECONDS`) are deliberately looser than
+  `orchestration.py`'s own intervals, roughly twice each, and not
+  imported from there to avoid a circular import (`orchestration.py`
+  already imports from this module). The four live-only pollers (Sports
+  IO/CBS live polls, `game_snapshots`, live `game_team_stats`) just
+  report timestamps with no stale flag - "should this have run" for
+  those depends on live-window history, which isn't worth the complexity;
+  most of the time they simply won't have run recently because nothing's
+  live, and that's correct, not a problem. Unlike every other `write_*`
+  function here, this one isn't called after a specific D1 write - it's
+  called unconditionally at the end of `run_tick()`, same as
   `write_incomplete_weeks_games()`, since it's a handful of cheap local
   `SELECT`s and freshness matters most exactly when something just broke.
 - `write_incomplete_weeks_games()` (added 2026-09-15, replacing

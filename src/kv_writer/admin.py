@@ -38,16 +38,20 @@ ORDER BY last_seen_at DESC
 LIMIT 20
 """
 
-# Deliberately more generous than orchestration.py's own
-# ODDS_INTERVAL_SECONDS (6h)/HOUSEKEEPING_INTERVAL_SECONDS (24h) - a long
-# live-heavy Sunday can legitimately delay the quiet-only branch these
-# gate for hours without anything actually being wrong. Not imported from
-# orchestration.py directly to avoid a circular import (orchestration.py
-# already imports from this package); duplicated here as a deliberately
-# looser, presentation-layer judgment call rather than the exact operational
-# cadence.
-_ODDS_STALE_SECONDS = 12 * 60 * 60
-_HOUSEKEEPING_STALE_SECONDS = 48 * 60 * 60
+# Deliberately more generous than orchestration.py's own intervals - a
+# long live-heavy Sunday can legitimately delay the quiet-only tasks
+# (odds baseline, housekeeping, CBS quiet picks poll) for hours without
+# anything actually being wrong. Not imported from orchestration.py
+# directly to avoid a circular import (orchestration.py already imports
+# from this package); duplicated here as a deliberately looser,
+# presentation-layer judgment call rather than the exact operational
+# cadence. Roughly twice each task's real interval, or its longest
+# plausible live-window delay for the quiet-only ones.
+_ODDS_STALE_SECONDS = 12 * 60 * 60  # 6h baseline, quiet only
+_HOUSEKEEPING_STALE_SECONDS = 48 * 60 * 60  # 24h, quiet only
+_CBS_PICKS_QUIET_STALE_SECONDS = 12 * 60 * 60  # 30min, quiet only
+_PREGAME_WEATHER_STALE_SECONDS = 8 * 60 * 60  # 4h baseline, every tick
+_USER_PROFILES_STALE_SECONDS = 2 * 60 * 60  # 30min, every tick
 
 
 def _seconds_since(iso_value: str | None, now: datetime) -> float | None:
@@ -62,6 +66,13 @@ def _seconds_since(iso_value: str | None, now: datetime) -> float | None:
     return (now - last_at).total_seconds()
 
 
+def _is_stale(ages: list[float | None], limit_seconds: int) -> bool:
+    """Stale if no cursor has ever succeeded, or the most recent success
+    across them is older than limit_seconds."""
+    known = [age for age in ages if age is not None]
+    return not known or min(known) > limit_seconds
+
+
 def write_admin_status() -> None:
     """Write meta:admin - a health-check summary for an admin page: when
     each orchestration task last ran, and open mapping_gaps/system_events
@@ -69,13 +80,8 @@ def write_admin_status() -> None:
     run_tick()) since it's a handful of cheap local SELECTs and freshness
     matters most exactly when something just broke.
 
-    Staleness is only flagged for odds/housekeeping - the tasks expected to
-    run eventually regardless of live/quiet state. The four live-only
-    pollers (sports_io/cbs live polls, game_snapshot, live_game_stats) just
-    report their raw last-run timestamp with no stale flag: "should this
-    have run" for those depends on live-window history, which isn't worth
-    the complexity for a first pass - most weeks they simply won't have run
-    recently because nothing's live, and that's correct, not a problem.
+    See the comment above last_run below for what last_at vs
+    last_success_at mean and which tasks get a stale flag.
     """
     d1 = D1Client(**get_d1_config())
     now = datetime.now(UTC)
@@ -84,39 +90,80 @@ def write_admin_status() -> None:
         row["key"]: row["value"] for row in d1.query(_ORCHESTRATION_STATE_SQL).results
     }
 
-    # Odds has two independent cursors (the flat baseline and the
-    # pre-kickoff capture, see orchestration.py) - either one running
-    # recently means odds data is fresh, so staleness compares against
-    # whichever last ran more recently.
-    odds_ages = [
-        age
-        for age in (
-            _seconds_since(state.get("odds_last_call_at"), now),
-            _seconds_since(state.get("odds_prekickoff_last_call_at"), now),
-        )
-        if age is not None
-    ]
-    odds_age = min(odds_ages) if odds_ages else None
-    housekeeping_age = _seconds_since(state.get("housekeeping_last_run_at"), now)
+    def age(key: str) -> float | None:
+        return _seconds_since(state.get(key), now)
 
+    # last_at is the scheduling cursor, bumped on every attempt. The tasks
+    # wrapped in a try/except in orchestration.py (odds, Sports IO live
+    # poll, pregame weather) set that cursor in a finally, so it moves
+    # even when the attempt failed - they also keep a separate *_success_at
+    # cursor set only when the call worked. Every other task only sets its
+    # cursor after succeeding (an exception propagates and skips the set),
+    # so for those last_success_at is the same value as last_at. Staleness
+    # always compares against the success cursor.
+    #
+    # Staleness is only flagged for tasks expected to run regardless of
+    # live/quiet state. The four live-only pollers just report timestamps:
+    # "should this have run" for those depends on live-window history, and
+    # most of the week they correctly haven't run because nothing's live.
     last_run: dict[str, Any] = {
+        # Odds has two independent cursors (the flat baseline and the
+        # pre-kickoff capture, see orchestration.py) - either one
+        # succeeding recently means odds data is fresh.
         "odds": {
             "baseline_last_at": state.get("odds_last_call_at"),
+            "baseline_last_success_at": state.get("odds_last_success_at"),
             "prekickoff_last_at": state.get("odds_prekickoff_last_call_at"),
-            "stale": odds_age is None or odds_age > _ODDS_STALE_SECONDS,
+            "prekickoff_last_success_at": state.get("odds_prekickoff_last_success_at"),
+            "stale": _is_stale(
+                [age("odds_last_success_at"), age("odds_prekickoff_last_success_at")],
+                _ODDS_STALE_SECONDS,
+            ),
         },
         "housekeeping": {
             "last_at": state.get("housekeeping_last_run_at"),
-            "stale": housekeeping_age is None
-            or housekeeping_age > _HOUSEKEEPING_STALE_SECONDS,
+            "last_success_at": state.get("housekeeping_last_run_at"),
+            "stale": _is_stale(
+                [age("housekeeping_last_run_at")], _HOUSEKEEPING_STALE_SECONDS
+            ),
         },
-        "sports_io_live_poll": {"last_at": state.get("sports_io_live_last_poll_at")},
-        "cbs_live_poll": {"last_at": state.get("cbs_live_last_poll_at")},
+        "cbs_picks_quiet_poll": {
+            "last_at": state.get("cbs_picks_quiet_last_poll_at"),
+            "last_success_at": state.get("cbs_picks_quiet_last_poll_at"),
+            "stale": _is_stale(
+                [age("cbs_picks_quiet_last_poll_at")], _CBS_PICKS_QUIET_STALE_SECONDS
+            ),
+        },
+        "pregame_weather_capture": {
+            "last_at": state.get("weather_pregame_last_capture_at"),
+            "last_success_at": state.get("weather_pregame_last_success_at"),
+            "stale": _is_stale(
+                [age("weather_pregame_last_success_at")],
+                _PREGAME_WEATHER_STALE_SECONDS,
+            ),
+        },
+        "user_profiles_write": {
+            "last_at": state.get("user_profiles_last_write_at"),
+            "last_success_at": state.get("user_profiles_last_write_at"),
+            "stale": _is_stale(
+                [age("user_profiles_last_write_at")], _USER_PROFILES_STALE_SECONDS
+            ),
+        },
+        "sports_io_live_poll": {
+            "last_at": state.get("sports_io_live_last_poll_at"),
+            "last_success_at": state.get("sports_io_live_last_success_at"),
+        },
+        "cbs_live_poll": {
+            "last_at": state.get("cbs_live_last_poll_at"),
+            "last_success_at": state.get("cbs_live_last_poll_at"),
+        },
         "game_snapshot_capture": {
-            "last_at": state.get("game_snapshot_last_capture_at")
+            "last_at": state.get("game_snapshot_last_capture_at"),
+            "last_success_at": state.get("game_snapshot_last_capture_at"),
         },
         "live_game_stats_capture": {
-            "last_at": state.get("live_game_stats_last_capture_at")
+            "last_at": state.get("live_game_stats_last_capture_at"),
+            "last_success_at": state.get("live_game_stats_last_capture_at"),
         },
         "deadline_last_synced_sunday": state.get("deadline_last_synced_sunday"),
     }

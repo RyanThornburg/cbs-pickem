@@ -244,11 +244,21 @@ def load_games_data(live: bool = False) -> None:
     games: list[Game] = get_games() if not live else _get_live_window_games()
 
     # don't care about preseason data and could run into Week n issues between
-    # preseason and regular season if we don't filter out pre season here
-    regular_and_post_games = [g for g in games if g.game.stage != "Pre Season"]
-    if len(regular_and_post_games) != len(games):
+    # preseason and regular season if we don't filter out pre season here.
+    # Pick Em is regular season only, so playoff games are dropped too - they
+    # were never mappable (named weeks like "Wild Card" with no weeks row,
+    # team.id 0 placeholders for undetermined matchups) and only ever logged
+    # the same known-noise mapping_gaps rows every daily run.
+    regular_season_games = [
+        g
+        for g in games
+        if g.game.stage != "Pre Season"
+        and _regular_season_week_number(g.game.week) is not None
+    ]
+    if len(regular_season_games) != len(games):
         logger.info(
-            "Skipped %d preseason games", len(games) - len(regular_and_post_games)
+            "Skipped %d preseason/postseason games",
+            len(games) - len(regular_season_games),
         )
 
     # live=True only ever fetches currently-live games,
@@ -256,9 +266,9 @@ def load_games_data(live: bool = False) -> None:
     # Only the full sync touches weeks.start_time/end_time
     if not live:
         week_info: dict[int, tuple[str, int, int]] = {}
-        for game in regular_and_post_games:
+        for game in regular_season_games:
             week_number = _regular_season_week_number(game.game.week)
-            if week_number is None:
+            if week_number is None:  # unreachable, filtered above - narrows the type
                 continue
             timestamp = game.game.date.timestamp
             if week_number not in week_info:
@@ -300,7 +310,7 @@ def load_games_data(live: bool = False) -> None:
 
     statements: list[tuple[str, list[Any] | None]] = []
     gap_statements: list[tuple[str, list[Any] | None]] = []
-    for game in regular_and_post_games:
+    for game in regular_season_games:
         week_id = week_ids.get(game.game.week)
         home_team_id = team_ids.get(game.teams.home.id)
         away_team_id = team_ids.get(game.teams.away.id)
