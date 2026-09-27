@@ -1,5 +1,6 @@
 """week:{season}:{weekNN}:games - see src/CLAUDE.md's KV writer section."""
 
+import json
 import logging
 from collections import defaultdict
 from typing import Any
@@ -85,7 +86,9 @@ def _game_forecast(game: dict[str, Any]) -> dict[str, Any] | None:
     few hours after kickoff (pregame_weather_loader.FORECAST_WINDOW_HOURS)
     so weather rolling in mid-game isn't missed. `source` is "daily" when
     kickoff was still past the hourly horizon - whole-day values, temp_f/
-    feels_like_f null, during_game's temps the day's range. See the "live"
+    feels_like_f null, during_game's temps the day's range, and
+    during_game.hours empty (no hourly breakdown for a day-level forecast;
+    also empty for a capture from before hours existed). See the "live"
     block above for in-game/postgame conditions."""
     if game["forecast_captured_at"] is None:
         return None
@@ -108,6 +111,7 @@ def _game_forecast(game: dict[str, Any]) -> dict[str, Any] | None:
             "temp_f_low": game["forecast_window_temp_f_low"],
             "temp_f_high": game["forecast_window_temp_f_high"],
             "snow_accumulation_in": game["forecast_window_snow_accum_in"],
+            "hours": json.loads(game["forecast_hours_json"] or "[]"),
         },
         "source": game["forecast_source"],
         "captured_at": game["forecast_captured_at"],

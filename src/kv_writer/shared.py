@@ -47,6 +47,7 @@ SELECT g.game_id, g.status, g.status_desc, g.home_score, g.away_score, g.game_ti
     g.forecast_window_precip_pct_max, g.forecast_window_precip_type,
     g.forecast_window_wind_gust_mph_max, g.forecast_window_temp_f_low,
     g.forecast_window_temp_f_high, g.forecast_window_snow_accum_in, g.forecast_source,
+    g.forecast_hours_json,
     s.stadium_id, s.name AS stadium_name, s.city AS stadium_city,
     s.state AS stadium_state, s.country AS stadium_country,
     s.latitude AS stadium_latitude, s.longitude AS stadium_longitude,

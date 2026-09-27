@@ -514,7 +514,13 @@ src.kv_writer.__main__`).
   hours after kickoff, so rain/wind rolling in mid-game shows up even
   when the kickoff hour itself looks fine. `forecast.source` is `"hourly"` or
   `"daily"` (see `pregame_weather_loader.py` above) so the UI can label a
-  coarser day-level forecast. Each of `home_team`/`away_team` also
+  coarser day-level forecast. `during_game.hours` (added 2026-09-27,
+  `games.forecast_hours_json`) is every hourly entry in that window
+  (time/temp/condition/icon/precip/wind, chronological) so the UI can
+  show which way it's trending - the aggregates beside it are computed
+  from exactly these entries, kept for at-a-glance use. Empty for a
+  daily-source forecast. Stored as one JSON text column rather than a
+  child table since it's only ever read whole and replaced every capture. Each of `home_team`/`away_team` also
   carries a `record` (`{wins, losses, ties}`, added 2026-09-15 from
   `teams.wins`/`losses`/`ties` — see `src/loaders/teams_loader.py` above
   — `None` if that team hasn't synced a record yet). This is the team's

@@ -141,7 +141,7 @@ the time, confirmed live 2026-09-21 (`PRAGMA table_info`) that both have
 since been applied to prod too). `games.neutral_site` (added 2026-09-26)
 applied to both local and prod the same day, and backfilled on both via
 `src.loaders.espn_loader`.
-`games.forecast_window_*`/`forecast_source` (added 2026-09-27) applied
+`games.forecast_window_*`/`forecast_source`/`forecast_hours_json` (added 2026-09-27) applied
 to both local and prod the same day.
 
 ## `mapping_gaps` tracks lookup misses for review

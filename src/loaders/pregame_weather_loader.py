@@ -53,7 +53,7 @@ UPDATE games SET
     forecast_alert = ?, forecast_window_precip_pct_max = ?, forecast_window_precip_type = ?,
     forecast_window_wind_gust_mph_max = ?, forecast_window_temp_f_low = ?,
     forecast_window_temp_f_high = ?, forecast_window_snow_accum_in = ?,
-    forecast_source = ?, forecast_captured_at = ?
+    forecast_hours_json = ?, forecast_source = ?, forecast_captured_at = ?
 WHERE game_id = ?
 """
 

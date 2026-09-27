@@ -1,5 +1,6 @@
 """helper for src/loaders/"""
 
+import json
 import logging
 import sys
 from datetime import UTC, datetime, timedelta
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 ENCLOSED_ROOF_TYPES = ("Dome", "Retractable")
 
 _NO_WEATHER = (None, None, None, None, None, None, None, None, None, None, None)
-_NO_WINDOW = (None, None, None, None, None, None)
+_NO_WINDOW = (None, None, None, None, None, None, None)
 
 _COMPASS_POINTS = [
     "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
@@ -127,13 +128,37 @@ def capture_weather(
     return _datapoint_to_weather(forecast.currently, alert)
 
 
+def _hour_entry(point: DataPoint) -> dict[str, Any]:
+    """one hourly entry for forecast_hours_json - the same per-point
+    conversion as the kickoff forecast, minus visibility/alert"""
+    (temp_f, feels_like_f, condition, icon, precip_type, wind_speed_mph,
+     wind_gust_mph, wind_direction, precipitation_pct, _, _) = _datapoint_to_weather(
+        point, None
+    )  # fmt: skip
+    return {
+        "time": datetime.fromtimestamp(point.time, UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "temp_f": temp_f,
+        "feels_like_f": feels_like_f,
+        "condition": condition,
+        "icon": icon,
+        "precip_type": precip_type,
+        "precipitation_pct": precipitation_pct,
+        "wind_speed_mph": wind_speed_mph,
+        "wind_gust_mph": wind_gust_mph,
+        "wind_direction": wind_direction,
+    }
+
+
 def _window_summary(
     points: list[DataPoint],
-) -> tuple[Any, Any, Any, Any, Any, Any]:
+) -> tuple[Any, Any, Any, Any, Any, Any, Any]:
     """(precip_pct_max, precip_type, wind_gust_mph_max, temp_f_low,
-    temp_f_high, snow_accumulation_in) across a run of hourly entries.
-    precip_type is whatever's forecast at the wettest hour, not just the
-    first non-null one - that's the hour that actually matters."""
+    temp_f_high, snow_accumulation_in, hours_json) across a run of hourly
+    entries. precip_type is whatever's forecast at the wettest hour, not
+    just the first non-null one - that's the hour that actually matters.
+    hours_json is every entry itself (chronological, JSON text), so a UI
+    can see which way it's trending - the aggregates alone can't say
+    whether rain is rolling in or clearing out."""
     if not points:
         return _NO_WINDOW
 
@@ -152,6 +177,7 @@ def _window_summary(
         round(min(temps)) if temps else None,
         round(max(temps)) if temps else None,
         round(sum(snow), 1) if snow else None,
+        json.dumps([_hour_entry(p) for p in sorted(points, key=lambda p: p.time)]),
     )
 
 
@@ -159,13 +185,14 @@ def _daily_to_forecast(
     day: DailyDataPoint, alert: str | None
 ) -> tuple[
     tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any],
-    tuple[Any, Any, Any, Any, Any, Any],
+    tuple[Any, Any, Any, Any, Any, Any, Any],
 ]:
     """a whole-day entry mapped onto the same (kickoff, window) shapes as the
     hourly path. There's no single temperature for a day, so kickoff
     temp_f/feels_like_f stay None and the day's min/max goes into the
     window's temp_f_low/high instead - a day-long range, not a game-window
-    one, which is why forecast_source gets recorded alongside it."""
+    one, which is why forecast_source gets recorded alongside it. No
+    hourly breakdown exists, so hours_json is an empty list."""
     kickoff = (
         None,
         None,
@@ -190,6 +217,7 @@ def _daily_to_forecast(
         round(day.temperature_min) if day.temperature_min is not None else None,
         round(day.temperature_max) if day.temperature_max is not None else None,
         round(day.snow_accumulation, 1) if day.snow_accumulation is not None else None,
+        "[]",
     )
     return kickoff, window
 
@@ -205,7 +233,7 @@ def capture_pregame_forecast(
 ) -> tuple[
     str | None,
     tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any],
-    tuple[Any, Any, Any, Any, Any, Any],
+    tuple[Any, Any, Any, Any, Any, Any, Any],
 ]:
     """(source, kickoff, window) forecast for a game that hasn't started yet.
 
