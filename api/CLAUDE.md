@@ -346,7 +346,10 @@ active alert existed when built), but its shape (`title`/`severity`/
 `time`/`expires`/`description`/`uri`/`regions`) is confirmed against the
 real OpenAPI spec, not guessed from Dark Sky convention as originally
 assumed. A real alert has since parsed fine live (2026-09-27, a Coastal
-Flood Warning at MetLife).
+Flood Warning at MetLife). `severity` is the NWS scale
+(`Extreme`/`Severe`/`Moderate`/`Minor`), not Advisory/Watch/Warning -
+that level is only in the `title`. What gets kept and how it's stored is
+`src/loaders/loader_helper.py`'s job, see `src/CLAUDE.md`.
 
 `snow_accumulation`/`ice_accumulation`/`liquid_accumulation` only ever
 populate on `hourly.data[]` entries, never on `currently` — Pirate

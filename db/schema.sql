@@ -116,7 +116,7 @@ CREATE TABLE IF NOT EXISTS games (
     forecast_wind_direction VARCHAR(10),
     forecast_precipitation_pct INT,
     forecast_visibility_mi DECIMAL(4,1),
-    forecast_alert VARCHAR(255),
+    forecast_alerts_json TEXT, -- JSON list of game-relevant alerts overlapping the game: [{title, severity, starts, expires, uri}]
     -- summary across the first FORECAST_WINDOW_HOURS after kickoff
     -- (src/loaders/pregame_weather_loader.py), not just the kickoff hour
     forecast_window_precip_pct_max INT,
@@ -164,7 +164,7 @@ CREATE TABLE IF NOT EXISTS game_snapshots (
     wind_direction VARCHAR(10),
     precipitation_pct INT,
     visibility_mi DECIMAL(4,1),
-    weather_alert VARCHAR(255), -- active alert title(s) at capture time, e.g. 'Winter Storm Warning' - NULL if none
+    weather_alerts_json TEXT, -- JSON list of game-relevant alerts active at capture time: [{title, severity, starts, expires, uri}], '[]' if none
     FOREIGN KEY (game_id) REFERENCES games(game_id)
 );
 

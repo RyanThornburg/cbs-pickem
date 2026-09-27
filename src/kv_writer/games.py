@@ -44,7 +44,7 @@ def _snapshot_weather(snapshot: dict[str, Any]) -> dict[str, Any] | None:
         "wind_gust_mph": snapshot["wind_gust_mph"],
         "precipitation_pct": snapshot["precipitation_pct"],
         "visibility_mi": snapshot["visibility_mi"],
-        "weather_alert": snapshot["weather_alert"],
+        "weather_alerts": json.loads(snapshot["weather_alerts_json"] or "[]"),
     }
 
 
@@ -103,7 +103,7 @@ def _game_forecast(game: dict[str, Any]) -> dict[str, Any] | None:
         "wind_direction": game["forecast_wind_direction"],
         "precipitation_pct": game["forecast_precipitation_pct"],
         "visibility_mi": game["forecast_visibility_mi"],
-        "weather_alert": game["forecast_alert"],
+        "weather_alerts": json.loads(game["forecast_alerts_json"] or "[]"),
         "during_game": {
             "precipitation_pct_max": game["forecast_window_precip_pct_max"],
             "precip_type": game["forecast_window_precip_type"],

@@ -212,6 +212,20 @@ own standardized icon identifier (`DataPoint.icon`, e.g.
 summary and meant for the web UI to map onto an actual icon set rather
 than parsing a summary string.
 
+Weather alerts (2026-09-27) are filtered in `_overlapping_alerts()` two
+ways before they're stored: by time (overlapping the capture instant for
+live snapshots, or kickoff through `GAME_DURATION_HOURS` for pregame) and
+by type (`is_game_relevant_alert()` - a title-prefix denylist,
+`IRRELEVANT_ALERT_PREFIXES`, of coastal/marine types like Rip Current,
+Beach Hazards and Coastal Flood, all seen live on prod before this
+existed). A denylist rather than an allowlist so an unseen alert type is
+still shown. Stored as a JSON list (`games.forecast_alerts_json`,
+`game_snapshots.weather_alerts_json`: `[{title, severity, starts,
+expires, uri}]`) and exposed as `weather_alerts` (a list, `[]` if none)
+in both the games KV key's `forecast` and `live.weather` blocks -
+replacing an older single `"; "`-joined title string, whose columns were
+converted (title only, other fields null) and dropped.
+
 `loader_helper.mapping_gap_statement(source, entity_type, raw_value,
 context)` is the other half — every genuine `id_map()`/correction-table
 lookup miss (not an expected/transient one, see `db/CLAUDE.md`'s

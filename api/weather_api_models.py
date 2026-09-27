@@ -90,7 +90,7 @@ class Alert(WeatherApiModel):
     """alert object"""
 
     title: str
-    severity: str  # e.g. 'Advisory', 'Watch', 'Warning'
+    severity: str  # NWS scale: 'Extreme'/'Severe'/'Moderate'/'Minor' (confirmed live)
     time: int
     expires: int | None = None
     description: str | None = None

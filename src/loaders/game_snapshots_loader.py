@@ -27,7 +27,7 @@ INSERT INTO game_snapshots (
     is_red_zone, home_timeouts, away_timeouts,
     temperature_f, feels_like_f, weather_condition, weather_icon, precip_type,
     wind_speed_mph, wind_gust_mph, wind_direction, precipitation_pct,
-    visibility_mi, weather_alert
+    visibility_mi, weather_alerts_json
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """

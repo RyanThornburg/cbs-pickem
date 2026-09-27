@@ -143,6 +143,13 @@ applied to both local and prod the same day, and backfilled on both via
 `src.loaders.espn_loader`.
 `games.forecast_window_*`/`forecast_source`/`forecast_hours_json` (added 2026-09-27) applied
 to both local and prod the same day.
+Same day, `games.forecast_alert`/`game_snapshots.weather_alert` (joined
+title strings) were replaced by `forecast_alerts_json`/
+`weather_alerts_json`: new columns added, existing values converted
+(filtered through the new alert denylist), then the old columns removed
+with `ALTER TABLE ... DROP COLUMN` (works on D1 for a plain, unindexed
+column) - on both local and prod, after checking no row was left
+unconverted.
 
 ## `mapping_gaps` tracks lookup misses for review
 

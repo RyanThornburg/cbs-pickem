@@ -32,6 +32,31 @@ def _bearing_to_compass(bearing: float) -> str:
     return _COMPASS_POINTS[round(bearing / 22.5) % 16]
 
 
+# NWS alert types that are about the coastline/water, not conditions on the
+# field - matched as a title prefix so every level (Watch/Warning/Advisory/
+# Statement) of one type goes together. A denylist, not an allowlist: an
+# alert type nobody's seen yet still gets shown, since surfacing an
+# irrelevant alert is better than hiding a relevant one. Seen live on
+# prod before this filter existed: Rip Current Statement, Beach Hazards
+# Statement, Coastal Flood Warning/Advisory.
+IRRELEVANT_ALERT_PREFIXES = (
+    "Rip Current",
+    "Beach Hazards",
+    "Coastal Flood",
+    "Lakeshore Flood",
+    "High Surf",
+    "Small Craft",
+    "Gale",
+    "Low Water",
+    "Brisk Wind",
+)
+
+
+def is_game_relevant_alert(title: str) -> bool:
+    """False for a coastal/marine alert type - see IRRELEVANT_ALERT_PREFIXES"""
+    return not title.startswith(IRRELEVANT_ALERT_PREFIXES)
+
+
 def _alert_overlaps(alert: Alert, window_start: datetime, window_end: datetime) -> bool:
     """Pirate Weather returns whatever's active/upcoming for the location
     right now, regardless of the actual game - a Friday-only flood watch
@@ -47,7 +72,7 @@ def _alert_overlaps(alert: Alert, window_start: datetime, window_end: datetime) 
 
 
 def _datapoint_to_weather(
-    point: DataPoint, alert: str | None
+    point: DataPoint, alerts: str | None
 ) -> tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any]:
     """one Pirate Weather DataPoint (`currently` or an `hourly.data[]`
     entry) as capture_weather()'s tuple shape"""
@@ -68,19 +93,39 @@ def _datapoint_to_weather(
         if point.precip_probability is not None
         else None,
         point.visibility,
-        alert,
+        alerts,
+    )
+
+
+def _iso(epoch: int | None) -> str | None:
+    return (
+        datetime.fromtimestamp(epoch, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if epoch is not None
+        else None
     )
 
 
 def _overlapping_alerts(
     forecast: Forecast, window_start: datetime, window_hours: float
-) -> str | None:
+) -> str:
+    """JSON list of the game-relevant alerts overlapping the window
+    ('[]' if none) - {title, severity (NWS scale: Extreme/Severe/Moderate/
+    Minor), starts, expires, uri}, for games.forecast_alerts_json/
+    game_snapshots.weather_alerts_json"""
     window_end = window_start + timedelta(hours=window_hours)
-    return (
-        "; ".join(
-            a.title for a in forecast.alerts if _alert_overlaps(a, window_start, window_end)
-        )
-        or None
+    return json.dumps(
+        [
+            {
+                "title": a.title,
+                "severity": a.severity,
+                "starts": _iso(a.time),
+                "expires": _iso(a.expires),
+                "uri": a.uri,
+            }
+            for a in forecast.alerts
+            if is_game_relevant_alert(a.title)
+            and _alert_overlaps(a, window_start, window_end)
+        ]
     )
 
 
@@ -110,33 +155,34 @@ def capture_weather(
     context: str,
 ) -> tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any]:
     """(temp_f, feels_like_f, condition, icon, precip_type, wind_speed_mph,
-    wind_gust_mph, wind_direction, precipitation_pct, visibility_mi, alert)
+    wind_gust_mph, wind_direction, precipitation_pct, visibility_mi, alerts)
     for a stadium location *right now* (Pirate Weather's `currently`) - the
     live in-game case. None across the board for an enclosed roof, unknown
     coordinates, or a failed fetch (see _fetch_outdoor_forecast()). `icon`
     is Pirate Weather's own standardized identifier (e.g.
     "partly-cloudy-day", "rain", "clear-night") - meant for a UI icon set,
-    distinct from `condition`'s free-text summary. Only an alert active at
-    this instant is attached.
+    distinct from `condition`'s free-text summary. `alerts` is a JSON list
+    (see _overlapping_alerts()) of game-relevant alerts active at this
+    instant.
 
     Pregame wants the forecast *for kickoff*, not current conditions - see
     capture_pregame_forecast()."""
     forecast = _fetch_outdoor_forecast(latitude, longitude, roof_type, context)
     if forecast is None or forecast.currently is None:
         return _NO_WEATHER
-    alert = _overlapping_alerts(forecast, datetime.now(UTC), 0)
-    return _datapoint_to_weather(forecast.currently, alert)
+    alerts = _overlapping_alerts(forecast, datetime.now(UTC), 0)
+    return _datapoint_to_weather(forecast.currently, alerts)
 
 
 def _hour_entry(point: DataPoint) -> dict[str, Any]:
     """one hourly entry for forecast_hours_json - the same per-point
-    conversion as the kickoff forecast, minus visibility/alert"""
+    conversion as the kickoff forecast, minus visibility/alerts"""
     (temp_f, feels_like_f, condition, icon, precip_type, wind_speed_mph,
      wind_gust_mph, wind_direction, precipitation_pct, _, _) = _datapoint_to_weather(
         point, None
     )  # fmt: skip
     return {
-        "time": datetime.fromtimestamp(point.time, UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "time": _iso(point.time),
         "temp_f": temp_f,
         "feels_like_f": feels_like_f,
         "condition": condition,
@@ -182,7 +228,7 @@ def _window_summary(
 
 
 def _daily_to_forecast(
-    day: DailyDataPoint, alert: str | None
+    day: DailyDataPoint, alerts: str | None
 ) -> tuple[
     tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any],
     tuple[Any, Any, Any, Any, Any, Any, Any],
@@ -206,7 +252,7 @@ def _daily_to_forecast(
         if day.precip_probability is not None
         else None,
         day.visibility,
-        alert,
+        alerts,
     )
     window = (
         round(day.precip_probability * 100)
@@ -254,7 +300,8 @@ def capture_pregame_forecast(
 
     Alerts are filtered against the separate, usually longer
     [kickoff, kickoff + alert_window_hours] - an alert only needs to touch
-    any part of the game to be worth showing.
+    any part of the game to be worth showing - and to game-relevant types
+    only (is_game_relevant_alert()).
 
     (None, all-None, all-None) if kickoff is past both horizons (never falls
     back to `currently`), or for the same reasons as capture_weather()."""
@@ -263,7 +310,7 @@ def capture_pregame_forecast(
         return None, _NO_WEATHER, _NO_WINDOW
 
     kickoff_ts = kickoff.timestamp()
-    alert = _overlapping_alerts(forecast, kickoff, alert_window_hours)
+    alerts = _overlapping_alerts(forecast, kickoff, alert_window_hours)
 
     hourly = forecast.hourly.data if forecast.hourly else []
     kickoff_point = next(
@@ -276,7 +323,7 @@ def capture_pregame_forecast(
         ]
         return (
             "hourly",
-            _datapoint_to_weather(kickoff_point, alert),
+            _datapoint_to_weather(kickoff_point, alerts),
             _window_summary(window_points),
         )
 
@@ -289,7 +336,7 @@ def capture_pregame_forecast(
     )
     if kickoff_day is not None:
         logger.info("Kickoff past the hourly horizon for %s, using daily", context)
-        return "daily", *_daily_to_forecast(kickoff_day, alert)
+        return "daily", *_daily_to_forecast(kickoff_day, alerts)
 
     logger.info("Kickoff past the daily forecast horizon for %s", context)
     return None, _NO_WEATHER, _NO_WINDOW

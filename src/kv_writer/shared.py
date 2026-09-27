@@ -43,7 +43,7 @@ SELECT g.game_id, g.status, g.status_desc, g.home_score, g.away_score, g.game_ti
     g.forecast_temp_f, g.forecast_feels_like_f, g.forecast_condition, g.forecast_icon,
     g.forecast_precip_type, g.forecast_wind_speed_mph, g.forecast_wind_gust_mph,
     g.forecast_wind_direction, g.forecast_precipitation_pct,
-    g.forecast_visibility_mi, g.forecast_alert, g.forecast_captured_at,
+    g.forecast_visibility_mi, g.forecast_alerts_json, g.forecast_captured_at,
     g.forecast_window_precip_pct_max, g.forecast_window_precip_type,
     g.forecast_window_wind_gust_mph_max, g.forecast_window_temp_f_low,
     g.forecast_window_temp_f_high, g.forecast_window_snow_accum_in, g.forecast_source,
