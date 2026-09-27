@@ -472,8 +472,8 @@ handful of things genuinely used across more than one of those (`GAMES_SQL`/
 `PICKS_SQL` — the literal same query used by both `games.py` and
 `trends.py`, not duplicated; `resolve_current_week()`; `game_team_dicts()`/
 `split_home_away()`; `write_meta_current()` itself, since `meta:current` is
-just `resolve_current_week()` plus two pool-rule constants, not worth its
-own file). Two further cross-module dependencies were kept as direct
+just `resolve_current_week()` plus two pool-rule constants and the CBS
+pool link, not worth its own file). Two further cross-module dependencies were kept as direct
 imports rather than folded into `shared.py`, since each is really owned by
 one domain that the other legitimately depends on: `trends.py` imports
 `odds.py`'s `open_close_consensus_by_game()` for its spread/total movers
@@ -491,7 +491,10 @@ src.kv_writer.__main__`).
 
 - `write_meta_current()` → `meta:current` — `current_week` from
   `weeks.is_current`, plus `second_half_start_week` and `paid_places`
-  (both config, see below) so the UI never hardcodes pool rules.
+  (both config, see below) so the UI never hardcodes pool rules, and
+  `cbs_pool_url` (added 2026-09-27, `api.cbs_client.cbs_pool_url()` +
+  `CBS_POOL_ID`, the same builder `CBSClient` scrapes from) for the UI to
+  link out to the CBS pool home page.
 - `write_week_games()` → `week:{season}:{weekNN}:games` — schedule +
   picks (naturally empty pre-lock, `user_picks` only ever has
   locked/revealed rows) + a `live` block (down/distance/possession/

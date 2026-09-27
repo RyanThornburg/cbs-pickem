@@ -6,19 +6,21 @@ callers need it" bar as loader_helper.py, see src/CLAUDE.md's Loaders
 section).
 
 write_meta_current() lives here rather than in its own module - meta:current
-is just resolve_current_week() plus a couple of pool-rule constants, not
-worth a dedicated file."""
+is just resolve_current_week() plus a couple of pool-rule constants and the
+CBS pool link, not worth a dedicated file."""
 
 import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from api.cbs_client import cbs_pool_url
 from config.config import (
     FIRST_HALF_PAID_PLACES,
     OVERALL_PAID_PLACES,
     SEASON,
     SECOND_HALF_PAID_PLACES,
     SECOND_HALF_START_WEEK,
+    get_cbs_config,
     get_d1_config,
     get_kv_config,
 )
@@ -119,6 +121,7 @@ def write_meta_current() -> None:
             "current_week": current_week,
             "second_half_start_week": SECOND_HALF_START_WEEK,
             "paid_places": PAID_PLACES,
+            "cbs_pool_url": cbs_pool_url(get_cbs_config().pool_id),
         },
     )
     logger.info("Wrote meta:current (week %d) to KV", current_week)

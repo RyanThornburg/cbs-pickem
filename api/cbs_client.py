@@ -100,13 +100,19 @@ def _extract_common_pool(html: str, required_key: str) -> dict[str, Any] | None:
     return None
 
 
+def cbs_pool_url(pool_id: str) -> str:
+    """public pool home page - also exposed via meta:current
+    (src/kv_writer/shared.py) so the web UI can link out to it"""
+    return f"{CBS_BASE_URL}{PICK_PATH}/{pool_id}"
+
+
 class CBSClient:
     def __init__(self, cbs_config: CBSConfig):
         self.user = cbs_config.user
         self.password = cbs_config.password
         self.pool_id = cbs_config.pool_id
         self.state_path = STATE_PATH
-        self.pool_url = f"{CBS_BASE_URL}{PICK_PATH}/{self.pool_id}"
+        self.pool_url = cbs_pool_url(self.pool_id)
         self.weekly_url = f"{self.pool_url}/standings/weekly"
         self.player_url = f"{self.pool_url}/players"
         self.login_url = f"https://www.cbssports.com/login?masterProductId={PRODUCT_ID}&product_abbrev=opm&show_opts=1&xurl={quote(self.weekly_url, '')}"
