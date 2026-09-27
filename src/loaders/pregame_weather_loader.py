@@ -2,9 +2,14 @@
 kicked off yet, onto games.forecast_* - see db/schema.sql's comment on
 those columns for why this overwrites in place rather than keeping
 history: only the current week's SCHEDULED games are ever re-captured, so
-whatever's there once a game goes live is effectively "the forecast at
-kickoff". In-game/postgame conditions are game_snapshots' job instead
-(src/loaders/game_snapshots_loader.py).
+whatever's there once a game goes live is the last forecast captured
+before kickoff. The values themselves come from Pirate Weather's hourly
+entry *for kickoff* (not `currently`), plus a forecast_window_* summary
+of the first FORECAST_WINDOW_HOURS of the game - or the kickoff day's
+daily entry if kickoff is still past the hourly horizon
+(games.forecast_source says which) - see
+loader_helper.capture_pregame_forecast(). In-game/postgame conditions are
+game_snapshots' job instead (src/loaders/game_snapshots_loader.py).
 
 Scoped to weeks.is_current, not just status = 'SCHEDULED' - the full
 season schedule is seeded ahead of time by housekeeping
@@ -23,22 +28,32 @@ from typing import Any
 
 from config.config import configure_logging, get_d1_config, load_env
 from db.d1_client import D1Client
-from src.loaders.loader_helper import capture_weather, sql_batch_call
+from src.loaders.loader_helper import capture_pregame_forecast, sql_batch_call
 
 logger = logging.getLogger(__name__)
 
 # Alerts are filtered against [game_time, game_time + this] - a rough upper
 # bound on how long a game actually runs, so an alert that's only active
 # well before or after the game doesn't get attached to its forecast (see
-# loader_helper.capture_weather()'s docstring).
+# loader_helper.capture_pregame_forecast()'s docstring).
 GAME_DURATION_HOURS = 4
+
+# The forecast_window_* summary (max precip chance/gusts, temp range, snow)
+# covers [game_time, game_time + this] - deliberately shorter than
+# GAME_DURATION_HOURS: weather 2 hours in still affects most of the game,
+# while weather at the 3-4 hour mark barely matters since the game is
+# just ending. Adjust freely.
+FORECAST_WINDOW_HOURS = 2
 
 _UPDATE_FORECAST_SQL = """
 UPDATE games SET
     forecast_temp_f = ?, forecast_feels_like_f = ?, forecast_condition = ?, forecast_icon = ?,
     forecast_precip_type = ?, forecast_wind_speed_mph = ?, forecast_wind_gust_mph = ?,
     forecast_wind_direction = ?, forecast_precipitation_pct = ?, forecast_visibility_mi = ?,
-    forecast_alert = ?, forecast_captured_at = ?
+    forecast_alert = ?, forecast_window_precip_pct_max = ?, forecast_window_precip_type = ?,
+    forecast_window_wind_gust_mph_max = ?, forecast_window_temp_f_low = ?,
+    forecast_window_temp_f_high = ?, forecast_window_snow_accum_in = ?,
+    forecast_source = ?, forecast_captured_at = ?
 WHERE game_id = ?
 """
 
@@ -66,18 +81,26 @@ def load_pregame_weather() -> None:
         game_time = datetime.strptime(row["game_time"], "%Y-%m-%dT%H:%M:%SZ").replace(
             tzinfo=UTC
         )
-        weather = capture_weather(
+        source, kickoff, window = capture_pregame_forecast(
             row["latitude"],
             row["longitude"],
             row["roof_type"],
             f"game_id={row['game_id']}",
-            target_time=game_time,
-            window_hours=GAME_DURATION_HOURS,
+            kickoff=game_time,
+            window_hours=FORECAST_WINDOW_HOURS,
+            alert_window_hours=GAME_DURATION_HOURS,
         )
-        if all(v is None for v in weather):
-            skipped += 1  # enclosed stadium, or the fetch failed/came back empty
+        if source is None:
+            # enclosed stadium, fetch failed/came back empty, or kickoff is
+            # past even the daily forecast horizon
+            skipped += 1
             continue
-        statements.append((_UPDATE_FORECAST_SQL, [*weather, captured_at, row["game_id"]]))
+        statements.append(
+            (
+                _UPDATE_FORECAST_SQL,
+                [*kickoff, *window, source, captured_at, row["game_id"]],
+            )
+        )
 
     if skipped:
         logger.info(

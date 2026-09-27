@@ -80,8 +80,13 @@ def _game_forecast(game: dict[str, Any]) -> dict[str, Any] | None:
     """None if no pregame capture has happened yet - enclosed stadiums
     (src/loaders/pregame_weather_loader.py skips them) never get one, and
     neither does a game whose forecast hasn't been captured yet. This is
-    the pregame forecast, frozen at whatever was last captured before
-    kickoff - see the "live" block above for in-game/postgame conditions."""
+    the pregame forecast for the kickoff hour, frozen at whatever was last
+    captured before kickoff, plus `during_game` - a summary of the first
+    few hours after kickoff (pregame_weather_loader.FORECAST_WINDOW_HOURS)
+    so weather rolling in mid-game isn't missed. `source` is "daily" when
+    kickoff was still past the hourly horizon - whole-day values, temp_f/
+    feels_like_f null, during_game's temps the day's range. See the "live"
+    block above for in-game/postgame conditions."""
     if game["forecast_captured_at"] is None:
         return None
     return {
@@ -96,6 +101,15 @@ def _game_forecast(game: dict[str, Any]) -> dict[str, Any] | None:
         "precipitation_pct": game["forecast_precipitation_pct"],
         "visibility_mi": game["forecast_visibility_mi"],
         "weather_alert": game["forecast_alert"],
+        "during_game": {
+            "precipitation_pct_max": game["forecast_window_precip_pct_max"],
+            "precip_type": game["forecast_window_precip_type"],
+            "wind_gust_mph_max": game["forecast_window_wind_gust_mph_max"],
+            "temp_f_low": game["forecast_window_temp_f_low"],
+            "temp_f_high": game["forecast_window_temp_f_high"],
+            "snow_accumulation_in": game["forecast_window_snow_accum_in"],
+        },
+        "source": game["forecast_source"],
         "captured_at": game["forecast_captured_at"],
     }
 

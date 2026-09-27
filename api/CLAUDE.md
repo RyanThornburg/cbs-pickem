@@ -334,12 +334,19 @@ Sunday kickoff), and `version=2` (unlocks `snowAccumulation`/
 game-relevant than `precipType`/`precipIntensity` alone). `units=us` is
 pinned explicitly rather than relying on an undocumented default.
 
+`daily` is no longer excluded (2026-09-27) - it's the pregame fallback
+when kickoff is past the hourly horizon. Confirmed live: hourly reaches
+168 entries (7 days), daily 8 entries starting at local midnight, so the
+fallback only covers roughly one extra day. Modeled separately
+(`DailyDataPoint`) since a day has min/max temperatures, not a single
+reading.
+
 `alerts` is confirmed to come back as `[]` for a real location/time (no
 active alert existed when built), but its shape (`title`/`severity`/
 `time`/`expires`/`description`/`uri`/`regions`) is confirmed against the
 real OpenAPI spec, not guessed from Dark Sky convention as originally
-assumed — worth a live check once a real alert actually fires, same as
-other "confirmed against real data" caveats in this file.
+assumed. A real alert has since parsed fine live (2026-09-27, a Coastal
+Flood Warning at MetLife).
 
 `snow_accumulation`/`ice_accumulation`/`liquid_accumulation` only ever
 populate on `hourly.data[]` entries, never on `currently` — Pirate

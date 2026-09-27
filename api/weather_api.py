@@ -24,8 +24,10 @@ SOURCE = "pirate_weather"
 
 API_URL = "https://api.pirateweather.net/forecast"
 
-# We only need current conditions (live game) and hourly for kickoff
-EXCLUDE = "minutely,daily,flags"
+# We only need current conditions (live game), hourly for kickoff, and daily
+# as the pregame fallback when kickoff is past the hourly horizon (hourly
+# reaches 168h, daily 8 days - confirmed live 2026-09-27)
+EXCLUDE = "minutely,flags"
 # extend=hourly: hourly defaults to only the next 48h, not the full 7 days -
 # needed so a forecast checked early in the week still covers Sunday kickoff.
 # version=2: unlocks snow/ice/liquid accumulation fields on hourly entries,

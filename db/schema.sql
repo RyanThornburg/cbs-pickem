@@ -117,6 +117,15 @@ CREATE TABLE IF NOT EXISTS games (
     forecast_precipitation_pct INT,
     forecast_visibility_mi DECIMAL(4,1),
     forecast_alert VARCHAR(255),
+    -- summary across the first FORECAST_WINDOW_HOURS after kickoff
+    -- (src/loaders/pregame_weather_loader.py), not just the kickoff hour
+    forecast_window_precip_pct_max INT,
+    forecast_window_precip_type VARCHAR(20), -- at the wettest hour in the window
+    forecast_window_wind_gust_mph_max INT,
+    forecast_window_temp_f_low INT,
+    forecast_window_temp_f_high INT,
+    forecast_window_snow_accum_in DECIMAL(4,1),
+    forecast_source VARCHAR(10), -- 'hourly', or 'daily' when kickoff was past the hourly horizon (whole-day values, no kickoff temp)
     forecast_captured_at TIMESTAMP,
     FOREIGN KEY (week_id) REFERENCES weeks(week_id),
     FOREIGN KEY (home_team_id) REFERENCES teams(team_id),

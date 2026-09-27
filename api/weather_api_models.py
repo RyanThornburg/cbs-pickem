@@ -4,8 +4,10 @@ Used Claude to model the data
 Pydantic models for Pirate Weather's forecast response
 (https://pirate-weather.apiable.io/full-api-reference)
 Only the fields relevant to game-impact weather are modeled;
-`daily`/`minutely`/`flags` blocks are excluded at the request level
-(see api/weather_api.py's EXCLUDE) rather than modeled and discarded.
+`minutely`/`flags` blocks are excluded at the request level (see
+api/weather_api.py's EXCLUDE) rather than modeled and discarded. `daily` is
+kept only as the pregame fallback for a kickoff past the hourly horizon
+(src/loaders/loader_helper.capture_pregame_forecast()).
 
 `Alert`'s shape (title/severity/time/expires/description/uri/regions) is
 confirmed against Pirate Weather's own OpenAPI spec - not yet seen in a live
@@ -57,6 +59,33 @@ class HourlyBlock(WeatherApiModel):
     data: list[DataPoint] = Field(default_factory=list[DataPoint])
 
 
+class DailyDataPoint(WeatherApiModel):
+    """one `daily.data[]` entry - a whole local day, so no single
+    temperature/apparentTemperature reading, only the day's min/max.
+    `time` is local midnight (epoch seconds) for the forecast location."""
+
+    time: int
+    summary: str | None = None
+    icon: str | None = None
+    precip_probability: float | None = Field(default=None, alias="precipProbability")
+    precip_type: str | None = Field(default=None, alias="precipType")
+    snow_accumulation: float | None = Field(default=None, alias="snowAccumulation")
+    temperature_min: float | None = Field(default=None, alias="temperatureMin")
+    temperature_max: float | None = Field(default=None, alias="temperatureMax")
+    wind_speed: float | None = Field(default=None, alias="windSpeed")
+    wind_gust: float | None = Field(default=None, alias="windGust")
+    wind_bearing: int | None = Field(default=None, alias="windBearing")
+    visibility: float | None = None
+
+
+class DailyBlock(WeatherApiModel):
+    """daily weather summary"""
+
+    summary: str | None = None
+    icon: str | None = None
+    data: list[DailyDataPoint] = Field(default_factory=list[DailyDataPoint])
+
+
 class Alert(WeatherApiModel):
     """alert object"""
 
@@ -77,4 +106,5 @@ class Forecast(WeatherApiModel):
     timezone: str
     currently: DataPoint | None = None
     hourly: HourlyBlock | None = None
+    daily: DailyBlock | None = None
     alerts: list[Alert] = Field(default_factory=list[Alert])

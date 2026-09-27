@@ -115,8 +115,24 @@ already never took `env` (see `config/CLAUDE.md`).
   `games.forecast_*`, overwriting in place each run rather than keeping
   history (see `db/schema.sql`'s comment on those columns) — since only
   the current week's `SCHEDULED` games are ever re-queried, whatever's
-  there when a game goes live is effectively "the forecast at kickoff",
-  and `game_snapshots` already covers in-game/postgame conditions.
+  there when a game goes live is the last forecast captured before
+  kickoff, and `game_snapshots` already covers in-game/postgame conditions.
+  Values come from `loader_helper.capture_pregame_forecast()`: Pirate
+  Weather's `hourly` entry for the kickoff hour (not `currently`), plus
+  `games.forecast_window_*`, a summary (max precip chance and the precip
+  type at that hour, max gust, temp low/high, summed snow accumulation)
+  over the first `FORECAST_WINDOW_HOURS` (2) after kickoff. That's
+  deliberately shorter than `GAME_DURATION_HOURS` (4, alert filtering
+  only): weather 2 hours in affects most of the game, weather at hour
+  3-4 barely matters. A kickoff past the hourly horizon (168h) but within
+  daily's (8 days) falls back to that day's `daily` entry
+  (`games.forecast_source = 'daily'`, whole-day values: no kickoff
+  temp/feels-like, window temps are the day's min/max) and is replaced
+  by hourly on the first capture once in range; past both, nothing is
+  stored. Never falls back to `currently`. Fixed 2026-09-27: until then
+  every `forecast_*` value was actually `currently`, i.e. conditions
+  whenever the capture happened to run (Tuesday's weather for a Sunday
+  game) - only the alert filter was ever kickoff-scoped.
   Filters on `weeks.is_current`, not just `status = 'SCHEDULED'` alone -
   a real bug caught 2026-09-15 right after this shipped: housekeeping's
   `load_games_data()` seeds the *entire* season's schedule from Sports IO
@@ -490,7 +506,12 @@ src.kv_writer.__main__`).
   unlike the `live` block's weather, this is meant to be visible
   *before* kickoff (the actual point of it - helping a pick get made
   with the forecast in mind), and simply stops updating once a game goes
-  live rather than disappearing. Each of `home_team`/`away_team` also
+  live rather than disappearing. `forecast.during_game` (added
+  2026-09-27, `games.forecast_window_*`) summarizes the first couple of
+  hours after kickoff, so rain/wind rolling in mid-game shows up even
+  when the kickoff hour itself looks fine. `forecast.source` is `"hourly"` or
+  `"daily"` (see `pregame_weather_loader.py` above) so the UI can label a
+  coarser day-level forecast. Each of `home_team`/`away_team` also
   carries a `record` (`{wins, losses, ties}`, added 2026-09-15 from
   `teams.wins`/`losses`/`ties` — see `src/loaders/teams_loader.py` above
   — `None` if that team hasn't synced a record yet). This is the team's
