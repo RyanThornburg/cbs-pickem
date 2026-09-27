@@ -42,8 +42,8 @@ GAME_DURATION_HOURS = 4
 # covers [game_time, game_time + this] - deliberately shorter than
 # GAME_DURATION_HOURS: weather 2 hours in still affects most of the game,
 # while weather at the 3-4 hour mark barely matters since the game is
-# just ending. Adjust freely.
-FORECAST_WINDOW_HOURS = 2
+# just ending.
+FORECAST_WINDOW_HOURS = 3
 
 _UPDATE_FORECAST_SQL = """
 UPDATE games SET
