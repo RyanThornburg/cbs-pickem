@@ -4,6 +4,7 @@ import json
 import logging
 from collections import defaultdict
 from collections.abc import Iterable
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from config.config import SEASON, get_d1_config, get_kv_config
@@ -72,18 +73,55 @@ def _sort_value(group: str, line: dict[str, Any]) -> float:
     return value if isinstance(value, int | float) else float("-inf")
 
 
+def _punting(team_id: int, player_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """punts/punt_yards/punt_average for one team, summed from its
+    Punting player lines - Sports IO's team stats have no punting at all.
+    Summed rather than taking one punter, since a second player
+    occasionally punts. All None until player stats exist; 0 punts (no
+    Punting line) once they do."""
+    if not player_rows:
+        return {"punts": None, "punt_yards": None, "punt_average": None}
+    punts = punt_yards = 0
+    for row in player_rows:
+        if row["team_id"] == team_id and row["stat_group"] == "Punting":
+            stats = json.loads(row["stats_json"])
+            punts += stats.get("total") or 0
+            punt_yards += stats.get("yards") or 0
+    return {
+        "punts": punts,
+        "punt_yards": punt_yards,
+        # half-up to match Sports IO's own average (201/4 -> 50.3, where
+        # round() would give 50.2)
+        "punt_average": (
+            float(
+                (Decimal(punt_yards) / punts).quantize(
+                    Decimal("0.1"), rounding=ROUND_HALF_UP
+                )
+            )
+            if punts
+            else None
+        ),
+    }
+
+
 def _box_score(
-    game: dict[str, Any], stats_by_team: dict[int, dict[str, Any]]
+    game: dict[str, Any],
+    stats_by_team: dict[int, dict[str, Any]],
+    player_rows: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
     """None until game_team_stats has a row for both teams (first live
     stats capture). Every game_team_stats column, see db/schema.sql for
-    what each means (offense vs. defense naming in particular)."""
+    what each means (offense vs. defense naming in particular), plus
+    punting from the player box score."""
     home = stats_by_team.get(game["home_team_id"])
     away = stats_by_team.get(game["away_team_id"])
     if home is None or away is None:
         return None
     return {
-        side: {k: v for k, v in row.items() if k not in _TEAM_STATS_KEY_COLUMNS}
+        side: {
+            **{k: v for k, v in row.items() if k not in _TEAM_STATS_KEY_COLUMNS},
+            **_punting(row["team_id"], player_rows),
+        }
         for side, row in (("home", home), ("away", away))
     }
 
@@ -148,7 +186,9 @@ def write_game_details(game_ids: Iterable[int]) -> None:
     for game in rows(_GAMES_SQL):
         game_id = game["game_id"]
         details = {
-            "box_score": _box_score(game, team_stats[game_id]),
+            "box_score": _box_score(
+                game, team_stats[game_id], player_rows[game_id]
+            ),
             "players": _players(game, player_rows[game_id]),
             # ESPN, chronological, one point per play plus a pre-kickoff
             # point (period 0) - only once the game is FINAL

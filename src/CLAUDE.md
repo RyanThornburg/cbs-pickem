@@ -686,7 +686,12 @@ src.kv_writer.__main__`).
   win_probability}`, each part `None` until its data exists (a game with
   none of them is skipped, not written empty).
   `box_score` is `{home, away}`, every `game_team_stats` column minus its
-  ids. `players` is `{home, away}`, each a `{group: [player lines]}` map
+  ids, plus `punts`/`punt_yards`/`punt_average` (added 2026-09-27) summed
+  from that team's `Punting` player lines, since Sports IO's team stats
+  have no punting. `None` until player stats exist, 0 punts (average
+  `None`) for a team that never punted. Average rounds half-up to match
+  Sports IO's own per-punter `average` (checked: all 94 team sides on
+  prod agree). `players` is `{home, away}`, each a `{group: [player lines]}` map
   (group keys lowercased: `passing`, `kick_returns`, ...), each line
   `{name, sports_io_player_id, image, stats}`, ranked by that group's
   main stat (yards, tackles for `defensive`, points for `kicking`).
