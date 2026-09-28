@@ -379,11 +379,18 @@ machine. `D1Client`/`KVClient` also got request timeouts the same day (60s/
 connection used to hang a tick indefinitely.
 
 `_is_live_window_active()` decides live-vs-quiet branch from `games.game_time`
-alone (`game_time <= now <= game_time + 4h AND status NOT IN ('FINAL',
-'CANCELLED', 'POSTPONED')`) — deliberately not from `games.status`, since
+alone (`game_time <= now <= game_time + LIVE_WINDOW_HOURS AND status NOT IN
+('FINAL', 'CANCELLED', 'POSTPONED')`) — deliberately not from `games.status`, since
 status might just be stale (that's exactly what the live poll exists to
 fix). This is a pure local query, no external call, so checking it every
 minute costs nothing even during a multi-month off-season.
+`LIVE_WINDOW_HOURS` is 5 (was 4 until 2026-09-28): week 3's SNF ran about
+3h40m and Sports IO took another ~6 minutes to mark it FINAL, about 14
+minutes short of the old cutoff. A game still not FINAL past the window
+stops being polled and sits `IN_PROGRESS` until the next daily
+housekeeping run fixes it - deliberately not polled indefinitely. The
+longer window costs nothing on a normal day, since a game leaves it as
+soon as it's FINAL.
 
 Cadences, and why each one is what it is:
 
@@ -1019,7 +1026,9 @@ src.kv_writer.__main__`).
   than `orchestration.py`'s own intervals, roughly twice each, and not
   imported from there to avoid a circular import (`orchestration.py`
   already imports from this package). The live pollers (Sports IO/CBS
-  live polls, `game_snapshots`, live team stats, live player stats) and
+  live polls, live team stats, live player stats, and `game_snapshots`
+  from `src/live_ticker.py` - same cursor keys as when orchestration
+  captured them) and
   the every-tick scoring plays/win probability steps just report
   timestamps with no stale flag - "should this have run" for those
   depends on live-window history, which isn't worth the complexity.

@@ -58,8 +58,12 @@ EASTERN = ZoneInfo("America/New_York")
 
 # A game is "live" from its scheduled kickoff until this many hours later,
 # regardless of what our last-known status says (status might just be
-# stale - that's exactly what the live poll is for).
-LIVE_WINDOW_HOURS = 4
+# stale - that's exactly what the live poll is for). 5, not 4: week 3's
+# SNF ran ~3h40m and Sports IO took another ~6 min to mark it FINAL, within
+# ~14 min of the old cutoff - past it, the game would sit IN_PROGRESS until
+# the next daily housekeeping run. Costs nothing on a normal day, since a
+# game drops out of the window as soon as it's FINAL.
+LIVE_WINDOW_HOURS = 5
 
 SPORTS_IO_LIVE_INTERVAL_SECONDS = 60
 CBS_LIVE_INTERVAL_SECONDS = 120

@@ -399,9 +399,9 @@ kickoff return. This is a genuinely unofficial,
 undocumented API: no public docs, no terms of service, no SLA. It's been
 stable for years and is widely used by the sports-data community, but
 treat it as a bonus/best-effort source, not a contract — every call site
-that uses it is written to degrade gracefully (log and continue with
-nulls) if it fails, same as CBS pool-home in
-`game_snapshots_loader.py`.
+that uses it is written to degrade gracefully if it fails (log and
+continue - `game_snapshots_loader.py` skips that round's snapshots,
+`espn_loader.py` skips that week, the win probability curve is retried).
 
 Confirmed live 2026-09-09 by checking a full week's scoreboard:
 `situation` (the field-position data) and `odds` are **mutually
