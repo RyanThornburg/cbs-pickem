@@ -668,7 +668,15 @@ src.kv_writer.__main__`).
   down/distance - no extra endpoint), stored per snapshot in
   `game_snapshots.last_play_*`/`drive_text`/`*_win_pct` so win
   probability can be charted over time (live, sampled per snapshot - the
-  complete per-play curve is in the details key once FINAL). `leaders`
+  complete per-play curve is in the details key once FINAL). `drive_start`
+  (`{yard_line, text}`, added 2026-09-27, `game_snapshots.drive_start_*`)
+  is where the current drive began, from `situation.lastPlay.drive.start`
+  on the same scoreboard response, in the same home-goal-line frame as
+  `yard_line` (confirmed live: "LAR 37" → 63 with DEN home). ESPN reports
+  it as state, not something we build up from plays, so a missed poll or
+  play can't leave it wrong. Right after a change of possession
+  `lastPlay` can still be the old drive's last play until the new drive's
+  first snap. `leaders`
   is the top passer/rusher/receiver per team by yards (same line shape
   as the details key's players, `None` until player stats exist).
 - `write_game_details(game_ids)` → `game:{season}:{game_id}:details`

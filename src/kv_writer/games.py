@@ -212,6 +212,14 @@ def _snapshot_live_block(snapshot: dict[str, Any]) -> dict[str, Any]:
             "type": snapshot["last_play_type"],
         },
         "drive_text": snapshot["drive_text"],
+        # where the current drive started, same home-goal-line frame as
+        # yard_line - ESPN reports it as state, so a missed poll can't
+        # leave it wrong. Right after a change of possession it can still
+        # be the previous drive's until the new drive's first snap.
+        "drive_start": {
+            "yard_line": snapshot["drive_start_yard_line"],
+            "text": snapshot["drive_start_text"],
+        },
         # ESPN, 0-100, as of last_play - null for a snapshot from before this
         # was captured or when ESPN had no situation
         "win_probability": {

@@ -148,7 +148,9 @@ enough. `game_scoring_plays`, `game_player_stats` and
 both local and prod the same day.
 `game_snapshots.last_play_text`/`last_play_type`/`drive_text`/
 `home_win_pct`/`away_win_pct`/`last_play_id`/`weather_captured_at` (added
-2026-09-27) applied to both local and prod the same day.
+2026-09-27) applied to both local and prod the same day, as were
+`game_snapshots.drive_start_yard_line`/`drive_start_text` (added later
+that day).
 `games.forecast_window_*`/`forecast_source`/`forecast_hours_json` (added 2026-09-27) applied
 to both local and prod the same day.
 Same day, `games.forecast_alert`/`game_snapshots.weather_alert` (joined

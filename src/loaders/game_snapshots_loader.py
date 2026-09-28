@@ -26,14 +26,14 @@ INSERT INTO game_snapshots (
     game_id, quarter, time_remaining, status_desc, possession, home_score, away_score,
     down, distance, yard_line, down_distance_text, possession_text,
     is_red_zone, home_timeouts, away_timeouts,
-    last_play_text, last_play_type, drive_text, home_win_pct, away_win_pct,
-    last_play_id,
+    last_play_text, last_play_type, drive_text, drive_start_yard_line,
+    drive_start_text, home_win_pct, away_win_pct, last_play_id,
     temperature_f, feels_like_f, weather_condition, weather_icon, precip_type,
     wind_speed_mph, wind_gust_mph, wind_direction, precipitation_pct,
     visibility_mi, weather_alerts_json, weather_captured_at
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?)
+        ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 # latest snapshot per live game - {} is filled with one ? per game_id
@@ -63,7 +63,7 @@ _WEATHER_COLUMNS = (
     "weather_alerts_json",
 )
 
-_NO_SITUATION = (None,) * 14
+_NO_SITUATION = (None,) * 16
 
 
 def _win_pct(fraction: float | None) -> float | None:
@@ -73,7 +73,8 @@ def _win_pct(fraction: float | None) -> float | None:
 def _situation_fields(situation: Situation | None) -> tuple[Any, ...]:
     """(down, distance, yard_line, down_distance_text, possession_text,
     is_red_zone, home_timeouts, away_timeouts, last_play_text,
-    last_play_type, drive_text, home_win_pct, away_win_pct, last_play_id).
+    last_play_type, drive_text, drive_start_yard_line, drive_start_text,
+    home_win_pct, away_win_pct, last_play_id).
     None across the board if ESPN has no situation for this game right
     now - e.g. between plays like halftime, or if ESPN's
     abbreviation-matched event wasn't found."""
@@ -82,6 +83,8 @@ def _situation_fields(situation: Situation | None) -> tuple[Any, ...]:
 
     last_play = situation.last_play
     probability = last_play.probability if last_play else None
+    drive = last_play.drive if last_play else None
+    drive_start = drive.start if drive else None
     return (
         situation.down,
         situation.distance,
@@ -94,7 +97,9 @@ def _situation_fields(situation: Situation | None) -> tuple[Any, ...]:
         # ESPN sometimes pads this with a leading space
         last_play.text.strip() if last_play and last_play.text else None,
         last_play.type.text if last_play and last_play.type else None,
-        last_play.drive.description if last_play and last_play.drive else None,
+        drive.description if drive else None,
+        drive_start.yard_line if drive_start else None,
+        drive_start.text if drive_start else None,
         _win_pct(probability.home_win_percentage) if probability else None,
         _win_pct(probability.away_win_percentage) if probability else None,
         last_play.id if last_play else None,

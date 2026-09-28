@@ -158,6 +158,8 @@ CREATE TABLE IF NOT EXISTS game_snapshots (
     last_play_text VARCHAR(255), -- e.g. 'Timeout #2 by SF at 01:41.'
     last_play_type VARCHAR(30), -- e.g. 'Timeout', 'Pass Reception', 'End of Half'
     drive_text VARCHAR(50), -- current drive, e.g. '6 plays, 15 yards, 1:22'
+    drive_start_yard_line INT, -- where the current drive started, same frame as yard_line
+    drive_start_text VARCHAR(20), -- e.g. 'LAR 37'
     home_win_pct DECIMAL(4,1), -- ESPN win probability after that play, 0-100
     away_win_pct DECIMAL(4,1),
     last_play_id VARCHAR(30), -- ESPN's play id, part of the "anything changed" check

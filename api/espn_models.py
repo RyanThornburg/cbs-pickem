@@ -38,8 +38,15 @@ class WinProbability(EspnModel):
     tie_percentage: float | None = Field(default=None, alias="tiePercentage")
 
 
+class DriveStart(EspnModel):
+    # same frame as Situation.yard_line: yards from the home goal line
+    yard_line: int | None = Field(default=None, alias="yardLine")
+    text: str | None = None  # e.g. 'LAR 37'
+
+
 class LastPlayDrive(EspnModel):
     description: str | None = None
+    start: DriveStart | None = None
 
 
 class LastPlay(EspnModel):
