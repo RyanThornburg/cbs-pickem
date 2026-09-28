@@ -290,14 +290,14 @@ def _run_pre_kickoff_odds_capture(client: D1Client, now: datetime) -> None:
     ):
         return
 
-    now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_str = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     lead_cutoff = (now + timedelta(minutes=ODDS_PREKICKOFF_LEAD_MINUTES)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     result = client.query(
         "SELECT 1 FROM games WHERE game_time > ? AND game_time <= ? "
         "AND (status IS NULL OR status NOT IN ('FINAL', 'CANCELLED', 'POSTPONED')) LIMIT 1",
-        [now_iso, lead_cutoff],
+        [now_str, lead_cutoff],
     )
     if not result.results:
         return
@@ -316,7 +316,7 @@ def _run_pregame_weather_capture(client: D1Client, now: datetime) -> None:
     every tick, live or quiet, so an already-live early game can't
     suppress the refresh for an approaching later one.
     """
-    now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_str = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     near_cutoff = (now + timedelta(hours=WEATHER_PREGAME_NEAR_WINDOW_HOURS)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
@@ -324,7 +324,7 @@ def _run_pregame_weather_capture(client: D1Client, now: datetime) -> None:
         client.query(
             "SELECT 1 FROM games WHERE game_time > ? AND game_time <= ? "
             "AND status = 'SCHEDULED' LIMIT 1",
-            [now_iso, near_cutoff],
+            [now_str, near_cutoff],
         ).results
     )
     interval = (
