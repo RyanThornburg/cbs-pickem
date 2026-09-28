@@ -32,9 +32,19 @@ uv run python -m src.new_season local
 
 # the scheduler: this is what actually keeps everything up to date
 uv run python -m src.orchestration local
+
+# the live ticker: game-day scoreboard updates every 15 seconds
+uv run python -m src.live_ticker local
 ```
 
-`orchestration.py` currently runs on a cron every minute and then figures out what needs refreshing (live games vs. off-hours, odds cadence, etc.) rather than needing separate cron entries per job. This helps with API limits/usage and is configurable should those change.
+Both run from cron every minute, as two separate entries:
+
+```
+* * * * * cd /path/to/repo && uv run python -m src.orchestration prod
+* * * * * cd /path/to/repo && uv run python -m src.live_ticker prod
+```
+
+`orchestration.py` figures out what needs refreshing each minute (live games vs. off-hours, odds cadence, etc.) rather than needing separate cron entries per job. This helps with API limits/usage and is configurable should those change. `live_ticker.py` only does anything during games: it pulls ESPN's live scoreboard every 15 seconds so the scoreboard isn't limited to once-a-minute updates, and exits straight away the rest of the week. Each takes its own lock, so a run that goes long is never doubled up.
 
 CBS and Sports IO are the only two required APIs. Odds API and weather API are optional and should still work without.
 
@@ -44,6 +54,7 @@ CBS and Sports IO are the only two required APIs. Odds API and weather API are o
 - `db/`: schema, D1 client, KV client
 - `src/loaders/`: pulls data from the `api/` clients and writes it into D1
 - `src/orchestration.py`: the scheduler that ties it all together
+- `src/live_ticker.py`: the 15-second game-day scoreboard refresh (its own cron entry)
 - `src/kv_writer/`: turns D1 data into the JSON the web UI reads, one module per KV key
 - `config/`: env handling and season-level settings
 

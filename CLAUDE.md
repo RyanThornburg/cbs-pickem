@@ -16,6 +16,9 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management and
 - Run the scheduler (meant for cron, `* * * * *`): `uv run python -m src.orchestration [local|prod]`
   (takes a per-env lock under `locks/` and skips the tick if the previous
   one is still running)
+- Run the live ticker (a **second** cron entry, also `* * * * *`): `uv run python -m src.live_ticker [local|prod]`
+  — ESPN snapshots + the games KV key every 15 seconds during games, exits
+  immediately otherwise. See `src/CLAUDE.md`'s "Live ticker" section.
 - One-off season bootstrap (season/teams/CBS users/team mapper): `uv run python -m src.new_season [local|prod]`
 - Scrape CBS and save weekly standings: `uv run python -m api.cbs_client`
 - Fetch/validate api-sports.io data (teams/standings/games/etc., not persisted): `uv run python -m api.sports_io_client`

@@ -106,23 +106,31 @@ already never took `env` (see `config/CLAUDE.md`).
   everywhere (see `db/CLAUDE.md`). `load_sports_io_odds()` is a
   deliberate stub — sticking with The Odds API only for now, user's call.
 - `game_snapshots_loader.py` — `load_game_snapshots()` captures one
-  `game_snapshots` row per currently-live game: quarter/status/possession/
-  score from CBS's pool-home page, down/distance/field position from
-  ESPN's scoreboard (the only source that has it — see `api/CLAUDE.md`),
-  weather from Pirate Weather at the stadium's lat/lng (skipped entirely
-  for Dome/Retractable roofs). Skips writing a new row if CBS's quarter/
-  clock/score **and** ESPN's `last_play_id` are all identical to the last
-  capture for that game - nothing happened. ESPN's play id is in the check
-  because CBS's clock lags ESPN (confirmed live 2026-09-27: CBS sat on the
-  same clock across several new ESPN plays). Weather is refreshed at most
-  every `WEATHER_REFRESH_SECONDS` (5 min) per game; rows in between carry
-  the previous reading forward, `weather_captured_at` saying when it was
-  actually fetched - keeps the 60s cadence from multiplying Pirate Weather
-  calls (20,000/month plan). The "last capture" lookup only reads the
-  latest row for the currently-live game ids. A CBS or ESPN fetch
-  failure degrades gracefully (that source's fields come back null,
-  everything else still gets captured) rather than aborting the whole
-  snapshot.
+  `game_snapshots` row per game ESPN reports as in progress (status
+  `state == "in"`, which covers halftime and delays), all game state from
+  ESPN's scoreboard - quarter/clock/status/score/possession plus down/
+  distance/field position/last play/win probability - and weather from
+  Pirate Weather at the stadium's lat/lng (skipped entirely for Dome/
+  Retractable roofs). **ESPN-only since 2026-09-27**: quarter/clock/score/
+  possession used to come from CBS's pool-home page, but measured live
+  that day, Sports IO's clock sat still for 2+ minutes while ESPN's ran
+  and CBS's clock lags ESPN too - and dropping CBS also removed a
+  Playwright scrape from every capture. Candidate games are any not-FINAL
+  game that kicked off in the last `CANDIDATE_WINDOW_HOURS` (6), so a
+  kickoff is picked up as soon as ESPN shows it, not when Sports IO's
+  `games.status` catches up. Skips writing a new row if quarter/clock/
+  score **and** ESPN's `last_play_id` are all identical to the last
+  capture for that game - nothing happened. Returns the game_ids that got
+  a new row, so `src/live_ticker.py` only rewrites KV when something
+  moved. Possession is `None` when ESPN leaves it out (e.g. right after a
+  kickoff return). Weather is refreshed at most every
+  `WEATHER_REFRESH_SECONDS` (5 min) per game; rows in between carry the
+  previous reading forward, `weather_captured_at` saying when it was
+  actually fetched - keeps the 15s cadence from multiplying Pirate
+  Weather calls (20,000/month plan). An ESPN fetch failure means no
+  snapshots that round (logged, not raised); a Pirate Weather failure just
+  leaves the weather columns null. `has_candidate_games()` is the one-query
+  check the ticker uses to exit straight away outside game time.
 - `player_stats_loader.py` (added 2026-09-27) — per-player box scores
   from Sports IO's `/games/statistics/players` into `game_player_stats`,
   one row per game/team/stat group/player with the stats as JSON. Groups:
@@ -330,8 +338,14 @@ thing last ran — this is what lets a stateless, repeatedly-invoked
 process behave like a real scheduler without needing its own persistent
 process or internal sleep loop.
 
+The helpers both cron processes share - `soft()`, `run_on_interval()`,
+the `orchestration_state` cursor functions (`get_state()`/`set_state()`/
+`should_run()`), `record_system_event()` and `acquire_lock()` - live in
+`src/scheduling.py` (moved out of `orchestration.py` 2026-09-27 when
+`src/live_ticker.py` needed them too).
+
 **No task can end the tick** (2026-09-27). Every task, including the KV
-writes at the end of `main()`, runs through `_soft()`: an exception is
+writes at the end of `main()`, runs through `soft()`: an exception is
 logged (`logger.exception`, so it lands in `error.log`) and recorded as a
 `system_events` row, and the tick moves on. Before this, only odds,
 pregame weather, the Sports IO live poll and the newer enrichment steps
@@ -339,7 +353,7 @@ were wrapped - a failing CBS scrape (live or quiet poll, housekeeping, the
 deadline sweep) ended the tick before snapshots, stats and every KV write,
 including `meta:admin`, and since its cursor was only set on success it
 retried the CBS login every minute. Interval tasks go through
-`_run_on_interval(client, source, task, cursor_key, success_key,
+`run_on_interval(client, source, task, cursor_key, success_key,
 interval)`: the cursor moves on every attempt, so a task that keeps
 failing retries once per interval rather than every tick, and
 `success_key` moves only when it worked (what `meta:admin` reads).
@@ -353,10 +367,12 @@ A week whose final team stats fail keeps `has_final_stats` unset so it's
 retried; its final player stats stay soft-fail as before.
 
 **One tick at a time** (2026-09-27): the `__main__` block takes a
-non-blocking `fcntl` lock (`config.LOCK_DIR`, `locks/orchestration.{env}.lock`,
-gitignored) and exits if the previous tick is still running - cron starts
-one every minute regardless, and two overlapping ticks would both pass the
-same `_should_run()` checks and double every call. Per env, so a local tick
+non-blocking `fcntl` lock (`scheduling.acquire_lock()`, `config.LOCK_DIR`,
+`locks/orchestration.{env}.lock`, gitignored) and exits if the previous
+tick is still running - cron starts one every minute regardless, and two
+overlapping ticks would both pass the same `should_run()` checks and
+double every call. `live_ticker.py` takes its own
+(`locks/live_ticker.{env}.lock`), so the two never block each other. Per env, so a local tick
 never blocks a prod one. Only works while every tick for an env runs on one
 machine. `D1Client`/`KVClient` also got request timeouts the same day (60s/
 30s - the API clients already had `TIMEOUT_LIMIT`), since a hung Cloudflare
@@ -391,12 +407,11 @@ Cadences, and why each one is what it is:
   "this week's deadline" is the *upcoming* Sunday for Tue–Sat, today for
   Sunday itself, and yesterday for Monday. The deadline calc itself is
   still used by `_run_deadline_sweep()` below, just no longer gates this.
-- **`game_snapshots`, 1 min, live only** (was 3 min until 2026-09-27) -
-  more points for the win-probability/margin charts. The loader dedups on
-  its own (no row if nothing changed) and throttles weather separately,
-  see `game_snapshots_loader.py` above.
+- **`game_snapshots`, 15 s, during games - not in this module** (3 min
+  until 2026-09-27, then 1 min, then moved to `src/live_ticker.py` the
+  same day) - see "Live ticker" below.
 - **Live `game_team_stats`, 3 min, live only** - its own
-  `LIVE_GAME_STATS_INTERVAL_SECONDS` now that snapshots moved to 1 min.
+  `LIVE_GAME_STATS_INTERVAL_SECONDS`, separate from snapshots.
 - **Live player stats, 1 min, live only** (added 2026-09-27) -
   `LIVE_PLAYER_STATS_INTERVAL_SECONDS`, one Sports IO call per live game,
   roughly 2,000 on a full Sunday against the 7,500/day quota. Rewrites
@@ -416,7 +431,7 @@ Cadences, and why each one is what it is:
   why that's cheap. Runs before `write_incomplete_weeks_games()` so a new
   score's play reaches KV the same tick. try/except with its own success
   cursor, surfaced in `meta:admin` as `scoring_plays_refresh`.
-- **`_should_run()` has 30s of slack** (`_SHOULD_RUN_SLACK_SECONDS`, added
+- **`should_run()` has 30s of slack** (`_SHOULD_RUN_SLACK_SECONDS`, added
   2026-09-27). Each cursor is stamped when its task finishes, so on a
   60s cron the next tick always lands a few seconds short - without the
   slack every interval silently rounded up a whole tick (confirmed live:
@@ -497,7 +512,7 @@ API's 500/month allowance (see `CLAUDE.local.md`).
 Both odds call sites (the flat baseline in `_run_quiet_period_tasks()`
 and the pre-kickoff capture above) go through a shared `_capture_odds()`
 helper, added 2026-09-11, that wraps `load_the_odds_api_odds()`/
-`write_current_week_odds()` in `_soft()` - odds are enrichment, not load-bearing, same
+`write_current_week_odds()` in `soft()` - odds are enrichment, not load-bearing, same
 category as weather (see `game_snapshots_loader.py`'s ESPN/Pirate Weather
 try/excepts in the Loaders section above), so a missing/invalid
 `THE_ODDS_API_KEY` or an API outage must never block the deadline sweep,
@@ -596,6 +611,48 @@ made unnecessary by this one; see the "KV writer" section below for
 unconditionally as the last thing in `main()`, after `write_season_trends()`
 and the user profiles refresh — cheap local reads, and an admin health
 check is most useful exactly when something just failed, not stale.
+
+## Live ticker
+
+`src/live_ticker.py` (added 2026-09-27) is the second cron process, next
+to `orchestration.py` and also run every minute
+(`uv run python -m src.live_ticker [local|prod]`, its own crontab line).
+Outside game time it exits after one D1 query
+(`game_snapshots_loader.has_candidate_games()`). During games it loops for
+most of its minute: a round at 0/15/30/45 seconds, each one
+`load_game_snapshots()` (one ESPN scoreboard call for every game) and then
+`kv_writer.write_games_weeks()` for just the weeks whose snapshot changed.
+No new round starts after `LAST_ROUND_START_SECONDS` (45), so a run ends
+before cron starts the next; its lock (`live_ticker.{env}`) covers a
+run that doesn't.
+
+Why a separate process: measured live 2026-09-27, the scoreboard in KV ran
+up to a minute behind ESPN's clock. Everything refreshed once per cron
+minute, the clock came from CBS (which lags ESPN), and Sports IO's clock
+sat still for 2+ minutes at a time. The minute tick itself takes 40+
+seconds on a game day, so looping inside it wasn't an option. ESPN has no
+quota and one call covers every game, so 4 calls a minute costs nothing
+against any API budget; Sports IO, CBS and The Odds API aren't touched.
+KV cost is about 3 extra games-key writes a minute during games.
+
+It sets the same `game_snapshot_last_capture_at`/`game_snapshot_last_success_at`
+cursors orchestration used to, so `meta:admin`'s `game_snapshot_capture`
+still reports it - if that goes quiet during a game, the ticker's cron
+line isn't running. Failures are `soft()` like everything else
+(`game_snapshot_capture`, `live_games_kv_write` in `system_events`). Both
+processes can write the same week's games key in the same second, over
+KV's one-write-per-second-per-key limit, so `KVClient.write()` retries a
+429 once after `RATE_LIMIT_RETRY_SECONDS`.
+
+The games key's top-level `home_score`/`away_score` prefer the snapshot's
+(ESPN) score while a game is live, when it's ahead of the `games` row's
+(Sports IO) - see `_prefer_snapshot_score()`. D1's `games` row itself
+stays Sports IO's.
+
+What's left between a play and a viewer's screen is on the UI side: KV
+itself can take up to about 60 seconds to reach every Cloudflare location,
+and the web app's own polling interval. See the UI-changes Artifact linked
+from `CLAUDE.local.md`.
 
 ## KV writer
 

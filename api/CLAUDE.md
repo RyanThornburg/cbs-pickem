@@ -388,7 +388,14 @@ lower-value field.
 `api/espn_client.py`/`api/espn_models.py` read ESPN's public NFL
 scoreboard (`site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard`)
 — the **only** source found for live field position (down/distance/yard
-line/possession text/red zone/timeouts). This is a genuinely unofficial,
+line/possession text/red zone/timeouts), and since 2026-09-27 the source
+for all live game state in `game_snapshots` (quarter/clock/score/
+possession too): measured live that day, it was the fastest of ESPN,
+Sports IO and CBS (Sports IO's clock sat still for 2+ minutes while
+ESPN's ran), and it has no quota, so `src/live_ticker.py` polls it every
+15 seconds during games. Possession is `situation.possession` (an ESPN
+team id, matched against `competitors[].team.id`), absent right after a
+kickoff return. This is a genuinely unofficial,
 undocumented API: no public docs, no terms of service, no SLA. It's been
 stable for years and is widely used by the sports-data community, but
 treat it as a bonus/best-effort source, not a contract — every call site

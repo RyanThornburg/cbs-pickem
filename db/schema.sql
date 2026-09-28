@@ -141,8 +141,8 @@ CREATE TABLE IF NOT EXISTS game_snapshots (
     game_id INT NOT NULL,
     captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     quarter INT, -- 1-4, 5=OT
-    time_remaining VARCHAR(10), -- "MM:SS" left in the quarter, from CBS
-    status_desc VARCHAR(30), -- CBS raw status at time of capture
+    time_remaining VARCHAR(10), -- "M:SS" left in the quarter, ESPN's displayClock (from CBS before 2026-09-27)
+    status_desc VARCHAR(30), -- ESPN's status name, e.g. 'STATUS_IN_PROGRESS' (CBS's raw status before 2026-09-27)
     possession VARCHAR(10), -- 'HOME', 'AWAY'
     home_score INT,
     away_score INT,

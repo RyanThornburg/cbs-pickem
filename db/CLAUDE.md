@@ -211,8 +211,8 @@ instead of it - the log has the full traceback for debugging, this table
 is the queryable "is anything broken" summary `src/kv_writer/admin.py`'s
 `meta:admin` key surfaces (see `src/CLAUDE.md`'s KV writer section).
 Every row comes from `orchestration.py`: since 2026-09-27 every task
-there runs through `_soft()`, which records a row (via the module-local
-`_record_system_event()`) whenever a task raises - `source` is the task
+and in `src/live_ticker.py` runs through `scheduling.soft()`, which records
+a row (via `scheduling.record_system_event()`) whenever a task raises - `source` is the task
 name, e.g. `cbs_live_poll`, `housekeeping`, `odds_capture`,
 `games_kv_write` (see `src/CLAUDE.md`'s Orchestration section). Loaders
 themselves never write here; they raise, or log and degrade for

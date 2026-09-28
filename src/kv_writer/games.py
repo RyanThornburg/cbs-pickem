@@ -237,6 +237,22 @@ def _snapshot_live_block(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _prefer_snapshot_score(game_json: dict[str, Any], snapshot: dict[str, Any]) -> None:
+    """While a game is live, show the snapshot's score (ESPN, polled every
+    15s by src/live_ticker.py) when it's ahead of games.home_score/
+    away_score (Sports IO, polled once a minute). "Ahead" is a higher
+    combined score - scores only go up, so this never shows an older
+    snapshot over a newer Sports IO score (e.g. if ESPN stops answering).
+    D1's games row itself stays Sports IO's."""
+    home, away = snapshot["home_score"], snapshot["away_score"]
+    if home is None or away is None:
+        return
+    current = (game_json["home_score"] or 0) + (game_json["away_score"] or 0)
+    if home + away > current:
+        game_json["home_score"] = home
+        game_json["away_score"] = away
+
+
 def write_week_games(week_number: int) -> None:
     """Write week:{season}:{weekNN}:games - one week's schedule, joined with
     who picked which side (naturally empty pre-lock - user_picks only ever
@@ -323,6 +339,7 @@ def write_week_games(week_number: int) -> None:
         snapshot = latest_snapshot_by_game.get(game["game_id"])
         if snapshot and game["status"] in _LIVE_STATUSES:
             game_json["live"] = _snapshot_live_block(snapshot)
+            _prefer_snapshot_score(game_json, snapshot)
 
         games_json.append(game_json)
 
@@ -355,6 +372,29 @@ def write_current_week_games() -> None:
         return
 
     write_week_games(current_week)
+
+
+_WEEKS_FOR_GAMES_SQL = """
+SELECT DISTINCT w.week_number
+FROM games g
+JOIN weeks w ON w.week_id = g.week_id
+WHERE w.season_id = ? AND g.game_id IN ({})
+"""
+
+
+def write_games_weeks(game_ids: set[int]) -> None:
+    """Rewrite the games key for just the weeks these games are in - what
+    src/live_ticker.py calls after a snapshot changed, rather than every
+    incomplete week."""
+    if not game_ids:
+        return
+    d1 = D1Client(**get_d1_config())
+    ids = sorted(game_ids)
+    rows = d1.query(
+        _WEEKS_FOR_GAMES_SQL.format(", ".join("?" * len(ids))), [SEASON, *ids]
+    ).results
+    for row in rows:
+        write_week_games(row["week_number"])
 
 
 def write_incomplete_weeks_games(include_future: bool = False) -> None:

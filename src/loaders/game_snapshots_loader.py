@@ -1,23 +1,31 @@
 """
-Capture a snapshot (score/quarter/possession + weather) for every currently-live game
-CBS's pool-home page for game state
-Pirate Weather for conditions at the stadium's location.
+Capture a snapshot (score/quarter/clock/possession/field position + weather)
+for every game in progress, from ESPN's public scoreboard (one call covers
+every game) and Pirate Weather for conditions at the stadium's location.
+
+ESPN is the fastest of the three live sources - confirmed live 2026-09-27
+that Sports IO's clock sat still for 2+ minutes while ESPN's ran, and
+CBS's clock lags ESPN too - so this is what src/live_ticker.py polls every
+15 seconds during games.
 
 Usage: uv run python -m src.loaders.game_snapshots_loader [local|prod]
 """
 
 import logging
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from api.cbs_client import get_cbs_pool_home
 from api.espn_client import ABBREV_CORRECTIONS as ESPN_ABBREV_CORRECTIONS
 from api.espn_client import get_scoreboard
-from api.espn_models import Situation
+from api.espn_models import Competition, Situation
 from config.config import configure_logging, get_d1_config, load_env
 from db.d1_client import D1Client
-from src.loaders.loader_helper import capture_weather, mapping_gap_statement, sql_batch_call
+from src.loaders.loader_helper import (
+    capture_weather,
+    mapping_gap_statement,
+    sql_batch_call,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,59 +144,150 @@ def _snapshot_weather(
 
 _UPDATE_GAME_ESPN_ID_SQL = "UPDATE games SET espn_event_id = ? WHERE game_id = ?"
 
+# games that could be live right now - ESPN's own status decides which of
+# these actually are (kickoff shows up there before our Sports IO-sourced
+# games.status catches up)
+_CANDIDATE_GAMES_SQL = """
+SELECT g.game_id, g.espn_event_id,
+    s.latitude, s.longitude, s.roof_type,
+    ht.abbreviation AS home_abbrev, at.abbreviation AS away_abbrev
+FROM games g
+LEFT JOIN stadiums s ON s.stadium_id = g.stadium_id
+JOIN teams ht ON ht.team_id = g.home_team_id
+JOIN teams at ON at.team_id = g.away_team_id
+WHERE g.game_time <= ? AND g.game_time >= ?
+  AND (g.status IS NULL OR g.status NOT IN ('FINAL', 'CANCELLED', 'POSTPONED'))
+"""
 
-def _fetch_espn_scoreboard_lookup() -> tuple[
-    dict[str, Situation | None], dict[tuple[str, str], tuple[str, Situation | None]]
+# how far back a kickoff can be and still be a candidate - a game with long
+# delays can run well past the usual ~3.5 hours
+CANDIDATE_WINDOW_HOURS = 6
+
+
+def _fetch_espn_lookup() -> tuple[
+    dict[str, Competition], dict[tuple[str, str], tuple[str, Competition]]
 ]:
-    """two lookups - espn event id falls or home/away if event id not yet added
-    espn is an undocumented/extra data source so not blocking on failures from it"""
+    """ESPN competitions by event id, and by (home, away) abbreviation for
+    games whose espn_event_id isn't linked yet. Empty on a failed fetch -
+    the caller skips this round rather than raising."""
     try:
         scoreboard = get_scoreboard()
     except Exception:
-        logger.exception("ESPN scoreboard fetch failed - skipping situation data")
+        logger.exception("ESPN scoreboard fetch failed - no snapshots this round")
         return {}, {}
 
-    by_espn_id: dict[str, Situation | None] = {}
-    by_teams: dict[tuple[str, str], tuple[str, Situation | None]] = {}
+    by_espn_id: dict[str, Competition] = {}
+    by_teams: dict[tuple[str, str], tuple[str, Competition]] = {}
     for event in scoreboard.events:
         competition = event.competitions[0]
-        by_espn_id[event.id] = competition.situation
+        by_espn_id[event.id] = competition
 
         by_side = {c.home_away: c.team.abbreviation for c in competition.competitors}
         home = ESPN_ABBREV_CORRECTIONS.get(by_side.get("home", ""), by_side.get("home"))
         away = ESPN_ABBREV_CORRECTIONS.get(by_side.get("away", ""), by_side.get("away"))
         if home and away:
-            by_teams[(home, away)] = (event.id, competition.situation)
+            by_teams[(home, away)] = (event.id, competition)
     return by_espn_id, by_teams
 
 
-def load_game_snapshots() -> None:
-    """capture a snapshot for every currently-live game"""
+def _game_state_fields(competition: Competition) -> tuple[Any, ...]:
+    """(quarter, time_remaining, status_desc, possession, home_score,
+    away_score) from ESPN's competition - quarter 5 is overtime, same as
+    ESPN's period; possession is None when ESPN has no one on offense
+    (between quarters, halftime)."""
+    by_side = {c.home_away: c for c in competition.competitors}
+    home, away = by_side.get("home"), by_side.get("away")
+    situation = competition.situation
+    possession = None
+    if situation is not None and situation.possession_team_id is not None:
+        if home is not None and situation.possession_team_id == home.team.id:
+            possession = "HOME"
+        elif away is not None and situation.possession_team_id == away.team.id:
+            possession = "AWAY"
+    return (
+        competition.status.period,
+        competition.status.display_clock,
+        competition.status.type.name,
+        possession,
+        int(home.score) if home is not None and home.score.isdigit() else None,
+        int(away.score) if away is not None and away.score.isdigit() else None,
+    )
+
+
+def _candidate_games(client: D1Client) -> list[dict[str, Any]]:
+    now = datetime.now(UTC)
+    return client.query(
+        _CANDIDATE_GAMES_SQL,
+        [
+            now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            (now - timedelta(hours=CANDIDATE_WINDOW_HOURS)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
+        ],
+    ).results
+
+
+def has_candidate_games() -> bool:
+    """whether any game could be live right now - one D1 query, no ESPN
+    call, so src/live_ticker.py can exit straight away outside game time"""
+    return bool(_candidate_games(D1Client(**get_d1_config())))
+
+
+def load_game_snapshots() -> set[int]:
+    """capture a snapshot for every game ESPN reports as in progress -
+    returns the game_ids that got a new row (nothing changed means no row),
+    so the caller only rewrites KV when something actually moved"""
     client = D1Client(**get_d1_config())
 
-    live_games = client.query(
-        "SELECT g.game_id, g.cbs_event_id, g.espn_event_id, "
-        "s.latitude, s.longitude, s.roof_type, "
-        "ht.abbreviation AS home_abbrev, at.abbreviation AS away_abbrev "
-        "FROM games g "
-        "LEFT JOIN stadiums s ON s.stadium_id = g.stadium_id "
-        "JOIN teams ht ON ht.team_id = g.home_team_id "
-        "JOIN teams at ON at.team_id = g.away_team_id "
-        "WHERE g.status IN ('IN_PROGRESS', 'HALFTIME')"
-    ).results
-    if not live_games:
+    candidates = _candidate_games(client)
+    if not candidates:
         logger.info("No live games to snapshot")
-        return
+        return set()
 
-    data = get_cbs_pool_home()
-    if data is None:
-        return
-    events_by_cbs_id = {e.cbs_event_id: e for e in data.pool_period.pool_events}
+    espn_by_id, espn_by_teams = _fetch_espn_lookup()
+    if not espn_by_id:
+        return set()
 
-    espn_by_id, espn_by_teams = _fetch_espn_scoreboard_lookup()
+    gap_statements: list[tuple[str, list[Any] | None]] = []
     espn_backfill_statements: list[tuple[str, list[Any] | None]] = []
+    live: list[tuple[dict[str, Any], Competition]] = []
+    for row in candidates:
+        if row["espn_event_id"] is not None:
+            competition = espn_by_id.get(row["espn_event_id"])
+        else:
+            match = espn_by_teams.get((row["home_abbrev"], row["away_abbrev"]))
+            competition = None
+            if match is None:
+                logger.warning(
+                    "No ESPN event for game_id=%s (%s @ %s)",
+                    row["game_id"],
+                    row["away_abbrev"],
+                    row["home_abbrev"],
+                )
+                gap_statements.append(
+                    mapping_gap_statement(
+                        "espn",
+                        "team_pair",
+                        f"{row['away_abbrev']}@{row['home_abbrev']}",
+                        "load_game_snapshots",
+                    )
+                )
+            else:
+                espn_event_id, competition = match
+                espn_backfill_statements.append(
+                    (_UPDATE_GAME_ESPN_ID_SQL, [espn_event_id, row["game_id"]])
+                )
+        # 'in' covers halftime and delays too; 'pre'/'post' aren't live
+        if competition is not None and competition.status.type.state == "in":
+            live.append((row, competition))
 
-    game_ids = [row["game_id"] for row in live_games]
+    if espn_backfill_statements or gap_statements:
+        sql_batch_call(espn_backfill_statements + gap_statements, client)
+    if not live:
+        logger.info("No games in progress on ESPN")
+        return set()
+
+    game_ids = [row["game_id"] for row, _ in live]
     latest_by_game_id = {
         row["game_id"]: row
         for row in client.query(
@@ -197,71 +296,20 @@ def load_game_snapshots() -> None:
     }
 
     statements: list[tuple[str, list[Any] | None]] = []
-    gap_statements: list[tuple[str, list[Any] | None]] = []
-    skipped_unchanged = 0
-    for row in live_games:
-        event = events_by_cbs_id.get(row["cbs_event_id"])
-        if event is None:
-            logger.warning(
-                "No CBS event for live game_id=%s (cbs_event_id=%s) - skipping snapshot",
-                row["game_id"],
-                row["cbs_event_id"],
-            )
-            continue
-
-        if row["espn_event_id"] is not None:
-            situation = espn_by_id.get(row["espn_event_id"])
-            if espn_by_id and row["espn_event_id"] not in espn_by_id:
-                logger.warning(
-                    "Linked ESPN event %s for game_id=%s not found in current "
-                    "scoreboard - leaving situation unset",
-                    row["espn_event_id"],
-                    row["game_id"],
-                )
-        else:
-            team_key = (row["home_abbrev"], row["away_abbrev"])
-            match = espn_by_teams.get(team_key)
-            if match is None:
-                situation = None
-                if espn_by_teams:
-                    logger.warning(
-                        "No ESPN event for live game_id=%s (%s @ %s) - leaving situation unset",
-                        row["game_id"],
-                        row["away_abbrev"],
-                        row["home_abbrev"],
-                    )
-                    gap_statements.append(
-                        mapping_gap_statement(
-                            "espn",
-                            "team_pair",
-                            f"{row['away_abbrev']}@{row['home_abbrev']}",
-                            "load_game_snapshots",
-                        )
-                    )
-            else:
-                espn_event_id, situation = match
-                espn_backfill_statements.append(
-                    (_UPDATE_GAME_ESPN_ID_SQL, [espn_event_id, row["game_id"]])
-                )
-
-        # nothing happened since the prior snapshot - CBS's clock lags ESPN,
-        # so a new ESPN play alone still counts as a change
-        situation_fields = _situation_fields(situation)
+    captured: set[int] = set()
+    for row, competition in live:
+        state = _game_state_fields(competition)
+        situation_fields = _situation_fields(competition.situation)
         previous = latest_by_game_id.get(row["game_id"])
+        # nothing happened since the prior snapshot - clock, score and
+        # ESPN's latest play id all unchanged
         if previous is not None and (
             previous["quarter"],
             previous["time_remaining"],
             previous["home_score"],
             previous["away_score"],
             previous["last_play_id"],
-        ) == (
-            event.game_period,
-            event.time_remaining,
-            event.home_team_score,
-            event.away_team_score,
-            situation_fields[-1],
-        ):
-            skipped_unchanged += 1
+        ) == (state[0], state[1], state[4], state[5], situation_fields[-1]):
             continue
 
         statements.append(
@@ -269,36 +317,22 @@ def load_game_snapshots() -> None:
                 _INSERT_SNAPSHOT_SQL,
                 [
                     row["game_id"],
-                    event.game_period,
-                    event.time_remaining,
-                    event.game_status_desc,
-                    event.possession if event.possession != "NONE" else None,
-                    event.home_team_score,
-                    event.away_team_score,
+                    *state,
                     *situation_fields,
                     *_snapshot_weather(row, previous),
                 ],
             )
         )
+        captured.add(row["game_id"])
 
-    if espn_backfill_statements:
-        sql_batch_call(espn_backfill_statements, client)
-
-    if skipped_unchanged:
-        logger.info(
-            "Skipped %d snapshot(s) - nothing changed since last capture",
-            skipped_unchanged,
-        )
-
-    if not statements:
-        if not skipped_unchanged:
-            logger.warning("No snapshots captured")
-        if gap_statements:
-            sql_batch_call(gap_statements, client)
-        return
-
-    sql_batch_call(statements + gap_statements, client)
-    logger.info("Captured %d game snapshots", len(statements))
+    if statements:
+        sql_batch_call(statements, client)
+    logger.info(
+        "Captured %d game snapshot(s), %d unchanged",
+        len(statements),
+        len(live) - len(statements),
+    )
+    return captured
 
 
 def main() -> None:

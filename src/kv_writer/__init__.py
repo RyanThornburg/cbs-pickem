@@ -18,6 +18,7 @@ from src.kv_writer.game_details import (
 )
 from src.kv_writer.games import (
     write_current_week_games,
+    write_games_weeks,
     write_incomplete_weeks_games,
     write_week_games,
 )
@@ -45,6 +46,7 @@ __all__ = [
     "write_current_week_odds",
     "write_current_week_trends",
     "write_game_details",
+    "write_games_weeks",
     "write_historical",
     "write_incomplete_weeks_games",
     "write_meta_current",
