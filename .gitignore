@@ -3,6 +3,7 @@ __pycache__/
 CLAUDE.local.md
 .old
 logs/
+locks/
 *.logs
 data/
 secrets/

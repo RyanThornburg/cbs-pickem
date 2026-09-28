@@ -12,6 +12,8 @@ from urllib.parse import quote
 import requests
 
 KV_API_BASE = "https://api.cloudflare.com/client/v4"
+# without one a hung connection hangs the whole cron tick indefinitely
+TIMEOUT_SECONDS = 30
 
 
 class KVError(RuntimeError):
@@ -38,6 +40,7 @@ class KVClient:
             self._value_url(key),
             data=json.dumps(value).encode("utf-8"),
             headers={"Content-Type": "application/json"},
+            timeout=TIMEOUT_SECONDS,
         )
         response.raise_for_status()
         data: dict[str, Any] = response.json()
@@ -47,7 +50,7 @@ class KVClient:
 
     def delete(self, key: str) -> None:
         """Delete a single key - a no-op if it doesn't exist."""
-        response = self._session.delete(self._value_url(key))
+        response = self._session.delete(self._value_url(key), timeout=TIMEOUT_SECONDS)
         response.raise_for_status()
         data: dict[str, Any] = response.json()
 
@@ -56,7 +59,7 @@ class KVClient:
 
     def read(self, key: str) -> dict[str, Any] | None:
         """Read a single key's JSON value, or None if the key doesn't exist."""
-        response = self._session.get(self._value_url(key))
+        response = self._session.get(self._value_url(key), timeout=TIMEOUT_SECONDS)
         if response.status_code == 404:
             return None
         response.raise_for_status()

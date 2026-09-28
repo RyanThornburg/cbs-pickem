@@ -1,7 +1,7 @@
 [project]
 name = "cbs-pickem"
 version = "0.1.0"
-description = "Add your description here"
+description = "Data pipeline for a CBS Sports NFL Pick'em pool: scrapes CBS, pulls game/odds/weather data, stores it in Cloudflare D1 and writes JSON to KV for the web UI"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [

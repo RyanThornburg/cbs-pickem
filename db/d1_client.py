@@ -11,6 +11,9 @@ from typing import Any
 import requests
 
 D1_API_BASE = "https://api.cloudflare.com/client/v4"
+# without one a hung connection hangs the whole cron tick indefinitely -
+# generous, since a large batch (a week of player stats) can take a while
+TIMEOUT_SECONDS = 60
 
 
 class D1Error(RuntimeError):
@@ -54,9 +57,10 @@ class D1Client:
     ) -> list[D1QueryResult]:
         """Run multiple statements as a single atomic transaction.
 
-        Foreign key enforcement is off by default per SQLite connection, so
-        every call enables it (`PRAGMA foreign_keys = ON`) as part of the
-        same batch, before the caller's statements.
+        Every call enables foreign keys (`PRAGMA foreign_keys = ON`) as part
+        of the same batch, before the caller's statements - D1 already
+        enforces them by default (see db/CLAUDE.md), so this is belt and
+        braces rather than required.
         """
         payload = {
             "batch": [{"sql": "PRAGMA foreign_keys = ON;", "params": []}]
@@ -65,7 +69,7 @@ class D1Client:
                 for sql, params in statements
             ]
         }
-        response = self._session.post(self._url, json=payload)
+        response = self._session.post(self._url, json=payload, timeout=TIMEOUT_SECONDS)
         response.raise_for_status()
         data: dict[str, Any] = response.json()
 

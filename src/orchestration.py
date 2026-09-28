@@ -6,12 +6,15 @@ nothing (a couple of cheap local D1 checks)
 Usage: uv run python -m src.orchestration [local|prod]
 """
 
+import fcntl
 import logging
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import TextIO
 from zoneinfo import ZoneInfo
 
-from config.config import configure_logging, get_d1_config, load_env
+from config.config import LOCK_DIR, configure_logging, get_d1_config, load_env
 from db.d1_client import D1Client
 from src.kv_writer import (
     write_admin_status,
@@ -88,6 +91,11 @@ WEATHER_PREGAME_NEAR_WINDOW_HOURS = 24
 # data that only actually changes when picks get made/graded, not on every
 # live score tick. Same cadence class as CBS_PICKS_QUIET_INTERVAL_SECONDS.
 USER_PROFILES_INTERVAL_SECONDS = 30 * 60
+# After a failure, the deadline sweep and the finished-game stats catch-up
+# wait this long before trying again - both are otherwise retried every
+# tick until they succeed, and each attempt is a burst of CBS/Sports IO
+# calls (CBS logins in particular risk its lockout defenses)
+FAILURE_RETRY_SECONDS = 10 * 60
 
 _UPSERT_STATE_SQL = """
 INSERT INTO orchestration_state (key, value) VALUES (?, ?)
@@ -107,6 +115,40 @@ ON CONFLICT(source, message) DO UPDATE SET
 def _record_system_event(client: D1Client, source: str, message: str) -> None:
     now = _now_iso()
     client.batch([(_UPSERT_SYSTEM_EVENT_SQL, [source, message[:500], now, now])])
+
+
+def _soft(client: D1Client, source: str, task: Callable[[], object]) -> bool:
+    """Run one task, and on any exception log it (lands in error.log) and
+    record a system_events row instead of raising - one failing source
+    (a CBS scrape, a Sports IO payload that won't validate) must never end
+    the tick and take every later task with it. True if the task worked."""
+    try:
+        task()
+        return True
+    except Exception as exc:
+        logger.exception("%s failed - continuing without it", source)
+        _record_system_event(client, source, str(exc))
+        return False
+
+
+def _run_on_interval(
+    client: D1Client,
+    source: str,
+    task: Callable[[], object],
+    cursor_key: str,
+    success_key: str,
+    interval_seconds: int,
+) -> None:
+    """The standard interval task: run `task` via _soft() once
+    `interval_seconds` has passed since `cursor_key`. The cursor moves on
+    every attempt, so a task that keeps failing retries once per interval
+    rather than every tick; `success_key` only moves when it worked, which
+    is what meta:admin reads to tell a failing task from a healthy one."""
+    if not _should_run(client, cursor_key, interval_seconds):
+        return
+    if _soft(client, source, task):
+        _set_state(client, success_key, _now_iso())
+    _set_state(client, cursor_key, _now_iso())
 
 
 def _now_iso() -> str:
@@ -162,53 +204,57 @@ def _is_live_window_active(client: D1Client) -> bool:
 
 
 def _run_live_updates(client: D1Client) -> None:
-    if _should_run(
-        client, "sports_io_live_last_poll_at", SPORTS_IO_LIVE_INTERVAL_SECONDS
-    ):
-        # Sports IO has sent malformed/unexpected game data mid-slate
-        try:
-            load_games_data(live=True)
-            _set_state(client, "sports_io_live_last_success_at", _now_iso())
-        except Exception as exc:
-            logger.exception("Live games poll failed - continuing without it")
-            _record_system_event(client, "sports_io_live_poll", str(exc))
-        finally:
-            _set_state(client, "sports_io_live_last_poll_at", _now_iso())
+    # Sports IO has sent malformed/unexpected game data mid-slate
+    _run_on_interval(
+        client,
+        "sports_io_live_poll",
+        lambda: load_games_data(live=True),
+        "sports_io_live_last_poll_at",
+        "sports_io_live_last_success_at",
+        SPORTS_IO_LIVE_INTERVAL_SECONDS,
+    )
 
     # Runs for the whole live window, not just pre-deadline - most games kick
     # off at/after the Sunday 1PM ET deadline, and that's also when CBS
     # reveals every entry's picks (not just early-game ones), so this is when
-    # the bulk of live pick-grading actually happens via trending status
-    if _should_run(client, "cbs_live_last_poll_at", CBS_LIVE_INTERVAL_SECONDS):
-        load_cbs_user_picks()
-        # write_current_week_leaderboard() not needed here - run_tick()
-        # now calls it unconditionally on every tick regardless of branch
-        _set_state(client, "cbs_live_last_poll_at", _now_iso())
+    # the bulk of live pick-grading actually happens via trending status.
+    # write_current_week_leaderboard() isn't needed here - main() calls it
+    # every tick regardless of branch
+    _run_on_interval(
+        client,
+        "cbs_live_poll",
+        load_cbs_user_picks,
+        "cbs_live_last_poll_at",
+        "cbs_live_last_success_at",
+        CBS_LIVE_INTERVAL_SECONDS,
+    )
 
-    if _should_run(
-        client, "game_snapshot_last_capture_at", GAME_SNAPSHOT_INTERVAL_SECONDS
-    ):
-        load_game_snapshots()
-        _set_state(client, "game_snapshot_last_capture_at", _now_iso())
+    _run_on_interval(
+        client,
+        "game_snapshot_capture",
+        load_game_snapshots,
+        "game_snapshot_last_capture_at",
+        "game_snapshot_last_success_at",
+        GAME_SNAPSHOT_INTERVAL_SECONDS,
+    )
 
-    if _should_run(
-        client, "live_game_stats_last_capture_at", LIVE_GAME_STATS_INTERVAL_SECONDS
-    ):
-        _write_game_details(client, load_live_game_statistics())
-        _set_state(client, "live_game_stats_last_capture_at", _now_iso())
+    _run_on_interval(
+        client,
+        "live_game_stats",
+        lambda: _write_game_details(client, load_live_game_statistics()),
+        "live_game_stats_last_capture_at",
+        "live_game_stats_last_success_at",
+        LIVE_GAME_STATS_INTERVAL_SECONDS,
+    )
 
-    if _should_run(
-        client, "live_player_stats_last_capture_at", LIVE_PLAYER_STATS_INTERVAL_SECONDS
-    ):
-        # enrichment, like odds/weather - never worth ending the tick over
-        try:
-            _write_game_details(client, load_live_player_stats())
-            _set_state(client, "live_player_stats_last_success_at", _now_iso())
-        except Exception as exc:
-            logger.exception("Live player stats capture failed - continuing without it")
-            _record_system_event(client, "live_player_stats", str(exc))
-        finally:
-            _set_state(client, "live_player_stats_last_capture_at", _now_iso())
+    _run_on_interval(
+        client,
+        "live_player_stats",
+        lambda: _write_game_details(client, load_live_player_stats()),
+        "live_player_stats_last_capture_at",
+        "live_player_stats_last_success_at",
+        LIVE_PLAYER_STATS_INTERVAL_SECONDS,
+    )
 
 
 def _write_game_details(client: D1Client, game_ids: set[int]) -> None:
@@ -216,25 +262,20 @@ def _write_game_details(client: D1Client, game_ids: set[int]) -> None:
     stats or win probability just changed. A KV failure here is recorded,
     not raised - the D1 write it follows already happened, and the next
     change rewrites the key anyway."""
-    try:
-        write_game_details(game_ids)
-    except Exception as exc:
-        logger.exception("Game details KV write failed - continuing without it")
-        _record_system_event(client, "game_details_write", str(exc))
+    _soft(client, "game_details_write", lambda: write_game_details(game_ids))
 
 
 def _run_win_probability_capture(client: D1Client) -> None:
     """Every tick - load_final_win_probability() only calls ESPN for FINAL
     games that don't have a curve yet (one D1 query otherwise). ESPN is
     undocumented, so a failure is recorded, never raised."""
-    try:
-        _write_game_details(client, load_final_win_probability())
+    if _soft(
+        client,
+        "win_probability_capture",
+        lambda: _write_game_details(client, load_final_win_probability()),
+    ):
         _set_state(client, "win_probability_last_success_at", _now_iso())
-    except Exception as exc:
-        logger.exception("Win probability capture failed - continuing without it")
-        _record_system_event(client, "win_probability_capture", str(exc))
-    finally:
-        _set_state(client, "win_probability_last_run_at", _now_iso())
+    _set_state(client, "win_probability_last_run_at", _now_iso())
 
 
 def _capture_odds(client: D1Client, state_key: str, success_key: str) -> None:
@@ -242,15 +283,14 @@ def _capture_odds(client: D1Client, state_key: str, success_key: str) -> None:
     state_key is the scheduling cursor (set on every attempt, see finally);
     success_key is only set when the capture actually worked, so meta:admin
     can tell a task that keeps failing apart from one that's healthy."""
-    try:
+
+    def capture() -> None:
         load_the_odds_api_odds()
         write_current_week_odds()
+
+    if _soft(client, "odds_capture", capture):
         _set_state(client, success_key, _now_iso())
-    except Exception as exc:
-        logger.exception("Odds capture failed - continuing without it")
-        _record_system_event(client, "odds_capture", str(exc))
-    finally:
-        _set_state(client, state_key, _now_iso())
+    _set_state(client, state_key, _now_iso())
 
 
 def _run_scoring_plays_refresh(client: D1Client) -> None:
@@ -258,38 +298,58 @@ def _run_scoring_plays_refresh(client: D1Client) -> None:
     Sports IO for games whose score moved since their last fetch (one D1
     query otherwise), and a game's last score can land after the live
     window closes. Enrichment, so a failure is recorded, never raised."""
-    try:
-        load_scoring_plays()
+    if _soft(client, "scoring_plays_refresh", load_scoring_plays):
         _set_state(client, "scoring_plays_last_success_at", _now_iso())
-    except Exception as exc:
-        logger.exception("Scoring plays refresh failed - continuing without it")
-        _record_system_event(client, "scoring_plays_refresh", str(exc))
-    finally:
-        _set_state(client, "scoring_plays_last_run_at", _now_iso())
+    _set_state(client, "scoring_plays_last_run_at", _now_iso())
 
 
 def _run_quiet_period_tasks(client: D1Client) -> None:
     if _should_run(client, "odds_last_call_at", ODDS_INTERVAL_SECONDS):
         _capture_odds(client, "odds_last_call_at", "odds_last_success_at")
 
-    if _should_run(
-        client, "cbs_picks_quiet_last_poll_at", CBS_PICKS_QUIET_INTERVAL_SECONDS
-    ):
-        load_cbs_user_picks()
-        _set_state(client, "cbs_picks_quiet_last_poll_at", _now_iso())
+    _run_on_interval(
+        client,
+        "cbs_picks_quiet_poll",
+        load_cbs_user_picks,
+        "cbs_picks_quiet_last_poll_at",
+        "cbs_picks_quiet_last_success_at",
+        CBS_PICKS_QUIET_INTERVAL_SECONDS,
+    )
 
-    if _should_run(client, "housekeeping_last_run_at", HOUSEKEEPING_INTERVAL_SECONDS):
-        load_games_data()  # full schedule/weeks refresh - idempotent, safe any day
-        load_teams()  # refresh team win/loss/tie records, same cadence
-        load_cbs_weeks()
-        load_cbs_games()
-        load_espn_games()  # neutral_site for incomplete weeks
-        write_meta_current()
-        # write_current_week_games() not needed here - run_tick() now
-        # calls it unconditionally on every tick regardless of branch
-        _set_state(client, "housekeeping_last_run_at", _now_iso())
-    else:
-        logger.info("Not running, too soon")
+    _run_on_interval(
+        client,
+        "housekeeping",
+        _housekeeping,
+        "housekeeping_last_run_at",
+        "housekeeping_last_success_at",
+        HOUSEKEEPING_INTERVAL_SECONDS,
+    )
+
+
+def _housekeeping() -> None:
+    """Daily refresh. Each step is independent, so one failing doesn't skip
+    the rest - but any failure still raises at the end, so housekeeping as a
+    whole isn't recorded as a success."""
+    steps: list[tuple[str, Callable[[], object]]] = [
+        ("load_games_data", load_games_data),  # full schedule/weeks refresh
+        ("load_teams", load_teams),  # team win/loss/tie records
+        ("load_cbs_weeks", load_cbs_weeks),
+        ("load_cbs_games", load_cbs_games),
+        ("load_espn_games", load_espn_games),  # neutral_site, incomplete weeks
+        ("write_meta_current", write_meta_current),
+        # future weeks' games keys - the per-tick write in main() only
+        # covers weeks that have started
+        ("write_future_weeks_games", lambda: write_incomplete_weeks_games(True)),
+    ]
+    failed: list[str] = []
+    for name, step in steps:
+        try:
+            step()
+        except Exception:
+            logger.exception("Housekeeping step %s failed - continuing", name)
+            failed.append(name)
+    if failed:
+        raise RuntimeError(f"Housekeeping steps failed: {', '.join(failed)}")
 
 
 def _run_pre_kickoff_odds_capture(client: D1Client, now: datetime) -> None:
@@ -356,14 +416,9 @@ def _run_pregame_weather_capture(client: D1Client, now: datetime) -> None:
     if not _should_run(client, "weather_pregame_last_capture_at", interval):
         return
 
-    try:
-        load_pregame_weather()
+    if _soft(client, "pregame_weather_capture", load_pregame_weather):
         _set_state(client, "weather_pregame_last_success_at", _now_iso())
-    except Exception as exc:
-        logger.exception("Pregame weather capture failed - continuing without it")
-        _record_system_event(client, "pregame_weather_capture", str(exc))
-    finally:
-        _set_state(client, "weather_pregame_last_capture_at", _now_iso())
+    _set_state(client, "weather_pregame_last_capture_at", _now_iso())
 
 
 def _run_deadline_sweep(client: D1Client, now: datetime) -> None:
@@ -373,15 +428,22 @@ def _run_deadline_sweep(client: D1Client, now: datetime) -> None:
         return
     if _get_state(client, "deadline_last_synced_sunday") == sunday_date:
         return
+    # a failed sweep is retried, but not every tick - see FAILURE_RETRY_SECONDS
+    if not _should_run(client, "deadline_sweep_last_attempt_at", FAILURE_RETRY_SECONDS):
+        return
+    _set_state(client, "deadline_sweep_last_attempt_at", _now_iso())
 
-    load_cbs_weeks()
-    load_cbs_games()
-    load_cbs_user_picks()
-    write_meta_current()
-    write_current_week_games()
-    write_current_week_leaderboard()
-    _set_state(client, "deadline_last_synced_sunday", sunday_date)
-    logger.info("Ran Sunday 1PM ET deadline sweep for %s", sunday_date)
+    def sweep() -> None:
+        load_cbs_weeks()
+        load_cbs_games()
+        load_cbs_user_picks()
+        write_meta_current()
+        write_current_week_games()
+        write_current_week_leaderboard()
+
+    if _soft(client, "deadline_sweep", sweep):
+        _set_state(client, "deadline_last_synced_sunday", sunday_date)
+        logger.info("Ran Sunday 1PM ET deadline sweep for %s", sunday_date)
 
 
 def _run_finished_game_stats(client: D1Client) -> None:
@@ -401,41 +463,63 @@ def _run_finished_game_stats(client: D1Client) -> None:
     "a week whose games just changed FINAL-ness" - the NOT EXISTS check
     only needs to run for weeks touched this tick, not every week every
     tick."""
+    # a failed week is retried, but not every tick - see FAILURE_RETRY_SECONDS
+    if not _should_run(
+        client, "finished_game_stats_last_failure_at", FAILURE_RETRY_SECONDS
+    ):
+        return
+
     result = client.query(
         "SELECT DISTINCT w.week_id, w.week_number FROM games g "
         "JOIN weeks w ON w.week_id = g.week_id "
         "WHERE g.status = 'FINAL' AND g.has_final_stats = FALSE"
     )
     for row in result.results:
-        game_ids = load_game_statistics(row["week_number"])
-        # final player box scores ride along with the final team stats -
-        # soft-fail so has_final_stats below still gets set
-        try:
-            game_ids |= load_week_player_stats(row["week_number"])
-        except Exception as exc:
-            logger.exception("Final player stats capture failed - continuing")
-            _record_system_event(client, "final_player_stats", str(exc))
-        _write_game_details(client, game_ids)
-        client.batch(
-            [
+        if not _finish_week_stats(client, row["week_id"], row["week_number"]):
+            _set_state(client, "finished_game_stats_last_failure_at", _now_iso())
+
+
+def _finish_week_stats(client: D1Client, week_id: int, week_number: int) -> bool:
+    """Final box scores for one week, then mark its FINAL games
+    has_final_stats (and the week is_complete once every game is FINAL).
+    False, with nothing marked, if the final team stats failed - so the
+    week is retried."""
+    game_ids: set[int] = set()
+    if not _soft(
+        client,
+        "final_game_stats",
+        lambda: game_ids.update(load_game_statistics(week_number)),
+    ):
+        return False
+    # final player box scores ride along with the final team stats -
+    # soft-fail so has_final_stats below still gets set
+    _soft(
+        client,
+        "final_player_stats",
+        lambda: game_ids.update(load_week_player_stats(week_number)),
+    )
+    _write_game_details(client, game_ids)
+    client.batch(
+        [
+            (
                 (
-                    (
-                        "UPDATE games SET has_final_stats = TRUE "
-                        "WHERE week_id = ? AND status = 'FINAL'"
-                    ),
-                    [row["week_id"]],
+                    "UPDATE games SET has_final_stats = TRUE "
+                    "WHERE week_id = ? AND status = 'FINAL'"
                 ),
+                [week_id],
+            ),
+            (
                 (
-                    (
-                        "UPDATE weeks SET is_complete = TRUE WHERE week_id = ? "
-                        "AND NOT EXISTS ("
-                        "SELECT 1 FROM games WHERE week_id = ? AND status != 'FINAL'"
-                        ")"
-                    ),
-                    [row["week_id"], row["week_id"]],
+                    "UPDATE weeks SET is_complete = TRUE WHERE week_id = ? "
+                    "AND NOT EXISTS ("
+                    "SELECT 1 FROM games WHERE week_id = ? AND status != 'FINAL'"
+                    ")"
                 ),
-            ]
-        )
+                [week_id, week_id],
+            ),
+        ]
+    )
+    return True
 
 
 def _run_user_profiles_refresh(client: D1Client) -> None:
@@ -443,13 +527,14 @@ def _run_user_profiles_refresh(client: D1Client) -> None:
     KV key on its own cadence (USER_PROFILES_INTERVAL_SECONDS), unconditional
     - live or quiet - so it isn't suppressed by an ongoing game the way the
     quiet-only tasks are."""
-    if not _should_run(
-        client, "user_profiles_last_write_at", USER_PROFILES_INTERVAL_SECONDS
-    ):
-        return
-
-    write_user_profiles()
-    _set_state(client, "user_profiles_last_write_at", _now_iso())
+    _run_on_interval(
+        client,
+        "user_profiles_write",
+        write_user_profiles,
+        "user_profiles_last_write_at",
+        "user_profiles_last_success_at",
+        USER_PROFILES_INTERVAL_SECONDS,
+    )
 
 
 def main() -> None:
@@ -472,7 +557,7 @@ def main() -> None:
     # write for it (games.status/score themselves are already fresh by here,
     # from _run_live_updates()/_run_quiet_period_tasks() above - only
     # is_complete's flip timing matters for this ordering).
-    write_incomplete_weeks_games()
+    _soft(client, "games_kv_write", write_incomplete_weeks_games)
     _run_finished_game_stats(client)
     _run_win_probability_capture(client)
     # Unconditional, not just from inside the CBS live branch - is_current
@@ -480,15 +565,39 @@ def main() -> None:
     # live/quiet state) days before that week's first game goes live and
     # the CBS branch would otherwise get a chance to write its leaderboard
     # key for the first time, leaving it simply missing from KV until then.
-    write_current_week_leaderboard()
-    write_current_week_trends()
-    write_season_trends()
+    _soft(client, "leaderboard_kv_write", write_current_week_leaderboard)
+    _soft(client, "week_trends_kv_write", write_current_week_trends)
+    _soft(client, "season_trends_kv_write", write_season_trends)
     _run_user_profiles_refresh(client)
-    write_admin_status()
+    # last, so it reflects every failure recorded above
+    _soft(client, "admin_kv_write", write_admin_status)
+
+
+def _acquire_tick_lock(env: str) -> TextIO | None:
+    """Exclusive, non-blocking lock for this env's tick, or None if the
+    previous tick is still running. Cron starts a tick every minute whether
+    or not the last one finished (a slow API with retries can run past 60s),
+    and two overlapping ticks would both pass the same _should_run() checks
+    and double every call - CBS logins included. The lock is released when
+    the process exits, however it exits. Per env, so a local tick never
+    blocks a prod one."""
+    LOCK_DIR.mkdir(exist_ok=True)
+    lock_file = open(LOCK_DIR / f"orchestration.{env}.lock", "w")  # noqa: SIM115
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock_file.close()
+        return None
+    return lock_file
 
 
 if __name__ == "__main__":
     configure_logging()
-    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
+    env = sys.argv[1] if len(sys.argv) > 1 else "local"
+    if not load_env(env):
         sys.exit(1)
+    tick_lock = _acquire_tick_lock(env)
+    if tick_lock is None:
+        logger.warning("Previous %s tick still running - skipping this one", env)
+        sys.exit(0)
     main()

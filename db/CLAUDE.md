@@ -210,11 +210,13 @@ Written next to the existing `logger.exception()` at each catch site, not
 instead of it - the log has the full traceback for debugging, this table
 is the queryable "is anything broken" summary `src/kv_writer/admin.py`'s
 `meta:admin` key surfaces (see `src/CLAUDE.md`'s KV writer section).
-First (only, as of this writing) call site: `orchestration.py`'s
-`_capture_odds()`, via a small `_record_system_event()` helper kept local
-to that module rather than added to `loader_helper.py` - orchestration is
-a different layer than the loaders that module serves, and there's only
-one call site so far to justify a shared abstraction.
+Every row comes from `orchestration.py`: since 2026-09-27 every task
+there runs through `_soft()`, which records a row (via the module-local
+`_record_system_event()`) whenever a task raises - `source` is the task
+name, e.g. `cbs_live_poll`, `housekeeping`, `odds_capture`,
+`games_kv_write` (see `src/CLAUDE.md`'s Orchestration section). Loaders
+themselves never write here; they raise, or log and degrade for
+enrichment sources, and orchestration decides what counts as a failure.
 
 ## D1Client gotchas (confirmed live, not assumed from docs)
 
@@ -239,8 +241,15 @@ Python `bool`s into `D1Client.batch()`/`.query()` params and let
 `0`/`1` at each call site.
 
 D1 supports `INSERT ... RETURNING` — confirmed live 2026-09-10
-(`src/historical_backfill.py`'s new-user insert uses it to get the fresh
-`user_id` back in the same round trip rather than a follow-up `SELECT`).
+(the one-off `src/historical_backfill.py`, now kept locally only, used it
+to get a new user's `user_id` back in the same round trip rather than a
+follow-up `SELECT`).
+
+`D1Client`/`KVClient` requests time out (`TIMEOUT_SECONDS`, 60s/30s,
+added 2026-09-27) - without one a hung connection hung the whole cron
+tick. A D1 HTTP error (e.g. a 400 for bad SQL) currently surfaces as a
+bare `requests.HTTPError` from `raise_for_status()`, which drops D1's own
+error message from the response body - check the SQL itself first.
 
 ## `weeks.is_current` / `seasons.historical_data_incomplete`
 
@@ -269,7 +278,7 @@ tied for the top — it means the winner's row is simply absent.
 
 Added 2026-09-10 for a historical winners/standings page, backfilled once
 from `data/{year}/{year}_standings.json` (2013-2025) via
-`src/historical_backfill.py` (see `src/CLAUDE.md` and root `CLAUDE.md`'s
+`src/historical_backfill.py` (now gitignored and kept locally only) (see `src/CLAUDE.md` and root `CLAUDE.md`'s
 "End of season" section for how this gets extended going forward).
 Deliberately a separate table from the derived per-user stats
 `src/user_stats.py` computes (streaks, home/away splits, etc.) rather than
@@ -277,9 +286,12 @@ one combined table - those need real per-pick data this pre-2026 archive
 doesn't have, and `historical_standings` only ever holds a season's final
 rank/score, nothing week-by-week. (An earlier, never-populated
 `user_stats` table briefly existed with this same reasoning behind why it
-stayed separate - dropped 2026-09-21 once `src/user_stats.py` was built,
-since everything it would have held is computed fresh into KV instead of
-persisted, see `src/CLAUDE.md`'s KV writer section.)
+stayed separate - removed from `schema.sql` 2026-09-21 once
+`src/user_stats.py` was built, since everything it would have held is
+computed fresh into KV instead of persisted, see `src/CLAUDE.md`'s KV
+writer section. Found 2026-09-27 that it was only actually dropped from
+local: prod still has the empty table plus `idx_user_stats_season`/
+`trg_user_stats_updated_at` - see `CLAUDE.local.md`'s TODO list.)
 
 `historical_standings.first_half_rank`/`first_half_score`/
 `second_half_rank`/`second_half_score` are nullable for the same reason,

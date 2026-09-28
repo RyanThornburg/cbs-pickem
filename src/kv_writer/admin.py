@@ -77,7 +77,7 @@ def write_admin_status() -> None:
     """Write meta:admin - a health-check summary for an admin page: when
     each orchestration task last ran, and open mapping_gaps/system_events
     to review. Recomputed unconditionally every tick (see orchestration.py's
-    run_tick()) since it's a handful of cheap local SELECTs and freshness
+    main()) since it's a handful of cheap local SELECTs and freshness
     matters most exactly when something just broke.
 
     See the comment above last_run below for what last_at vs
@@ -93,18 +93,15 @@ def write_admin_status() -> None:
     def age(key: str) -> float | None:
         return _seconds_since(state.get(key), now)
 
-    # last_at is the scheduling cursor, bumped on every attempt. The tasks
-    # wrapped in a try/except in orchestration.py (odds, Sports IO live
-    # poll, pregame weather, scoring plays, live player stats, win
-    # probability) set that cursor in a finally, so it moves even when the attempt failed - they
-    # also keep a separate *_success_at
-    # cursor set only when the call worked. Every other task only sets its
-    # cursor after succeeding (an exception propagates and skips the set),
-    # so for those last_success_at is the same value as last_at. Staleness
-    # always compares against the success cursor.
+    # last_at is the scheduling cursor, bumped on every attempt - every
+    # task in orchestration.py runs through its _soft() wrapper, so the
+    # cursor moves even when the attempt failed. last_success_at is a
+    # separate cursor set only when the task worked. Staleness always
+    # compares against the success cursor, so a task that fails every time
+    # doesn't look healthy just because its cursor keeps moving.
     #
     # Staleness is only flagged for tasks expected to run regardless of
-    # live/quiet state. The four live-only pollers just report timestamps:
+    # live/quiet state. The six live-only pollers just report timestamps:
     # "should this have run" for those depends on live-window history, and
     # most of the week they correctly haven't run because nothing's live.
     last_run: dict[str, Any] = {
@@ -123,16 +120,17 @@ def write_admin_status() -> None:
         },
         "housekeeping": {
             "last_at": state.get("housekeeping_last_run_at"),
-            "last_success_at": state.get("housekeeping_last_run_at"),
+            "last_success_at": state.get("housekeeping_last_success_at"),
             "stale": _is_stale(
-                [age("housekeeping_last_run_at")], _HOUSEKEEPING_STALE_SECONDS
+                [age("housekeeping_last_success_at")], _HOUSEKEEPING_STALE_SECONDS
             ),
         },
         "cbs_picks_quiet_poll": {
             "last_at": state.get("cbs_picks_quiet_last_poll_at"),
-            "last_success_at": state.get("cbs_picks_quiet_last_poll_at"),
+            "last_success_at": state.get("cbs_picks_quiet_last_success_at"),
             "stale": _is_stale(
-                [age("cbs_picks_quiet_last_poll_at")], _CBS_PICKS_QUIET_STALE_SECONDS
+                [age("cbs_picks_quiet_last_success_at")],
+                _CBS_PICKS_QUIET_STALE_SECONDS,
             ),
         },
         "pregame_weather_capture": {
@@ -145,9 +143,9 @@ def write_admin_status() -> None:
         },
         "user_profiles_write": {
             "last_at": state.get("user_profiles_last_write_at"),
-            "last_success_at": state.get("user_profiles_last_write_at"),
+            "last_success_at": state.get("user_profiles_last_success_at"),
             "stale": _is_stale(
-                [age("user_profiles_last_write_at")], _USER_PROFILES_STALE_SECONDS
+                [age("user_profiles_last_success_at")], _USER_PROFILES_STALE_SECONDS
             ),
         },
         "sports_io_live_poll": {
@@ -156,15 +154,15 @@ def write_admin_status() -> None:
         },
         "cbs_live_poll": {
             "last_at": state.get("cbs_live_last_poll_at"),
-            "last_success_at": state.get("cbs_live_last_poll_at"),
+            "last_success_at": state.get("cbs_live_last_success_at"),
         },
         "game_snapshot_capture": {
             "last_at": state.get("game_snapshot_last_capture_at"),
-            "last_success_at": state.get("game_snapshot_last_capture_at"),
+            "last_success_at": state.get("game_snapshot_last_success_at"),
         },
         "live_game_stats_capture": {
             "last_at": state.get("live_game_stats_last_capture_at"),
-            "last_success_at": state.get("live_game_stats_last_capture_at"),
+            "last_success_at": state.get("live_game_stats_last_success_at"),
         },
         "live_player_stats_capture": {
             "last_at": state.get("live_player_stats_last_capture_at"),

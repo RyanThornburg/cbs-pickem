@@ -55,6 +55,13 @@ _INCOMPLETE_WEEKS_SQL = (
     "SELECT week_number FROM weeks WHERE season_id = ? AND is_complete = 0"
 )
 
+# incomplete weeks whose first game has kicked off, plus the current week
+# even before its first kickoff (picks, forecasts) - the future weeks are
+# left to the daily include_future refresh
+_ACTIVE_INCOMPLETE_WEEKS_SQL = (
+    _INCOMPLETE_WEEKS_SQL + " AND (start_time <= ? OR is_current = 1)"
+)
+
 
 def _snapshot_weather(snapshot: dict[str, Any]) -> dict[str, Any] | None:
     """None for domes/retractable roofs (weather columns stay null there) or
@@ -350,15 +357,23 @@ def write_current_week_games() -> None:
     write_week_games(current_week)
 
 
-def write_incomplete_weeks_games() -> None:
+def write_incomplete_weeks_games(include_future: bool = False) -> None:
     """Write week:{season}:{weekNN}:games for every week that isn't fully
     FINAL yet - not just weeks.is_current.
     cbs can flip the current pool week before the previous weeks games finish.
-    this helps clean up any stragglers"""
+    this helps clean up any stragglers
+
+    By default only weeks that have started (or are current) - this runs
+    every tick, and rewriting all ~16 future weeks each minute was most of
+    the pipeline's KV write volume for keys whose data (the schedule) only
+    changes on the daily sync. include_future=True covers those too, for
+    that daily refresh."""
     d1 = D1Client(**get_d1_config())
-    week_numbers = [
-        row["week_number"] for row in d1.query(_INCOMPLETE_WEEKS_SQL, [SEASON]).results
-    ]
+    if include_future:
+        rows = d1.query(_INCOMPLETE_WEEKS_SQL, [SEASON]).results
+    else:
+        rows = d1.query(_ACTIVE_INCOMPLETE_WEEKS_SQL, [SEASON, now_iso()]).results
+    week_numbers = [row["week_number"] for row in rows]
     if not week_numbers:
         logger.info("No incomplete weeks for season %s - nothing to refresh", SEASON)
         return

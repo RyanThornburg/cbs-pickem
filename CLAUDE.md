@@ -10,9 +10,12 @@ This is a python project to read and save data from CBS Pick Em Contest. The con
 
 This project uses [uv](https://docs.astral.sh/uv/) for dependency management and running code.
 
-- Run the app: `uv run main.py`
+- There's no single app entry point - the scheduler below is what runs
+  in production (`main.py` is an unused `uv init` stub)
 - Apply schema to a D1 database: `./setup.sh [local|prod]` (or `uv run python -m db.setup [local|prod]` directly)
 - Run the scheduler (meant for cron, `* * * * *`): `uv run python -m src.orchestration [local|prod]`
+  (takes a per-env lock under `locks/` and skips the tick if the previous
+  one is still running)
 - One-off season bootstrap (season/teams/CBS users/team mapper): `uv run python -m src.new_season [local|prod]`
 - Scrape CBS and save weekly standings: `uv run python -m api.cbs_client`
 - Fetch/validate api-sports.io data (teams/standings/games/etc., not persisted): `uv run python -m api.sports_io_client`
@@ -26,16 +29,20 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management and
 - Capture ESPN's full win probability curve for FINAL games (or replace a whole week's): `uv run python -m src.loaders.win_probability_loader [local|prod] [week_number]`
 - Refresh scoring plays for games whose score moved (Sports IO `/games/events`), or backfill a whole week: `uv run python -m src.loaders.scoring_plays_loader [local|prod] [week_number]`
 - Load odds (The Odds API only, Sports IO odds not built): `uv run python -m src.loaders.odds_loader [local|prod]`
-- Compute and write all KV keys the web UI reads (`meta:current`, that
-  week's `games`/`leaderboard`/`odds`/`trends`, `season:{season}:trends`,
-  `meta:historical`, `meta:admin`) from D1:
+- Load CBS weeks/games/picks for the current week, or re-load a past week:
+  `uv run python -m src.loaders.cbs_loader [local|prod] [week_number]`
+- Compute and write all KV keys the web UI reads (`meta:current`, the
+  current week's `games`/`leaderboard`/`odds`/`trends` and per-game
+  `details`, `season:{season}:trends`, `meta:historical`, every
+  `user:{user_id}:season:{season}`, `meta:admin`) from D1:
   `uv run python -m src.kv_writer [local|prod]` — normally called
   piecemeal from `src.orchestration`, not run whole like this except to
   force a full refresh
 - **End-of-season close-out (manual, run once the season is truly
   over — see "End of season" below): `uv run python -m src.season_close_out [local|prod]`**
 - One-off historical-standings backfill (already run once for 2013-2025 —
-  see "End of season" below): `uv run python -m src.historical_backfill [local|prod]`
+  see "End of season" below; the script is gitignored and kept locally
+  only): `uv run python -m src.historical_backfill [local|prod]`
 - Add a dependency: `uv add <package>`
 - Add a dev dependency: `uv add --dev <package>`
 
@@ -75,10 +82,10 @@ backfilled once (2026-09-10) from a pre-2026 archive
 (`data/{year}/{year}_standings.json`, 2013-2025) via
 `src/historical_backfill.py` (which itself reuses
 `src/historical_standings.py`'s per-year JSON parsing). Both of those
-`historical_*` scripts are one-offs tied to that initial backfill — once
-that's done and confirmed, they have no ongoing purpose (unlike
-`season_close_out.py`, which runs every year going forward) and are
-expected to be deleted from the repo eventually.
+`historical_*` scripts are one-offs tied to that initial backfill, with no
+ongoing purpose (unlike `season_close_out.py`, which runs every year going
+forward) - they've since been removed from git (`.gitignore`d, kept
+locally only).
 
 That archive isn't fully trustworthy as-is — confirmed live 2026-09-11
 that the original `data/2025/2025_standings.json` was actually a

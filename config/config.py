@@ -23,6 +23,8 @@ PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data" / str(SEASON)
 STATE_PATH: Path = PROJECT_ROOT / "secrets/state.json"
 SCHEMA_PATH: Path = PROJECT_ROOT / "db/schema.sql"
+# src/orchestration.py's one-tick-at-a-time lock files
+LOCK_DIR = PROJECT_ROOT / "locks"
 
 # logging config
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"

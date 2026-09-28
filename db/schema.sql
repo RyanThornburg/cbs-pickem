@@ -394,10 +394,11 @@ CREATE TABLE IF NOT EXISTS odds_snapshots (
 
 CREATE INDEX IF NOT EXISTS idx_odds_snapshots_game_source_market ON odds_snapshots(game_id, source, market);
 
--- Small key-value store for src/orchestration.py's polling cursors
--- (sports_io_live_last_poll_at, cbs_live_last_poll_at, odds_last_call_at,
--- deadline_last_synced_sunday, housekeeping_last_run_at) - lets a stateless
--- cron tick know what it last did without re-deriving it from other tables.
+-- Small key-value store for src/orchestration.py's polling cursors - each
+-- task's scheduling cursor (e.g. cbs_live_last_poll_at, moved on every
+-- attempt) and its *_last_success_at (moved only when it worked), plus
+-- deadline_last_synced_sunday - lets a stateless cron tick know what it
+-- last did without re-deriving it from other tables.
 CREATE TABLE IF NOT EXISTS orchestration_state (
     key VARCHAR(50) PRIMARY KEY,
     value VARCHAR(255),

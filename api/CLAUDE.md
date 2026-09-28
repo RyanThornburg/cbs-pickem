@@ -265,9 +265,9 @@ are kept together on one `Endpoint` enum member in `sports_io_client.py`
 (`Endpoint.TEAMS = ("/teams", Team)`, etc., via a custom `Endpoint.__init__`)
 rather than in a separate lookup table, so the two can't drift out of
 sync on an edit. The Odds API only has one endpoint, so it has no
-equivalent enum — that pattern is specific to Sports IO's seven endpoints
+equivalent enum — that pattern is specific to Sports IO's eight endpoints
 (`LEAGUES`, `TEAMS`, `STANDINGS`, `GAMES`, `TEAM_STATISTICS`,
-`GAME_EVENTS`, `ODDS`).
+`GAME_EVENTS`, `PLAYER_STATISTICS`, `ODDS`).
 
 `SportsIOClient.get_standings()` drops a placeholder row that api-sports.io
 mixes into an otherwise well-formed `/standings` response — `team.id: 816`,
@@ -296,7 +296,9 @@ yards..."`) when a punt happened to be the most recent play — not a real
 stat, and that endpoint isn't used (see ESPN section below). **Correction
 2026-09-27:** that check only covered *team* box scores - Sports IO's
 per-player `/games/statistics/players` has a `Punting` group per team
-(total/yards/average/touchbacks/in20/lg), now stored (see below).
+(total/yards/average/touchbacks/in20/lg), now stored (see below). The
+game details KV key's team box score sums those lines into `punts`/
+`punt_yards`/`punt_average` (see `src/CLAUDE.md`).
 
 `/games/events` (`get_game_events()`, scoring plays - loaded by
 `src/loaders/scoring_plays_loader.py` since 2026-09-27) and
@@ -434,7 +436,9 @@ sync is one call per week. `competitions[].neutralSite` is what
 
 `situation.lastPlay` (modeled 2026-09-27 as `LastPlay`) carries the most
 recent play's `id`/`text`/`type.text`, the current drive's
-`drive.description` and `probability` (`homeWinPercentage`/
+`drive.description` and `drive.start` (`{yardLine, text}` - where the
+drive began, same home-goal-line frame as `situation.yardLine`, confirmed
+live: "LAR 37" → 63 with DEN home) and `probability` (`homeWinPercentage`/
 `awayWinPercentage`/`tiePercentage`, fractions 0-1) - ESPN's live win
 probability, already in the scoreboard response, no extra call. `text`
 sometimes has a leading space. `situation.yardLine` is yards from the

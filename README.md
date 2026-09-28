@@ -12,7 +12,7 @@ The web UI itself lives in a separate repo [https://github.com/RyanThornburg/cbs
 
 ## Running it
 
-Dependency management is via [uv](https://docs.astral.sh/uv/). Requires Python 3.14+.
+Dependency management is via [uv](https://docs.astral.sh/uv/). Requires Python 3.14+ on Linux or macOS (WSL works too). The scheduler uses Python's built-in `fcntl` to stop overlapping cron runs, and `fcntl` doesn't exist on native Windows.
 
 ```bash
 uv sync
@@ -34,7 +34,7 @@ uv run python -m src.new_season local
 uv run python -m src.orchestration local
 ```
 
-`orchestration.py` current runs on a cron every minute and then figures out what needs refreshing (live games vs. off-hours, odds cadence, etc.) rather than needing separate cron entries per job. This helps with API limits/usage and is configurable should those change.
+`orchestration.py` currently runs on a cron every minute and then figures out what needs refreshing (live games vs. off-hours, odds cadence, etc.) rather than needing separate cron entries per job. This helps with API limits/usage and is configurable should those change.
 
 CBS and Sports IO are the only two required APIs. Odds API and weather API are optional and should still work without.
 
@@ -44,7 +44,7 @@ CBS and Sports IO are the only two required APIs. Odds API and weather API are o
 - `db/`: schema, D1 client, KV client
 - `src/loaders/`: pulls data from the `api/` clients and writes it into D1
 - `src/orchestration.py`: the scheduler that ties it all together
-- `src/kv_writer.py`: turns D1 data into the JSON the web UI reads
+- `src/kv_writer/`: turns D1 data into the JSON the web UI reads, one module per KV key
 - `config/`: env handling and season-level settings
 
 ## A note on AI

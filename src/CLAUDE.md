@@ -45,14 +45,14 @@ already never took `env` (see `config/CLAUDE.md`).
   (`src/new_season.py`'s bootstrap) since team profiles are static
   season-long data - the record fields are the first thing on this table
   that actually needs to stay fresh, so `orchestration.py`'s housekeeping
-  now also calls `teams_loader.main(env)` daily (see Orchestration
+  now also calls `teams_loader.main()` daily (see Orchestration
   below) to keep them current; the rest of the row (name/city/logo/etc.)
   just gets harmlessly re-upserted with itself in the same call.
 - `stadiums_loader.py` — upserts a static, hand-curated 38-row seed (30
   U.S. stadiums + 8 international venues actually on this season's
   schedule) into `stadiums`, keyed on `name`. Not fetched from any API —
-  none exposes NFL venue data. See `api/CLAUDE.md`'s "no punting data"
-  note for the same "checked, genuinely doesn't exist" pattern.
+  none exposes NFL venue data (confirmed live that api-sports.io has no
+  `/venues` endpoint for American football).
 - `cbs_loader.py` — CBS-side loading: `load_cbs_users()` (upsert
   `users` from CBS pool members), `map_cbs_to_sports_io()` (backfill
   `cbs_team_id` + CBS-only fields onto existing `teams` rows, matched by
@@ -221,7 +221,7 @@ already never took `env` (see `config/CLAUDE.md`).
   games are exactly the 9 `is_international` games, and ESPN's home/away
   designation matches Sports IO's for all of them.
 
-`load_games_data(env, live=True)` fetches via
+`load_games_data(live=True)` fetches via
 `_get_live_window_games()`, not `get_live_games()` — confirmed live
 2026-09-11 that Sports IO's `live=all` filter (`get_live_games()`) stops
 returning a game the instant it goes `FINAL`, so a poller that only ever
@@ -320,7 +320,7 @@ minute, `* * * * *`). Don't conflate the two — a script that sequences
 other loaders for a specific recurring trigger belongs in
 `orchestration.py`, not `loaders/`.
 
-`orchestration.py`'s `run_tick()`/`main()` is **stateless per invocation** —
+`orchestration.py`'s `main()` is **stateless per invocation** —
 every tick does two cheap local D1 checks (`_is_live_window_active()`,
 the deadline/finished-games checks) and only calls out to an external API
 when one of several interval gates says enough time has passed. The gates
@@ -329,6 +329,38 @@ live in a small `orchestration_state` key-value table (see
 thing last ran — this is what lets a stateless, repeatedly-invoked
 process behave like a real scheduler without needing its own persistent
 process or internal sleep loop.
+
+**No task can end the tick** (2026-09-27). Every task, including the KV
+writes at the end of `main()`, runs through `_soft()`: an exception is
+logged (`logger.exception`, so it lands in `error.log`) and recorded as a
+`system_events` row, and the tick moves on. Before this, only odds,
+pregame weather, the Sports IO live poll and the newer enrichment steps
+were wrapped - a failing CBS scrape (live or quiet poll, housekeeping, the
+deadline sweep) ended the tick before snapshots, stats and every KV write,
+including `meta:admin`, and since its cursor was only set on success it
+retried the CBS login every minute. Interval tasks go through
+`_run_on_interval(client, source, task, cursor_key, success_key,
+interval)`: the cursor moves on every attempt, so a task that keeps
+failing retries once per interval rather than every tick, and
+`success_key` moves only when it worked (what `meta:admin` reads).
+Housekeeping runs its steps independently (one failing doesn't skip the
+rest) but still counts as failed if any step did. The two tasks gated on
+something other than an interval - the deadline sweep (a date) and the
+finished-game stats catch-up (a flag) - wait `FAILURE_RETRY_SECONDS` (10
+min) after a failure before trying again, via
+`deadline_sweep_last_attempt_at`/`finished_game_stats_last_failure_at`.
+A week whose final team stats fail keeps `has_final_stats` unset so it's
+retried; its final player stats stay soft-fail as before.
+
+**One tick at a time** (2026-09-27): the `__main__` block takes a
+non-blocking `fcntl` lock (`config.LOCK_DIR`, `locks/orchestration.{env}.lock`,
+gitignored) and exits if the previous tick is still running - cron starts
+one every minute regardless, and two overlapping ticks would both pass the
+same `_should_run()` checks and double every call. Per env, so a local tick
+never blocks a prod one. Only works while every tick for an env runs on one
+machine. `D1Client`/`KVClient` also got request timeouts the same day (60s/
+30s - the API clients already had `TIMEOUT_LIMIT`), since a hung Cloudflare
+connection used to hang a tick indefinitely.
 
 `_is_live_window_active()` decides live-vs-quiet branch from `games.game_time`
 alone (`game_time <= now <= game_time + 4h AND status NOT IN ('FINAL',
@@ -402,7 +434,9 @@ Cadences, and why each one is what it is:
   before kickoff.
 - **Housekeeping, 24 hr, quiet periods only** — full Sports IO schedule
   refresh + `teams_loader.main()` (win/loss/tie records, added
-  2026-09-15) + `load_cbs_weeks()`/`load_cbs_games()`. The CBS half of
+  2026-09-15) + `load_cbs_weeks()`/`load_cbs_games()` + `load_espn_games()`
+  + `write_meta_current()` + the future weeks' games KV keys
+  (`write_incomplete_weeks_games(include_future=True)`, see "KV writer"). The CBS half of
   this exists specifically so `cbs_event_id`/`cbs_spread` are established
   for a new week *before* its first game goes live, since the CBS
   live-poll branch no longer does that itself (see below) — without it, a
@@ -432,7 +466,7 @@ things on `games` (`cbs_event_id`, the FK picks resolve through, and
 `cbs_spread`, the actual line the pool grades against) and both now get
 established once/day by housekeeping instead. It no longer calls
 `write_current_week_leaderboard()` itself either (2026-09-15) — same
-"unconditional at the bottom of `run_tick()` instead" move as
+"unconditional at the bottom of `main()` instead" move as
 `write_current_week_games()` got 2026-09-11, see below.
 
 The pre-kickoff odds capture (`_run_pre_kickoff_odds_capture()`), the
@@ -463,8 +497,7 @@ API's 500/month allowance (see `CLAUDE.local.md`).
 Both odds call sites (the flat baseline in `_run_quiet_period_tasks()`
 and the pre-kickoff capture above) go through a shared `_capture_odds()`
 helper, added 2026-09-11, that wraps `load_the_odds_api_odds()`/
-`write_current_week_odds()` in a `try/except Exception:
-logger.exception(...)` - odds are enrichment, not load-bearing, same
+`write_current_week_odds()` in `_soft()` - odds are enrichment, not load-bearing, same
 category as weather (see `game_snapshots_loader.py`'s ESPN/Pirate Weather
 try/excepts in the Loaders section above), so a missing/invalid
 `THE_ODDS_API_KEY` or an API outage must never block the deadline sweep,
@@ -474,17 +507,12 @@ tick. `logger.exception` is ERROR level, so it already lands in
 plumbing - a real admin-page alert is still future work (see
 `CLAUDE.local.md`'s TODO list), but the failure is at least captured
 reviewably today, same "surface it somewhere, don't let it scroll by"
-motivation as `mapping_gaps` (`db/CLAUDE.md`). The state key is updated
-whether the capture succeeded or failed, specifically so a persistent
-failure (e.g. a missing key) logs once per interval instead of retrying -
-and failing - on every single minute-cron tick until it's fixed. Because
-that makes the scheduling cursor mean "last attempt," each try/except
-task also sets a second key only on success (2026-09-27):
-`odds_last_success_at`/`odds_prekickoff_last_success_at` (passed to
-`_capture_odds()` as `success_key`), `sports_io_live_last_success_at`, and
-`weather_pregame_last_success_at`. Nothing schedules off these - they
-exist for `meta:admin` (see "KV writer" below), so a task that fails
-every time doesn't look healthy just because its cursor keeps moving.
+motivation as `mapping_gaps` (`db/CLAUDE.md`). Its cursor and success key
+(`odds_last_success_at`/`odds_prekickoff_last_success_at`, passed to
+`_capture_odds()` as `success_key`) follow the same pattern every task
+now uses - see "No task can end the tick" above. Nothing schedules off
+the `*_last_success_at` keys; they exist for `meta:admin` (see "KV
+writer" below).
 
 `_run_pregame_weather_capture()` (added 2026-09-15) queries for any
 `SCHEDULED` game within `WEATHER_PREGAME_NEAR_WINDOW_HOURS` (24) of
@@ -495,7 +523,7 @@ unconditionally every tick (not nested in the live/quiet branch) for the
 same reason the pre-kickoff odds capture does: a currently-live early
 game shouldn't be able to suppress the forecast refresh for an
 approaching later one. No separate KV write needed - `write_incomplete_weeks_games()`
-already runs unconditionally at the end of `run_tick()` and picks up
+already runs unconditionally at the end of `main()` and picks up
 whatever's newest in `games.forecast_*`.
 
 `_run_finished_game_stats()` originally checked `NOT EXISTS (SELECT 1
@@ -515,8 +543,8 @@ game in that week, FINAL or not — safe/idempotent either way), then sets
 the flag `TRUE` for that week's FINAL games so the same games aren't
 reloaded on every subsequent tick.
 
-`write_current_week_games(env)` (see "KV writer" below) originally ran
-unconditionally at the end of `run_tick()`, live or quiet — same
+`write_current_week_games()` (see "KV writer" below) originally ran
+unconditionally at the end of `main()`, live or quiet — same
 category of fix as `has_final_stats` above, found the same way. A tick
 that observes a game go live→FINAL correctly stops treating it as live
 and takes the quiet branch, but `write_current_week_games()` used to
@@ -524,11 +552,11 @@ only run unconditionally *inside* the live branch; the games KV key
 would then show a stale `IN_PROGRESS`/`live` block for up to 24h (the
 next housekeeping run) after a game actually ended. Fixed 2026-09-11 by
 moving the call out of `_run_live_updates()` to the bottom of
-`run_tick()`, alongside `_run_deadline_sweep()`/`_run_finished_game_stats()` —
+`main()`, alongside `_run_deadline_sweep()`/`_run_finished_game_stats()` —
 cheap regardless (a few small `SELECT`s + one KV write), so no reason to
 gate it.
 
-**Replaced with `write_incomplete_weeks_games(env)` 2026-09-15** — a
+**Replaced with `write_incomplete_weeks_games()` 2026-09-15** — a
 second, related staleness bug caught live the same day `weeks.is_complete`
 was wired up: `write_current_week_games()` only ever refreshes
 `weeks.is_current`'s own KV key, but `is_current` tracks CBS's own pool
@@ -549,8 +577,8 @@ before means the exact tick a week's last game goes `FINAL` still reads
 being excluded from that tick's refresh by its own just-set completion
 flag.
 
-`write_current_week_leaderboard(env)` similarly moved to an unconditional
-call at the bottom of `run_tick()` (2026-09-15, right after
+`write_current_week_leaderboard()` similarly moved to an unconditional
+call at the bottom of `main()` (2026-09-15, right after
 `_run_finished_game_stats()`) — a different bug from the games one above,
 but the same root shape: it used to only ever get called from inside the
 CBS live branch (gated on an actual live game existing) or
@@ -564,10 +592,10 @@ made unnecessary by this one; see the "KV writer" section below for
 `write_current_week_leaderboard()` itself, which is unchanged - only
 *when* it gets called changed here.
 
-`write_admin_status(env)` (see "KV writer" below, `meta:admin`) runs
-unconditionally at the end of `run_tick()`, after `write_season_trends()`
-— cheap local reads, and an admin health check is most useful exactly
-when something just failed, not stale.
+`write_admin_status()` (see "KV writer" below, `meta:admin`) runs
+unconditionally as the last thing in `main()`, after `write_season_trends()`
+and the user profiles refresh — cheap local reads, and an admin health
+check is most useful exactly when something just failed, not stale.
 
 ## KV writer
 
@@ -575,9 +603,10 @@ when something just failed, not stale.
 Cloudflare KV for `cbs-pickem-web`'s Worker to read — D1 stays the system
 of record, KV is a serving cache (see root `CLAUDE.md`'s Commands list
 and `CLAUDE.local.md`'s "Web UI" section for the overall architecture
-decision). Eight keys total; six have a `write_*`/`write_current_week_*`
-pair (the latter resolves `weeks.is_current` via `resolve_current_week()`
-then delegates).
+decision). Ten key types; five (games, game details, leaderboard, odds,
+week trends) have a `write_week_*`/`write_current_week_*` pair (the
+latter resolves `weeks.is_current` via `resolve_current_week()` then
+delegates).
 
 **Split into one module per key, 2026-09-23** (was a single 1400+ line
 `src/kv_writer.py`): `games.py`, `leaderboard.py`, `odds.py`, `trends.py`,
@@ -613,8 +642,9 @@ src.kv_writer.__main__`).
   picks (naturally empty pre-lock, `user_picks` only ever has
   locked/revealed rows) + a `live` block (down/distance/possession/
   weather from `game_snapshots`) present only while `games.status` is
-  `IN_PROGRESS`/`HALFTIME` — a missing `live` key means no live data, not
-  zeros. Also carries `stadium` (name/city/state/country/lat/lng/
+  `IN_PROGRESS`/`HALFTIME`/`DELAYED` — a missing `live` key means no live
+  data, not zeros. Snapshots are only captured for `IN_PROGRESS`/
+  `HALFTIME`, so during a delay `live` is the last snapshot from before it. Also carries `stadium` (name/city/state/country/lat/lng/
   roof_type/surface_type, `None` if `games.stadium_id` isn't resolved
   yet) and `forecast` (added 2026-09-15, `games.forecast_*` — the
   pregame forecast captured by `src/loaders/pregame_weather_loader.py`,
@@ -918,32 +948,27 @@ src.kv_writer.__main__`).
   summary for an eventual admin page: when each `orchestration.py` task
   last ran (from `orchestration_state`) plus recent `mapping_gaps`/
   `system_events` rows to review. Every task reports `last_at` (the
-  scheduling cursor) and `last_success_at` (added 2026-09-27). The three
-  try/except tasks (odds, Sports IO live poll, pregame weather) bump their
-  scheduling cursor in a `finally`, so `last_at` moves even when the
-  attempt failed; they also set a separate `*_last_success_at` state key
-  only when the call worked (see Orchestration above). Every other task
-  only sets its cursor after succeeding, so its `last_success_at` is just
-  the same value as `last_at`. Staleness always compares against the
-  success cursor, and is flagged for the tasks expected to run regardless
-  of live/quiet state: odds (combining its two cursors - the flat
-  baseline and the pre-kickoff capture, since either one succeeding
-  recently means odds data is fresh), housekeeping, the CBS quiet picks
-  poll, pregame weather, and user profiles (the last three added
-  2026-09-27 - they were in `orchestration_state` but never surfaced).
-  Thresholds (`_*_STALE_SECONDS`) are deliberately looser than
-  `orchestration.py`'s own intervals, roughly twice each, and not
+  scheduling cursor, moved on every attempt) and `last_success_at` (moved
+  only when it worked) - since 2026-09-27 every task has both as separate
+  keys (see Orchestration's "No task can end the tick"); before that, the
+  tasks without a try/except only set their cursor on success, and their
+  new `*_last_success_at` keys were seeded on prod from those cursors.
+  Staleness always compares against the success cursor, and is flagged
+  for the tasks expected to run regardless of live/quiet state: odds
+  (combining its two cursors - the flat baseline and the pre-kickoff
+  capture, since either one succeeding recently means odds data is
+  fresh), housekeeping, the CBS quiet picks poll, pregame weather, and
+  user profiles. Thresholds (`_*_STALE_SECONDS`) are deliberately looser
+  than `orchestration.py`'s own intervals, roughly twice each, and not
   imported from there to avoid a circular import (`orchestration.py`
-  already imports from this module). The four live-only pollers (Sports
-  IO/CBS live polls, `game_snapshots`, live `game_team_stats`) just
-  report timestamps with no stale flag - "should this have run" for
-  those depends on live-window history, which isn't worth the complexity;
-  most of the time they simply won't have run recently because nothing's
-  live, and that's correct, not a problem. Unlike every other `write_*`
-  function here, this one isn't called after a specific D1 write - it's
-  called unconditionally at the end of `run_tick()`, same as
-  `write_incomplete_weeks_games()`, since it's a handful of cheap local
-  `SELECT`s and freshness matters most exactly when something just broke.
+  already imports from this package). The live pollers (Sports IO/CBS
+  live polls, `game_snapshots`, live team stats, live player stats) and
+  the every-tick scoring plays/win probability steps just report
+  timestamps with no stale flag - "should this have run" for those
+  depends on live-window history, which isn't worth the complexity.
+  Called as the last step of every tick rather than after a specific D1
+  write, since it's a handful of cheap local `SELECT`s and freshness
+  matters most exactly when something just broke.
 - `write_incomplete_weeks_games()` (added 2026-09-15, replacing
   `write_current_week_games()` as `orchestration.py`'s unconditional
   per-tick call) → refreshes `week:{season}:{weekNN}:games` for **every**
@@ -957,6 +982,13 @@ src.kv_writer.__main__`).
   thing that stopped happening for that week. `write_current_week_games()`
   itself still exists and is still used where "the current week
   specifically" is actually the right scope (`_run_deadline_sweep()`).
+  **Scoped to weeks that have started, 2026-09-27**: by default only
+  incomplete weeks whose `start_time` has passed, plus the current week
+  even before its first kickoff. It used to rewrite every future week too
+  (16 keys a minute in week 3), most of the pipeline's roughly 900k KV
+  writes a month for keys whose data only changes on the daily sync.
+  Housekeeping calls it with `include_future=True` once a day to cover
+  those.
 
 **Write-through, not polling or diffing**: every write function is
 called immediately after the specific D1 write that could have changed
@@ -966,10 +998,10 @@ a deliberate design choice over both alternatives — a timer decouples the
 write from the actual change (stale between ticks or wasted no-op writes
 when nothing changed), and diffing adds a read-before-write for no
 correctness benefit since these writes are already cheap and idempotent.
-`write_incomplete_weeks_games()` is the one exception (unconditional every
-tick, not tied to one specific loader) precisely because *several*
-different loaders can change what it shows, across however many weeks
-aren't yet complete — see above.
+The exceptions run unconditionally every tick instead, because several
+different loaders feed each of them: `write_incomplete_weeks_games()`,
+`write_current_week_leaderboard()`, `write_current_week_trends()`,
+`write_season_trends()` and `write_admin_status()` - see above.
 
 `config.OVERALL_PAID_PLACES`/`FIRST_HALF_PAID_PLACES`/
 `SECOND_HALF_PAID_PLACES` (added 2026-09-11, `PAID_PLACES` in
