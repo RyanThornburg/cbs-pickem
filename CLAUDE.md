@@ -11,7 +11,7 @@ This is a python project to read and save data from CBS Pick Em Contest. The con
 This project uses [uv](https://docs.astral.sh/uv/) for dependency management and running code.
 
 - There's no single app entry point - the scheduler below is what runs
-  in production (`main.py` is an unused `uv init` stub)
+  in production
 - Apply schema to a D1 database: `./setup.sh [local|prod]` (or `uv run python -m db.setup [local|prod]` directly)
 - Run the scheduler (meant for cron, `* * * * *`): `uv run python -m src.orchestration [local|prod]`
   (takes a per-env lock under `locks/` and skips the tick if the previous

@@ -25,7 +25,12 @@ _INSERT_ODDS_SNAPSHOT_SQL = """
 INSERT INTO odds_snapshots (
     game_id, source, bookmaker, market, captured_at,
     home_point, home_price, away_point, away_price)
-VALUES (?, 'the_odds_api', ?, ?, ?, ?, ?, ?, ?)
+SELECT ?1, 'the_odds_api', ?2, ?3, ?4, ?5, ?6, ?7, ?8
+WHERE NOT EXISTS (
+    SELECT 1 FROM odds_snapshots
+    WHERE game_id = ?1 AND source = 'the_odds_api' AND bookmaker = ?2
+        AND market = ?3 AND captured_at = ?4
+)
 """
 
 _MARKET_MAP = {
@@ -184,7 +189,10 @@ def load_the_odds_api_odds() -> None:
         return
 
     sql_batch_call(snapshot_statements, client)
-    logger.info("Inserted %d odds snapshots", len(snapshot_statements))
+    logger.info(
+        "Wrote %d odds snapshots (captures already stored are skipped)",
+        len(snapshot_statements),
+    )
 
 
 def main() -> None:

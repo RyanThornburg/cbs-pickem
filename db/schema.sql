@@ -393,6 +393,10 @@ CREATE TABLE IF NOT EXISTS odds_snapshots (
 );
 
 CREATE INDEX IF NOT EXISTS idx_odds_snapshots_game_source_market ON odds_snapshots(game_id, source, market);
+-- captured_at is the book's own last_update, repeated on every poll while a
+-- line sits still, so the loader skips a capture it already has (added
+-- 2026-09-28 after about 4 percent of rows turned out to be exact copies)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_odds_snapshots_capture ON odds_snapshots(game_id, source, bookmaker, market, captured_at);
 
 -- Small key-value store for src/orchestration.py's polling cursors - each
 -- task's scheduling cursor (e.g. cbs_live_last_poll_at, moved on every

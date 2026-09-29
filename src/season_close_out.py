@@ -62,21 +62,26 @@ def close_out_season() -> None:
         return
 
     pool_name = _season_pool_name(d1)
-    for entry in standings:
-        d1.query(
-            _UPSERT_STANDING_SQL,
-            [
-                SEASON,
-                entry["user_id"],
-                pool_name,
-                entry["place"],
-                entry["cumulative_score"],
-                entry["first_half_place"],
-                entry["first_half_score"],
-                entry["second_half_place"],
-                entry["second_half_score"],
-            ],
-        )
+    # one atomic batch, so a failure partway can't leave a partial close-out
+    d1.batch(
+        [
+            (
+                _UPSERT_STANDING_SQL,
+                [
+                    SEASON,
+                    entry["user_id"],
+                    pool_name,
+                    entry["place"],
+                    entry["cumulative_score"],
+                    entry["first_half_place"],
+                    entry["first_half_score"],
+                    entry["second_half_place"],
+                    entry["second_half_score"],
+                ],
+            )
+            for entry in standings
+        ]
+    )
 
     logger.info(
         "Closed out season %s (final week %d) - wrote %d historical_standings rows",

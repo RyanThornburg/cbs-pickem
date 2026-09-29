@@ -304,8 +304,9 @@ def _add_user_picks(
     picks: list[FootballPickemWeeklyStandingsPick],
     game_ids: dict[int, int],
     team_ids: dict[int, int],
-    client: D1Client,
-) -> None:
+) -> tuple[list[tuple[str, list[Any] | None]], list[tuple[str, list[Any] | None]]]:
+    """(pick upserts, mapping gap rows) for one user - the caller runs every
+    user's in one batch"""
     statements: list[tuple[str, list[Any] | None]] = []
     gap_statements: list[tuple[str, list[Any] | None]] = []
     for pick in picks:
@@ -349,8 +350,7 @@ def _add_user_picks(
             )
         )
 
-    if statements or gap_statements:
-        sql_batch_call(statements + gap_statements, client)
+    return statements, gap_statements
 
 
 def load_cbs_user_picks(pool_period_id: str | None = None) -> None:
@@ -389,6 +389,7 @@ def load_cbs_user_picks(pool_period_id: str | None = None) -> None:
     )
 
     weekly_statements: list[tuple[str, list[Any] | None]] = []
+    pick_statements: list[tuple[str, list[Any] | None]] = []
     gap_statements: list[tuple[str, list[Any] | None]] = []
 
     for entry in entries:
@@ -428,10 +429,15 @@ def load_cbs_user_picks(pool_period_id: str | None = None) -> None:
         )
 
         if picks:
-            _add_user_picks(user_id, picks, game_ids, team_ids, client)
+            user_pick_statements, user_gap_statements = _add_user_picks(
+                user_id, picks, game_ids, team_ids
+            )
+            pick_statements.extend(user_pick_statements)
+            gap_statements.extend(user_gap_statements)
 
-    if weekly_statements or gap_statements:
-        sql_batch_call(weekly_statements + gap_statements, client)
+    # one batch for the whole week (~200 statements) instead of one per user
+    if weekly_statements or pick_statements or gap_statements:
+        sql_batch_call(weekly_statements + pick_statements + gap_statements, client)
 
 
 def main() -> None:

@@ -161,6 +161,21 @@ with `ALTER TABLE ... DROP COLUMN` (works on D1 for a plain, unindexed
 column) - on both local and prod, after checking no row was left
 unconverted.
 
+`odds_snapshots` got a unique index on `(game_id, source, bookmaker,
+market, captured_at)` 2026-09-28 (`idx_odds_snapshots_capture`), and the
+loader's insert skips a capture it already has (`WHERE NOT EXISTS`, which
+the index makes a cheap lookup). `captured_at`
+is the book's own `last_update`, repeated on every poll while a line sits
+still, so about 4% of rows (2,220 of 56,149 on prod, each exactly one
+extra copy with identical values) were duplicates. Those were deleted on
+prod before the index was created, since creating it fails while
+duplicates exist. `WHERE NOT EXISTS` rather than `ON CONFLICT DO NOTHING`
+on purpose: it works whether or not a database has the index yet, so
+code and index can be deployed in either order (an `ON CONFLICT` target
+with no matching unique index is an error, and the old plain `INSERT`
+fails on a repeat once the index exists). `bookmaker` is nullable and SQLite treats NULLs as distinct in
+a unique index, which is fine because The Odds API always sets it.
+
 ## `mapping_gaps` tracks lookup misses for review
 
 Added 2026-09-09 so unmapped external values (a team/week/stadium/user
@@ -247,9 +262,11 @@ follow-up `SELECT`).
 
 `D1Client`/`KVClient` requests time out (`TIMEOUT_SECONDS`, 60s/30s,
 added 2026-09-27) - without one a hung connection hung the whole cron
-tick. A D1 HTTP error (e.g. a 400 for bad SQL) currently surfaces as a
-bare `requests.HTTPError` from `raise_for_status()`, which drops D1's own
-error message from the response body - check the SQL itself first.
+tick. A D1 HTTP error (e.g. a 400 for bad SQL) raises `D1Error` with the
+status code and D1's own `errors` from the response body (2026-09-28 -
+it used to be a bare `requests.HTTPError` from `raise_for_status()`,
+which dropped the reason). Only a non-JSON body (a proxy error page)
+still falls back to `raise_for_status()`.
 
 ## `weeks.is_current` / `seasons.historical_data_incomplete`
 
@@ -290,8 +307,8 @@ stayed separate - removed from `schema.sql` 2026-09-21 once
 `src/user_stats.py` was built, since everything it would have held is
 computed fresh into KV instead of persisted, see `src/CLAUDE.md`'s KV
 writer section. Found 2026-09-27 that it was only actually dropped from
-local: prod still has the empty table plus `idx_user_stats_season`/
-`trg_user_stats_updated_at` - see `CLAUDE.local.md`'s TODO list.)
+local: prod still had the empty table plus `idx_user_stats_season`/
+`trg_user_stats_updated_at`, dropped from prod 2026-09-28.)
 
 `historical_standings.first_half_rank`/`first_half_score`/
 `second_half_rank`/`second_half_score` are nullable for the same reason,

@@ -70,11 +70,16 @@ class D1Client:
             ]
         }
         response = self._session.post(self._url, json=payload, timeout=TIMEOUT_SECONDS)
-        response.raise_for_status()
-        data: dict[str, Any] = response.json()
+        # D1 puts its own reason (bad SQL, a constraint) in the body of a
+        # 4xx, so read that before falling back to raise_for_status()
+        try:
+            data: dict[str, Any] = response.json()
+        except ValueError:
+            response.raise_for_status()
+            raise
 
-        if not data.get("success"):
-            raise D1Error(data.get("errors"))
+        if not response.ok or not data.get("success"):
+            raise D1Error(f"HTTP {response.status_code}: {data.get('errors')}")
 
         results: list[dict[str, Any]] = data["result"][1:]
         query_results: list[D1QueryResult] = []
