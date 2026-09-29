@@ -46,6 +46,13 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management and
 - One-off historical-standings backfill (already run once for 2013-2025 —
   see "End of season" below; the script is gitignored and kept locally
   only): `uv run python -m src.historical_backfill [local|prod]`
+- Run the tests (with coverage): `uv run pytest` — offline, no D1/KV/API
+  calls. `tests/conftest.py`'s `d1` fixture is an in-memory SQLite
+  stand-in for `D1Client` with `db/schema.sql` applied, plus a `seed`
+  helper for building rows. CBS tests replay saved pages from
+  `tests/fixtures/cbs/`, anonymized copies of `data/` (gitignored, and the
+  repo is public). To add a newly captured week:
+  `uv run python -m tests.fixtures.sanitize_cbs <week_number>`
 - Add a dependency: `uv add <package>`
 - Add a dev dependency: `uv add --dev <package>`
 

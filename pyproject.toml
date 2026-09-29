@@ -11,3 +11,13 @@ dependencies = [
     "requests>=2.34.2",
     "stamina>=26.1.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=src --cov=api --cov=db --cov-report=term-missing:skip-covered"

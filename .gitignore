@@ -17,3 +17,4 @@ config/.env.prod
 # (see root CLAUDE.md's "End of season" section), kept locally only
 src/historical_backfill.py
 src/historical_standings.py
+.coverage
