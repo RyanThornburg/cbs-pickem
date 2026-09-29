@@ -229,3 +229,90 @@ def seed(d1: FakeD1) -> Seed:
 @pytest.fixture
 def clients(monkeypatch: pytest.MonkeyPatch, d1: FakeD1) -> Clients:
     return Clients(monkeypatch, d1)
+
+
+def freeze(monkeypatch: pytest.MonkeyPatch, module: ModuleType, when: datetime) -> None:
+    """Make `module`'s datetime.now() return `when` - for loaders that
+    compare saved API data (kickoff times) against the current time."""
+
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> datetime:  # type: ignore[override]
+            return when if tz is None else when.astimezone(tz)
+
+    monkeypatch.setattr(module, "datetime", Frozen)
+
+
+@pytest.fixture
+def apis(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """every API client serving the saved responses in tests/fixtures/api/"""
+    from tests.api_fixtures import FakeApis
+
+    return FakeApis(monkeypatch)
+
+
+@pytest.fixture
+def loaders(clients: Clients) -> Clients:
+    """every loader module writing to the fake D1"""
+    from src.loaders import (
+        cbs_loader,
+        espn_loader,
+        game_snapshots_loader,
+        loader_helper,
+        odds_loader,
+        player_stats_loader,
+        pregame_weather_loader,
+        scoring_plays_loader,
+        season_loader,
+        sports_io_loader,
+        stadiums_loader,
+        teams_loader,
+        win_probability_loader,
+    )
+
+    clients.use(
+        cbs_loader,
+        espn_loader,
+        game_snapshots_loader,
+        loader_helper,
+        odds_loader,
+        player_stats_loader,
+        pregame_weather_loader,
+        scoring_plays_loader,
+        season_loader,
+        sports_io_loader,
+        stadiums_loader,
+        teams_loader,
+        win_probability_loader,
+    )
+    return clients
+
+
+@pytest.fixture
+def season(apis: Any, loaders: Clients, seed: Seed) -> FakeD1:
+    """the database as the season bootstrap and a daily sync leave it:
+    stadiums, teams and the saved Sports IO schedule, run through the real
+    loaders"""
+    from src.loaders import sports_io_loader, stadiums_loader, teams_loader
+
+    seed.season()
+    stadiums_loader.load_stadiums()
+    teams_loader.main()
+    sports_io_loader.load_games_data()
+    return loaders.d1
+
+
+def freeze_all(monkeypatch: pytest.MonkeyPatch, when: datetime) -> None:
+    """freeze() every loaded project module that uses datetime.now() - for
+    an orchestration tick, which reaches most of them. Call again to move
+    the clock."""
+    import sys
+
+    for name, module in list(sys.modules.items()):
+        found = getattr(module, "datetime", None)
+        if (
+            name.split(".")[0] in ("src", "api", "db")
+            and isinstance(found, type)
+            and issubclass(found, datetime)
+        ):
+            freeze(monkeypatch, module, when)

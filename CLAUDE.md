@@ -54,7 +54,17 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management and
   to end (`clients.kv.values` holds what it wrote). CBS tests replay saved pages from
   `tests/fixtures/cbs/`, anonymized copies of `data/` (gitignored, and the
   repo is public). To add a newly captured week:
-  `uv run python -m tests.fixtures.sanitize_cbs <week_number>`
+  `uv run python -m tests.fixtures.sanitize_cbs <week_number>`.
+  Loader tests replay saved Sports IO/ESPN/Odds API/Pirate Weather
+  responses from `tests/fixtures/api/` through the real clients and
+  models (`tests/api_fixtures.py`'s `apis` fixture; the `season` fixture
+  bootstraps stadiums/teams/schedule through the real loaders)
+- Check the real APIs still match our models and saved fixtures (opt-in,
+  skipped by default; costs 1 Odds API credit plus a few Sports IO calls):
+  `uv run pytest -m live`. It fails on a model that no longer validates
+  or a field our models read that's gone missing (a renamed optional field
+  would otherwise just silently become null). After fixing, re-capture:
+  `uv run python -m tests.fixtures.capture_api`
 - Add a dependency: `uv add <package>`
 - Add a dev dependency: `uv add --dev <package>`
 

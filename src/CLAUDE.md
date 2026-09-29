@@ -191,10 +191,10 @@ already never took `env` (see `config/CLAUDE.md`).
   Weather's `hourly` entry for the kickoff hour (not `currently`), plus
   `games.forecast_window_*`, a summary (max precip chance and the precip
   type at that hour, max gust, temp low/high, summed snow accumulation)
-  over the first `FORECAST_WINDOW_HOURS` (2) after kickoff. That's
+  over the first `FORECAST_WINDOW_HOURS` (3) after kickoff. That's
   deliberately shorter than `GAME_DURATION_HOURS` (4, alert filtering
-  only): weather 2 hours in affects most of the game, weather at hour
-  3-4 barely matters. A kickoff past the hourly horizon (168h) but within
+  only), since weather in the last hour barely matters. A kickoff off the
+  hour (e.g. 8:15) touches one extra hourly entry. A kickoff past the hourly horizon (168h) but within
   daily's (8 days) falls back to that day's `daily` entry
   (`games.forecast_source = 'daily'`, whole-day values: no kickoff
   temp/feels-like, window temps are the day's min/max) and is replaced
@@ -723,7 +723,7 @@ src.kv_writer.__main__`).
   *before* kickoff (the actual point of it - helping a pick get made
   with the forecast in mind), and simply stops updating once a game goes
   live rather than disappearing. `forecast.during_game` (added
-  2026-09-27, `games.forecast_window_*`) summarizes the first couple of
+  2026-09-27, `games.forecast_window_*`) summarizes the first three
   hours after kickoff, so rain/wind rolling in mid-game shows up even
   when the kickoff hour itself looks fine. `forecast.source` is `"hourly"` or
   `"daily"` (see `pregame_weather_loader.py` above) so the UI can label a

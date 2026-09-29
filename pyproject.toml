@@ -20,4 +20,5 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=src --cov=api --cov=db --cov-report=term-missing:skip-covered"
+addopts = "-m 'not live' --cov=src --cov=api --cov=db --cov-report=term-missing:skip-covered"
+markers = ["live: calls the real external APIs (uv run pytest -m live)"]
