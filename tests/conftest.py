@@ -6,6 +6,8 @@ not just the Python around them."""
 
 import sqlite3
 from collections.abc import Iterator
+from datetime import UTC, datetime
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -13,6 +15,11 @@ import pytest
 from config.config import SCHEMA_PATH, SEASON
 from db.d1_client import D1QueryResult, _bind_params
 from db.setup import _split_statements
+
+
+def iso(dt: datetime) -> str:
+    """games.game_time's format - ISO8601 UTC text"""
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class FakeD1:
@@ -53,6 +60,38 @@ class FakeD1:
         return results
 
 
+class FakeKV:
+    """Same write() surface as db.kv_client.KVClient - keeps each key's
+    latest value in `values` instead of writing to Cloudflare."""
+
+    def __init__(self) -> None:
+        self.values: dict[str, dict[str, Any]] = {}
+
+    def write(self, key: str, value: dict[str, Any]) -> None:
+        self.values[key] = value
+
+
+class Clients:
+    """Points a module's D1Client/KVClient (and their config getters) at the
+    fakes, so a write_*() function runs end to end without Cloudflare."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, d1: FakeD1) -> None:
+        self._monkeypatch = monkeypatch
+        self.d1 = d1
+        self.kv = FakeKV()
+
+    def use(self, *modules: ModuleType) -> None:
+        for module in modules:
+            for name, fake in (
+                ("D1Client", lambda **_: self.d1),
+                ("KVClient", lambda **_: self.kv),
+                ("get_d1_config", dict),
+                ("get_kv_config", dict),
+            ):
+                if hasattr(module, name):
+                    self._monkeypatch.setattr(module, name, fake)
+
+
 class Seed:
     """Inserts the minimum rows each table's foreign keys need. Every
     helper returns the new row's id."""
@@ -89,17 +128,49 @@ class Seed:
     def user(self, name: str, is_active: bool = True) -> int:
         return self._insert("users", name=name, is_active=is_active)
 
-    def team(self, abbreviation: str | None = None) -> int:
+    def team(self, abbreviation: str | None = None, **values: Any) -> int:
         self._team_count += 1
         abbreviation = abbreviation or f"T{self._team_count}"
+        values.setdefault("nick_name", abbreviation.title())
         return self._insert(
-            "teams", name=abbreviation, season=SEASON, abbreviation=abbreviation
+            "teams",
+            name=abbreviation,
+            season=SEASON,
+            abbreviation=abbreviation,
+            **values,
         )
 
     def game(self, week_id: int, **values: Any) -> int:
-        values.setdefault("home_team_id", self.team())
-        values.setdefault("away_team_id", self.team())
+        # not setdefault(): that would create a team even when one is given
+        for side in ("home_team_id", "away_team_id"):
+            if side not in values:
+                values[side] = self.team()
+        if isinstance(values.get("game_time"), datetime):
+            values["game_time"] = iso(values["game_time"])
         return self._insert("games", week_id=week_id, **values)
+
+    def final(
+        self,
+        week_id: int,
+        home: int,
+        away: int,
+        score: tuple[int, int],
+        spread: float | None,
+        kickoff: datetime | str,
+        **values: Any,
+    ) -> int:
+        """A FINAL game - `score` is (home, away), `spread` the home line"""
+        return self.game(
+            week_id,
+            home_team_id=home,
+            away_team_id=away,
+            home_score=score[0],
+            away_score=score[1],
+            cbs_spread=spread,
+            game_time=kickoff,
+            status="FINAL",
+            **values,
+        )
 
     def performance(
         self,
@@ -153,3 +224,8 @@ def d1() -> Iterator[FakeD1]:
 @pytest.fixture
 def seed(d1: FakeD1) -> Seed:
     return Seed(d1)
+
+
+@pytest.fixture
+def clients(monkeypatch: pytest.MonkeyPatch, d1: FakeD1) -> Clients:
+    return Clients(monkeypatch, d1)
