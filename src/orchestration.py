@@ -19,11 +19,11 @@ from src.kv_writer import (
     write_current_week_games,
     write_current_week_leaderboard,
     write_current_week_odds,
-    write_current_week_tidbits,
     write_current_week_trends,
     write_game_details,
     write_incomplete_weeks_games,
     write_meta_current,
+    write_recent_weeks_tidbits,
     write_season_trends,
     write_user_profiles,
 )
@@ -462,12 +462,13 @@ def _run_user_profiles_refresh(client: D1Client) -> None:
 
 
 def _run_tidbits_refresh(client: D1Client) -> None:
-    """Rewrite the current week's tidbits key every
+    """Rewrite the tidbits keys for the current week plus any week still
+    in progress or just finished (see write_recent_weeks_tidbits()) every
     TIDBITS_INTERVAL_SECONDS, live or quiet."""
     run_on_interval(
         client,
         "tidbits_write",
-        write_current_week_tidbits,
+        write_recent_weeks_tidbits,
         "tidbits_last_write_at",
         "tidbits_last_success_at",
         TIDBITS_INTERVAL_SECONDS,

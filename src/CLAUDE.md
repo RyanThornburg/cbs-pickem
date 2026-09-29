@@ -454,8 +454,9 @@ Cadences, and why each one is what it is:
   continuous rather than a single pre-kickoff pulse, since a forecast is
   worth re-checking repeatedly as it changes rather than just once right
   before kickoff.
-- **Tidbits KV key, 5 min, live or quiet** (added 2026-09-28) -
-  `_run_tidbits_refresh()`, see "KV writer" below.
+- **Tidbits KV keys, 5 min, live or quiet** (added 2026-09-28) -
+  `_run_tidbits_refresh()`: the current week plus any week in progress
+  or finished in the last 12 hours, see "KV writer" below.
 - **Housekeeping, 24 hr, quiet periods only** — full Sports IO schedule
   refresh + `teams_loader.main()` (win/loss/tie records, added
   2026-09-15) + `load_cbs_weeks()`/`load_cbs_games()` + `load_espn_games()`
@@ -941,14 +942,28 @@ src.kv_writer.__main__`).
   most divergent (and most interesting) teams sort first.
 - `write_week_tidbits()` → `week:{season}:{weekNN}:tidbits` (added
   2026-09-28, `tidbits.py`) - short rotating "did you know" items for the
-  UI's weekly infographic: `{season, week, updated_at, week_complete,
-  games_final, games_total, tidbits: [...], series: {pool_accuracy,
-  chaos}}`. Each tidbit is `{id, kind, category, scope (week|season),
-  score, headline, sample_size, data}`, sorted by `score` descending; the
-  UI rotates through the top few and can render `headline` as-is or build
-  its own from `data`. `id` is unique within the key (`kind` plus a
-  suffix when a kind can appear more than once). Everything is "as of"
-  the key's week (season data through that week only).
+  UI's weekly infographic: `{version, season, week, updated_at,
+  week_complete, games_final, games_total, tidbits: [...], series:
+  {pool_accuracy, chaos}, movers, cover_streaks}`. Each tidbit is `{id,
+  kind, category, scope (week|season), score, headline, short,
+  sample_size, data}`, sorted by `score` descending; the UI rotates
+  through the top few and can render `headline` (or `short`, at most
+  `_SHORT_MAX` (80) characters, for a one-line strip) as-is or build its
+  own from `data`. `id` is unique within the key (`kind` plus a suffix
+  when a kind can appear more than once). Everything is "as of" the
+  key's week (season data through that week only). `version`
+  (`SCHEMA_VERSION`) is bumped whenever a kind is renamed/removed or a
+  field changes shape, so the UI can catch a stale card mapping (it went
+  through this once with `public_enemy` → `trap_team`) - 2 as of
+  2026-09-28. Every person anywhere in the key is `{user_id, name}`
+  (`_person()`), since the UI matches on id. `movers` is every
+  leaderboard move of `_MIN_RANK_MOVE` (3)+ places vs last week and
+  `cover_streaks` every active team streak of 3+ (`{team, streak_type,
+  length}`) - the `biggest_mover`/`cover_streak` tidbits only headline
+  the biggest, these feed row arrows and game badges. Categories: `pool`,
+  `spread`, `crowd`, `chaos`, `users`, `teams`, `league` (the four
+  league-wide cover kinds - their ids keep an older `:league` suffix) and
+  `splits` (the pool's own splits).
   Always-on kinds (hand-picked base score, higher when the week is
   extreme): `pool_accuracy` (CBS's own `is_correct`, active users),
   `perfect_week`/`winless_week` (all 5 picks graded), `spread_mattered`
@@ -1002,8 +1017,15 @@ src.kv_writer.__main__`).
   are judgment calls, like the trends thresholds.
   Written by orchestration every `TIDBITS_INTERVAL_SECONDS` (5 min, live
   or quiet, `tidbits_write` in `meta:admin` with a stale flag) rather than
-  every tick - it's an infographic, not a live number. UI reference
-  Artifact linked from `CLAUDE.local.md`'s tidbits TODO entry.
+  every tick - it's an infographic, not a live number - via
+  `write_recent_weeks_tidbits()`: the current week, any started week not
+  yet complete, and any week whose last kickoff (`weeks.end_time`) was
+  within `_RECENT_WEEK_HOURS` (12). Only writing `is_current` (the first
+  version) lost a week's final state whenever CBS moved the current week
+  on before Monday night's game ended, and CBS's grades land a poll or
+  two after a game goes FINAL anyway. Weeks 1-2 of 2026 were backfilled
+  by hand 2026-09-28 (`write_week_tidbits(n)`). UI reference Artifact
+  linked from `CLAUDE.local.md`'s tidbits TODO entry.
 - `write_historical()` → `meta:historical` — see `db/CLAUDE.md`'s
   `historical_standings` section for what feeds this.
 - `write_user_profiles()` → `user:{user_id}:season:{season}`, one key per

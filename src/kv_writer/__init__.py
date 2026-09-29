@@ -33,6 +33,7 @@ from src.kv_writer.shared import write_meta_current
 from src.kv_writer.tidbits import (
     compute_week_tidbits,
     write_current_week_tidbits,
+    write_recent_weeks_tidbits,
     write_week_tidbits,
 )
 from src.kv_writer.trends import (
@@ -57,6 +58,7 @@ __all__ = [
     "write_historical",
     "write_incomplete_weeks_games",
     "write_meta_current",
+    "write_recent_weeks_tidbits",
     "write_season_trends",
     "write_user_profiles",
     "write_week_game_details",
