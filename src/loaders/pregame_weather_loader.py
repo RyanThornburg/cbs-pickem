@@ -40,9 +40,8 @@ GAME_DURATION_HOURS = 4
 
 # The forecast_window_* summary (max precip chance/gusts, temp range, snow)
 # covers [game_time, game_time + this] - deliberately shorter than
-# GAME_DURATION_HOURS: weather 2 hours in still affects most of the game,
-# while weather at the 3-4 hour mark barely matters since the game is
-# just ending.
+# GAME_DURATION_HOURS: weather through the first 3 hours affects most of
+# the game, while the last hour barely matters since the game is ending.
 FORECAST_WINDOW_HOURS = 3
 
 _UPDATE_FORECAST_SQL = """

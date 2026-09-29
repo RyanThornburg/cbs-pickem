@@ -48,6 +48,22 @@ Both run from cron every minute, as two separate entries:
 
 CBS and Sports IO are the only two required APIs. Odds API and weather API are optional and should still work without.
 
+## Testing
+
+```bash
+# the whole suite, with coverage - offline, no credentials needed
+uv run pytest
+
+# check the real APIs still match our models (opt-in, needs config/.env.local)
+uv run pytest -m live
+```
+
+The tests run against an in-memory SQLite stand-in for D1 (D1 is SQLite, so the real SQL and schema get exercised) and a fake KV. The API clients replay real responses saved under `tests/fixtures/` (CBS pages are anonymized since the repo is public), so parsing and validation run exactly as they do in production. That covers the loaders, every KV key the web UI reads, and full orchestration ticks end to end.
+
+The `live` run hits Sports IO, ESPN, The Odds API (1 credit) and Pirate Weather, and fails if a response no longer validates or a field we read has gone missing. When that happens, fix the model, then re-save the fixtures with `uv run python -m tests.fixtures.capture_api`. The contract tests in `tests/test_games.py` pin the field names the web UI reads, so changing a KV key's shape means updating those on purpose (and the web UI with it).
+
+CBS's Playwright login/scraping isn't tested on purpose. It doesn't change with the rest of the code, so if it breaks, CBS changed something.
+
 ## Layout
 
 - `api/`: clients for each external data source (CBS, Sports IO, The Odds API, Pirate Weather, ESPN)
@@ -57,6 +73,7 @@ CBS and Sports IO are the only two required APIs. Odds API and weather API are o
 - `src/live_ticker.py`: the 15-second game-day scoreboard refresh (its own cron entry)
 - `src/kv_writer/`: turns D1 data into the JSON the web UI reads, one module per KV key
 - `config/`: env handling and season-level settings
+- `tests/`: pytest suite, saved API responses in `tests/fixtures/`
 
 ## A note on AI
 
