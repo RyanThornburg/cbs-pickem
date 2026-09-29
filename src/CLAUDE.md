@@ -953,12 +953,28 @@ src.kv_writer.__main__`).
   extreme): `pool_accuracy` (CBS's own `is_correct`, active users),
   `perfect_week`/`winless_week` (all 5 picks graded), `spread_mattered`
   (week and season: the straight-up winner didn't cover, plus how many
-  pool picks had the winner and still lost), `consensus_record` (week
-  and season, the pool's strict-majority side ATS, with the fade-the-crowd
-  inverse) and `consensus_locks` (80%+ games), `chaos_index` (fully-FINAL
-  weeks only: the average of underdog cover rate, doubled upset rate, pool
-  miss rate and big-favorite (7+) outright losses, as 0-10, ranked among
-  the season's weeks), `twins` (identical 5 picks), `oppos` (same 5
+  pool picks had the winner and still lost), `crowd_record` (week and
+  season, the side more of the pool took in each game, ATS, with the
+  fade-the-crowd inverse) and `popular_picks` (week and season, only crowd
+  sides picked by `_POPULAR_POOL_SHARE` (30%, rounded up - 10 of 33) of
+  that week's pool, plus the week's most-picked team. Pool size is that
+  week's `weekly_performance` rows for active users, not whoever's picks
+  are visible so far, which before the Sunday deadline is a handful. A
+  share rather than a flat count so it holds if the pool size changes,
+  and rather than a top 3, which ties at the cutoff most weeks (week 3:
+  three teams at 11) and always returns 3 even in a spread-out week.
+  Renamed 2026-09-28 from `consensus_record`/`consensus_locks`, which
+  used an 80% share of a game's pickers and let a 4-1 split count the
+  same as 20-5), `chaos_index` (the average of
+  underdog cover rate, doubled upset rate, pool miss rate and big-favorite
+  (7+) outright losses, as 0-10 - a part with nothing to measure is left
+  out rather than scored 0. Since 2026-09-28 also shown for a week in
+  progress once `_CHAOS_MIN_GAMES` (8) are final, headlined "so far" with
+  `partial: true`. A complete week is ranked against the season's other
+  complete weeks; a partial one only gets an "on pace for" claim once
+  `_CHAOS_PACE_MIN_GAMES` (13) are final - replaying weeks 1-3, the index
+  was off by up to 2 points after 9-10 games but within about half a
+  point after 13-14), `twins` (identical 5 picks), `oppos` (same 5
   games, every pick opposite), `cover_streak` (active team streaks of
   3+, a push ends one), `biggest_mover` (cumulative rank change vs last
   week, ranked like the leaderboard, 3+ spots), `upset_of_week`
@@ -974,9 +990,10 @@ src.kv_writer.__main__`).
   division games) and `team_split` (one team's ATS in primetime, division
   games, at home, on the road - rarely qualifies before midseason).
   Neutral-site games skip anything home/road. Kickoff slots are Eastern
-  time: Thursday, Friday, Saturday, Sunday morning (before noon,
-  international), early (before 4), late (before 7), night, Monday;
-  primetime is Thursday, Sunday night and Monday. Pool/team splits grade
+  time: the weekday (Tuesday through Saturday, Monday - 2026's opener was
+  a Wednesday), with Sunday split into morning (before noon,
+  international), early (before 4), late (before 7) and night; primetime
+  is Wednesday, Thursday, Sunday night and Monday. Pool/team splits grade
   with `ats_side()` like `season:trends`; only `pool_accuracy`/perfect/
   winless use CBS's grade. The pool's favorite-pick share is expected to
   be lopsided, so it rides along as `favorite_pick_share` on the

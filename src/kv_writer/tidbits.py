@@ -46,16 +46,27 @@ _STANDOUT_MAX_SCORE = 3.0
 _STANDOUT_MIN_POOL_PICKS = 20  # floor for a pool-wide pick split
 _STANDOUT_MIN_GAMES = 10  # floor for a league-wide game split
 _STANDOUT_MIN_TEAM_GAMES = 4  # floor for one team's split
-_LOCK_THRESHOLD = 0.8  # consensus share that makes a game a "lock"
-_LOCK_MIN_PICKS = 3
-_LOCK_MIN_GAMES = 3  # locks record needs a few games before it means anything
+# share of that week's pool on the crowd's side for it to count as a popular
+# pick, rounded up (10 of 33) - a share rather than a flat count so it keeps
+# its meaning if the pool size changes. Weeks 1-3 of 2026 had a clear gap
+# right there: 4-5 teams a week at 10+, then 9 and below.
+_POPULAR_POOL_SHARE = 0.3
+_POPULAR_MIN_GAMES = 3  # season record needs a few games before it means anything
 _BIG_FAVORITE_POINTS = 7.0  # a favorite of this much or more losing outright is chaos
+_CHAOS_MIN_GAMES = 8  # final games before a week in progress gets a chaos index
+# final games before a week in progress can be called "on pace" for the
+# season's most/least chaotic - replayed weeks 1-3 were within about half a
+# point of their final index by 13-14 games, but off by up to 2 at 9-10
+_CHAOS_PACE_MIN_GAMES = 13
 _MIN_COVER_STREAK = 3
 _MIN_RANK_MOVE = 3  # spots climbed/dropped before a mover is worth a tidbit
 _PICKS_PER_WEEK = 5
-_PRIMETIME_SLOTS = frozenset({"thursday", "sunday_night", "monday"})
+# Wednesday for a night season opener
+_PRIMETIME_SLOTS = frozenset({"wednesday", "thursday", "sunday_night", "monday"})
 
 _SLOT_LABELS = {
+    "tuesday": "Tuesday",
+    "wednesday": "Wednesday",
     "thursday": "Thursday night",
     "friday": "Friday",
     "saturday": "Saturday",
@@ -64,7 +75,6 @@ _SLOT_LABELS = {
     "sunday_late": "Sunday late afternoon",
     "sunday_night": "Sunday night",
     "monday": "Monday night",
-    "other": "Other",
 }
 
 _SEASON_GAMES_SQL = """
@@ -219,7 +229,8 @@ def _kickoff_slot(game: dict[str, Any]) -> str:
         if kickoff.hour < 19:
             return "sunday_late"
         return "sunday_night"
-    return {0: "monday", 3: "thursday", 4: "friday", 5: "saturday"}.get(weekday, "other")
+    # a season opener can land on a Wednesday (2026's did), Christmas on a Tuesday
+    return ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday")[weekday]
 
 
 def _is_division_game(game: dict[str, Any]) -> bool:
@@ -476,16 +487,16 @@ def _spread_mattered_tidbits(season: _Season) -> list[dict[str, Any]]:
     return tidbits
 
 
-# -- consensus record, fade the crowd, locks -----------------------------------
+# -- crowd record, fade the crowd, popular picks -------------------------------
 
 
-def _consensus_results(
+def _crowd_results(
     games: list[dict[str, Any]], picks_by_game: dict[int, list[dict[str, Any]]]
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """(every game with a strict pool majority, just the locks), each entry
-    carrying `result` = 'win'/'loss'/'push' for the majority side against
-    the spread. Only FINAL games with a spread."""
-    results, locks = [], []
+) -> list[dict[str, Any]]:
+    """Every FINAL game with a spread where more of the pool took one side
+    than the other (a tie is skipped), with `result` = 'win'/'loss'/'push'
+    for that side against the spread and `pick_count` on it."""
+    results = []
     for game in games:
         side_covered = ats_side(game)
         if side_covered is None:
@@ -495,21 +506,23 @@ def _consensus_results(
         away = sum(1 for p in picks if _pick_side(game, p) == "away")
         if home == away:
             continue
-        majority = "home" if home > away else "away"
-        share = max(home, away) / (home + away)
-        result = (
-            "push" if side_covered == "push" else "win" if side_covered == majority else "loss"
+        crowd_side = "home" if home > away else "away"
+        results.append(
+            {
+                **_game_line(game),
+                "crowd_team": _team(game, crowd_side),
+                "pick_count": max(home, away),
+                "crowd_pct": round(max(home, away) / (home + away), 3),
+                "result": (
+                    "push"
+                    if side_covered == "push"
+                    else "win"
+                    if side_covered == crowd_side
+                    else "loss"
+                ),
+            }
         )
-        entry = {
-            **_game_line(game),
-            "consensus_team": _team(game, majority),
-            "consensus_pct": round(share, 3),
-            "result": result,
-        }
-        results.append(entry)
-        if share >= _LOCK_THRESHOLD and home + away >= _LOCK_MIN_PICKS:
-            locks.append(entry)
-    return results, locks
+    return results
 
 
 def _wlp(entries: list[dict[str, Any]]) -> tuple[int, int, int]:
@@ -518,25 +531,42 @@ def _wlp(entries: list[dict[str, Any]]) -> tuple[int, int, int]:
     return wins, losses, len(entries) - wins - losses
 
 
-def _consensus_tidbits(season: _Season) -> list[dict[str, Any]]:
+def _crowd_tidbits(season: _Season) -> list[dict[str, Any]]:
+    """crowd_record: the side more of the pool took, game by game.
+    popular_picks: just the crowd sides picked by _POPULAR_POOL_SHARE of
+    that week's pool - a team 12 people picked says more about the pool
+    than one a 4-1 split made the crowd side of a game few people picked.
+    The pool size is that week's weekly_performance rows (every active
+    member), not the people whose picks are visible so far, which before
+    the Sunday deadline is only a handful."""
     tidbits = []
-    season_results, season_locks = _consensus_results(season.games, season.picks_by_game)
+    season_results = _crowd_results(season.games, season.picks_by_game)
     week_results = [e for e in season_results if e["week"] == season.week]
+
+    pool_size_by_week: defaultdict[int, int] = defaultdict(int)
+    for row in season.performance:
+        pool_size_by_week[row["week_number"]] += 1
+    min_picks_by_week = {
+        week: math.ceil(_POPULAR_POOL_SHARE * size) for week, size in pool_size_by_week.items()
+    }
+    min_picks = min_picks_by_week.get(season.week)
 
     wins, losses, pushes = _wlp(season_results)
     if wins + losses:
-        z = _z(wins, wins + losses)
-        headline = f"The crowd's side is {_record_text(wins, losses, pushes)} against the spread this season"
+        headline = (
+            f"The crowd's side is {_record_text(wins, losses, pushes)}"
+            " against the spread this season"
+        )
         if wins < losses:
             headline += f" - fading it would be {_record_text(losses, wins, pushes)}."
         else:
             headline += "."
         tidbits.append(
             _tidbit(
-                "consensus_record",
+                "crowd_record",
                 "crowd",
                 "season",
-                1.0 + abs(z),
+                1.0 + abs(_z(wins, wins + losses)),
                 headline,
                 {
                     "wins": wins,
@@ -554,34 +584,79 @@ def _consensus_tidbits(season: _Season) -> list[dict[str, Any]]:
     if wins + losses:
         tidbits.append(
             _tidbit(
-                "consensus_record",
+                "crowd_record",
                 "crowd",
                 "week",
                 0.8 + abs(_z(wins, wins + losses)) / 2,
-                f"The crowd's side went {_record_text(wins, losses, pushes)} against the spread this week.",
+                f"The crowd's side went {_record_text(wins, losses, pushes)}"
+                " against the spread this week.",
                 {"wins": wins, "losses": losses, "pushes": pushes, "games": week_results},
                 sample_size=wins + losses,
             )
         )
 
-    wins, losses, pushes = _wlp(season_locks)
-    if wins + losses >= _LOCK_MIN_GAMES:
+    # a week with no weekly_performance rows has no pool size to judge by
+    popular_season = [
+        e
+        for e in season_results
+        if e["week"] in min_picks_by_week and e["pick_count"] >= min_picks_by_week[e["week"]]
+    ]
+    popular_week = sorted(
+        (e for e in popular_season if e["week"] == season.week),
+        key=lambda e: -e["pick_count"],
+    )
+
+    wins, losses, pushes = _wlp(popular_week)
+    if wins + losses:
+        top = popular_week[0]
+        outcome = {"win": "covered", "loss": "didn't cover", "push": "pushed"}[top["result"]]
         tidbits.append(
             _tidbit(
-                "consensus_locks",
+                "popular_picks",
                 "crowd",
-                "season",
-                1.0 + abs(_z(wins, wins + losses)),
-                f"When {round(_LOCK_THRESHOLD * 100)}%+ of the pool is on one side, that side is"
-                f" {_record_text(wins, losses, pushes)} this season.",
+                "week",
+                1.0 + abs(_z(wins, wins + losses)) / 2,
+                f"Teams {min_picks}+ of you picked went"
+                f" {_record_text(wins, losses, pushes)} this week. Most picked:"
+                f" {top['crowd_team']['abbr']} ({top['pick_count']} of you) {outcome}.",
                 {
-                    "threshold": _LOCK_THRESHOLD,
+                    "pool_share": _POPULAR_POOL_SHARE,
+                    "pool_size": pool_size_by_week[season.week],
+                    "min_picks": min_picks,
                     "wins": wins,
                     "losses": losses,
                     "pushes": pushes,
-                    "games": [e for e in season_locks if e["week"] == season.week],
+                    "games": popular_week,
                 },
                 sample_size=wins + losses,
+            )
+        )
+
+    wins, losses, pushes = _wlp(popular_season)
+    if wins + losses >= _POPULAR_MIN_GAMES:
+        # the count only reads right when every week had the same pool size
+        who = (
+            f"{min_picks}+ of you"
+            if len(set(min_picks_by_week.values())) == 1
+            else f"{round(_POPULAR_POOL_SHARE * 100)}%+ of the pool"
+        )
+        tidbits.append(
+            _tidbit(
+                "popular_picks",
+                "crowd",
+                "season",
+                1.0 + abs(_z(wins, wins + losses)),
+                f"Teams {who} picked are"
+                f" {_record_text(wins, losses, pushes)} against the spread this season.",
+                {
+                    "pool_share": _POPULAR_POOL_SHARE,
+                    "min_picks_by_week": {str(w): n for w, n in sorted(min_picks_by_week.items())},
+                    "wins": wins,
+                    "losses": losses,
+                    "pushes": pushes,
+                },
+                sample_size=wins + losses,
+                key="season",
             )
         )
     return tidbits
@@ -593,15 +668,19 @@ def _consensus_tidbits(season: _Season) -> list[dict[str, Any]]:
 def _week_chaos(
     games: list[dict[str, Any]], pool_row: dict[str, Any] | None
 ) -> dict[str, Any] | None:
-    """0-10 chaos score for one fully-FINAL week, the average of four 0-1
-    parts: underdog cover rate, outright upset rate (doubled, capped at 1 -
-    upsets are rarer than covers), pool miss rate, and the share of big
-    favorites (_BIG_FAVORITE_POINTS+) that lost outright. Weights are a
-    judgment call."""
-    if not games or any(g["status"] != "FINAL" for g in games):
+    """0-10 chaos score for one week's FINAL games, the average of up to
+    four 0-1 parts: underdog cover rate, outright upset rate (doubled,
+    capped at 1 - upsets are rarer than covers), pool miss rate, and the
+    share of big favorites (_BIG_FAVORITE_POINTS+) that lost outright. A
+    part with nothing to measure (no big favorites yet, no graded picks)
+    is left out rather than counted as 0, which would read as calm. Weights
+    are a judgment call. None until _CHAOS_MIN_GAMES are final - `partial`
+    is True while some of the week's games aren't."""
+    final_games = [g for g in games if g["status"] == "FINAL"]
+    if len(final_games) < min(_CHAOS_MIN_GAMES, len(games)) or not final_games:
         return None
     dog_covers = decided = upsets = su_decided = big_favs = big_fav_losses = 0
-    for game in games:
+    for game in final_games:
         favorite = _favorite_side(game)
         if favorite is None:
             continue
@@ -618,24 +697,26 @@ def _week_chaos(
                 big_fav_losses += winner != favorite
     if not decided:
         return None
-    pool_miss = (
-        1 - pool_row["accuracy"] if pool_row and pool_row["accuracy"] is not None else 0.5
-    )
-    parts = [
-        dog_covers / decided,
-        min(1.0, 2 * upsets / su_decided) if su_decided else 0.0,
-        pool_miss,
-        big_fav_losses / big_favs if big_favs else 0.0,
-    ]
+    pool_accuracy = pool_row["accuracy"] if pool_row else None
+    parts = [dog_covers / decided]
+    if su_decided:
+        parts.append(min(1.0, 2 * upsets / su_decided))
+    if pool_accuracy is not None:
+        parts.append(1 - pool_accuracy)
+    if big_favs:
+        parts.append(big_fav_losses / big_favs)
     return {
         "week": games[0]["week_number"],
+        "partial": len(final_games) < len(games),
+        "games_final": len(final_games),
+        "games_total": len(games),
         "index": round(10 * sum(parts) / len(parts), 1),
         "underdog_covers": dog_covers,
         "ats_decided": decided,
         "outright_upsets": upsets,
         "big_favorite_losses": big_fav_losses,
         "big_favorites": big_favs,
-        "pool_accuracy": pool_row["accuracy"] if pool_row else None,
+        "pool_accuracy": pool_accuracy,
     }
 
 
@@ -650,24 +731,36 @@ def _chaos_series(season: _Season, pool_series: list[dict[str, Any]]) -> list[di
 
 
 def _chaos_tidbits(season: _Season, chaos_series: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A complete week is ranked against the season's other complete weeks.
+    A week in progress gets its index "so far", and only an "on pace"
+    claim once _CHAOS_PACE_MIN_GAMES are final - before that, early swings
+    are too big to call (see the constant)."""
     current = next((c for c in chaos_series if c["week"] == season.week), None)
     if current is None:
         return []
-    headline = (
-        f"Chaos index {current['index']}: underdogs covered {current['underdog_covers']}"
-        f" of {current['ats_decided']} and {current['outright_upsets']} won outright."
+    so_far = (
+        f" so far ({current['games_final']} of {current['games_total']} games)"
+        if current["partial"]
+        else ""
     )
-    score = 1.5
+    headline = (
+        f"Chaos index{so_far}: {current['index']}. Underdogs covered"
+        f" {current['underdog_covers']} of {current['ats_decided']} and"
+        f" {current['outright_upsets']} won outright."
+    )
+    score = 1.3 if current["partial"] else 1.5
     rank = None
-    if len(chaos_series) >= 2:
-        ordered = sorted(chaos_series, key=lambda c: -c["index"])
-        rank = next(i for i, c in enumerate(ordered, start=1) if c["week"] == season.week)
+    others = [c for c in chaos_series if c["week"] != season.week and not c["partial"]]
+    can_rank = not current["partial"] or current["games_final"] >= _CHAOS_PACE_MIN_GAMES
+    if others and can_rank:
+        rank = 1 + sum(1 for c in others if c["index"] > current["index"])
+        prefix = "On pace for the" if current["partial"] else "The"
         if rank == 1:
-            headline += " Most chaotic week of the season."
-            score = 2.8
-        elif rank == len(ordered):
-            headline += " Chalkiest week of the season."
-            score = 2.3
+            headline += f" {prefix} most chaotic week of the season."
+            score = 2.3 if current["partial"] else 2.8
+        elif rank == len(others) + 1:
+            headline += f" {prefix} chalkiest week of the season."
+            score = 2.0 if current["partial"] else 2.3
     return [
         _tidbit(
             "chaos_index",
@@ -675,7 +768,7 @@ def _chaos_tidbits(season: _Season, chaos_series: list[dict[str, Any]]) -> list[
             "week",
             score,
             headline,
-            {**current, "season_rank": rank, "weeks_ranked": len(chaos_series)},
+            {**current, "season_rank": rank, "weeks_ranked": len(others) + 1},
             sample_size=current["ats_decided"],
         )
     ]
@@ -1187,7 +1280,7 @@ def compute_week_tidbits(d1: D1Client, week_number: int) -> dict[str, Any] | Non
     tidbits = [
         *_pool_accuracy_tidbits(season, pool_series, week_complete),
         *_spread_mattered_tidbits(season),
-        *_consensus_tidbits(season),
+        *_crowd_tidbits(season),
         *_chaos_tidbits(season, chaos_series),
         *_twins_and_oppos_tidbits(season),
         *_cover_streak_tidbits(season),
