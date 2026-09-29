@@ -23,7 +23,7 @@ from src.kv_writer import (
     write_game_details,
     write_incomplete_weeks_games,
     write_meta_current,
-    write_recent_weeks_tidbits,
+    write_recent_weeks_recap,
     write_season_trends,
     write_user_profiles,
 )
@@ -95,10 +95,10 @@ WEATHER_PREGAME_NEAR_WINDOW_HOURS = 24
 # data that only actually changes when picks get made/graded, not on every
 # live score tick. Same cadence class as CBS_PICKS_QUIET_INTERVAL_SECONDS.
 USER_PROFILES_INTERVAL_SECONDS = 30 * 60
-# Weekly tidbits (week:{season}:{weekNN}:tidbits) - a rotating infographic,
+# Weekly recap (week:{season}:{weekNN}:recap) - a rotating infographic,
 # not a live number, so a few minutes behind a final score is fine and it
 # saves a KV write on most ticks
-TIDBITS_INTERVAL_SECONDS = 5 * 60
+RECAP_INTERVAL_SECONDS = 5 * 60
 # After a failure, the deadline sweep and the finished-game stats catch-up
 # wait this long before trying again - both are otherwise retried every
 # tick until they succeed, and each attempt is a burst of CBS/Sports IO
@@ -461,17 +461,17 @@ def _run_user_profiles_refresh(client: D1Client) -> None:
     )
 
 
-def _run_tidbits_refresh(client: D1Client) -> None:
-    """Rewrite the tidbits keys for the current week plus any week still
-    in progress or just finished (see write_recent_weeks_tidbits()) every
-    TIDBITS_INTERVAL_SECONDS, live or quiet."""
+def _run_recap_refresh(client: D1Client) -> None:
+    """Rewrite the recap keys for the current week plus any week still
+    in progress or just finished (see write_recent_weeks_recap()) every
+    RECAP_INTERVAL_SECONDS, live or quiet."""
     run_on_interval(
         client,
-        "tidbits_write",
-        write_recent_weeks_tidbits,
-        "tidbits_last_write_at",
-        "tidbits_last_success_at",
-        TIDBITS_INTERVAL_SECONDS,
+        "recap_write",
+        write_recent_weeks_recap,
+        "recap_last_write_at",
+        "recap_last_success_at",
+        RECAP_INTERVAL_SECONDS,
     )
 
 
@@ -506,7 +506,7 @@ def main() -> None:
     soft(client, "leaderboard_kv_write", write_current_week_leaderboard)
     soft(client, "week_trends_kv_write", write_current_week_trends)
     soft(client, "season_trends_kv_write", write_season_trends)
-    _run_tidbits_refresh(client)
+    _run_recap_refresh(client)
     _run_user_profiles_refresh(client)
     # last, so it reflects every failure recorded above
     soft(client, "admin_kv_write", write_admin_status)

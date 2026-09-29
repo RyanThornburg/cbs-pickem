@@ -1,7 +1,7 @@
-"""week:{season}:{weekNN}:tidbits - see src/CLAUDE.md's KV writer section.
+"""week:{season}:{weekNN}:recap - see src/CLAUDE.md's KV writer section.
 
 Short "did you know" items for the web UI's weekly infographic. Each
-generator below returns zero or more candidate tidbits, and the key holds
+generator below returns zero or more candidate recap items, and the key holds
 all of them ranked by `score`, highest first - the UI rotates through the
 top few. The always-on kinds (pool accuracy, spread mattered, chaos index,
 ...) carry a hand-picked base score nudged up when the week is extreme.
@@ -43,7 +43,8 @@ _EASTERN = ZoneInfo("America/New_York")
 # changelog in the UI reference Artifact linked from CLAUDE.local.md.
 # 1: first version. 2: consensus_* -> crowd_record/popular_picks, people as
 # {user_id, name}, short, movers/cover_streaks lists, league category.
-SCHEMA_VERSION = 2
+
+SCHEMA_VERSION = 3
 _SHORT_MAX = 80  # `short` headline length, so a one-line strip keeps its height
 # a week keeps getting rewritten this long after its last kickoff, so its
 # final state (last game FINAL, CBS's last grades) lands even after
@@ -53,7 +54,7 @@ _RECENT_WEEK_HOURS = 12
 # hand-picked judgment calls, same spirit as trends.py's thresholds
 _STANDOUT_MIN_Z = 1.5  # distance from a coin flip, in standard deviations
 # z grows with sample size, so without a cap a big season-long split would
-# outrank every weekly tidbit by midseason
+# outrank every weekly recap item by midseason
 _STANDOUT_MAX_SCORE = 3.0
 _STANDOUT_MIN_POOL_PICKS = 20  # floor for a pool-wide pick split
 _STANDOUT_MIN_GAMES = 10  # floor for a league-wide game split
@@ -71,7 +72,7 @@ _CHAOS_MIN_GAMES = 8  # final games before a week in progress gets a chaos index
 # point of their final index by 13-14 games, but off by up to 2 at 9-10
 _CHAOS_PACE_MIN_GAMES = 13
 _MIN_COVER_STREAK = 3
-_MIN_RANK_MOVE = 3  # spots climbed/dropped before a mover is worth a tidbit
+_MIN_RANK_MOVE = 3  # spots climbed/dropped before a mover is worth a recap item
 _PICKS_PER_WEEK = 5
 # Wednesday for a night season opener
 _PRIMETIME_SLOTS = frozenset({"wednesday", "thursday", "sunday_night", "monday"})
@@ -170,7 +171,9 @@ def _record_text(wins: int, losses: int, pushes: int = 0) -> str:
 
 
 def _ordinal(n: int) -> str:
-    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    suffix = (
+        "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    )
     return f"{n}{suffix}"
 
 
@@ -181,7 +184,7 @@ def _names_text(names: list[str], limit: int = 3) -> str:
 
 
 def _person(row: dict[str, Any]) -> dict[str, Any]:
-    """How every tidbit lists a person - the UI matches on user_id"""
+    """How every recap item lists a person - the UI matches on user_id"""
     return {"user_id": row["user_id"], "name": row["name"]}
 
 
@@ -198,7 +201,7 @@ def _fit(text: str) -> str:
     return cut + "…"
 
 
-def _tidbit(
+def _item(
     kind: str,
     category: str,
     scope: str,
@@ -275,7 +278,10 @@ def _kickoff_slot(game: dict[str, Any]) -> str:
 
 
 def _is_division_game(game: dict[str, Any]) -> bool:
-    return game["home_division"] is not None and game["home_division"] == game["away_division"]
+    return (
+        game["home_division"] is not None
+        and game["home_division"] == game["away_division"]
+    )
 
 
 def _game_line(game: dict[str, Any]) -> dict[str, Any]:
@@ -307,7 +313,13 @@ def _pool_accuracy_series(season: _Season) -> list[dict[str, Any]]:
     for (week_number, _user_id), picks in user_weeks.items():
         row = weeks.setdefault(
             week_number,
-            {"week": week_number, "correct": 0, "graded": 0, "perfect": [], "winless": []},
+            {
+                "week": week_number,
+                "correct": 0,
+                "graded": 0,
+                "perfect": [],
+                "winless": [],
+            },
         )
         graded = [p for p in picks if p["is_correct"] is not None]
         correct = sum(1 for p in graded if p["is_correct"])
@@ -329,7 +341,7 @@ def _pool_accuracy_series(season: _Season) -> list[dict[str, Any]]:
     return series
 
 
-def _pool_accuracy_tidbits(
+def _pool_accuracy_items(
     season: _Season, series: list[dict[str, Any]], week_complete: bool
 ) -> list[dict[str, Any]]:
     by_week = {row["week"]: row for row in series}
@@ -337,7 +349,7 @@ def _pool_accuracy_tidbits(
     if current is None or not current["graded"]:
         return []
 
-    tidbits = []
+    items = []
     graded_weeks = [row for row in series if row["graded"]]
     prior = [row for row in graded_weeks if row["week"] < season.week]
     prior_correct = sum(row["correct"] for row in prior)
@@ -356,14 +368,16 @@ def _pool_accuracy_tidbits(
             rank_note, score = "best", 2.5
         elif ordered[-1]["week"] == season.week:
             rank_note, score = "worst", 2.5
-    short = f"Pool hit {_pct_text(current['correct'], current['graded'])} this week{so_far}"
+    short = (
+        f"Pool hit {_pct_text(current['correct'], current['graded'])} this week{so_far}"
+    )
     if rank_note:
         headline += f", its {rank_note} week of the season"
         short += f", {rank_note} of the season"
     elif prior_graded:
         headline += f", vs {_pct_text(prior_correct, prior_graded)} before this week"
-    tidbits.append(
-        _tidbit(
+    items.append(
+        _item(
             "pool_accuracy",
             "pool",
             "week",
@@ -389,9 +403,13 @@ def _pool_accuracy_tidbits(
             if count <= 3
             else f"{count} perfect 5-0 weeks: {_names_text(names)}."
         )
-        short = f"5-0: {_names_text(names, 2)}" if count <= 2 else f"{count} perfect 5-0 weeks"
-        tidbits.append(
-            _tidbit(
+        short = (
+            f"5-0: {_names_text(names, 2)}"
+            if count <= 2
+            else f"{count} perfect 5-0 weeks"
+        )
+        items.append(
+            _item(
                 "perfect_week",
                 "pool",
                 "week",
@@ -403,8 +421,8 @@ def _pool_accuracy_tidbits(
             )
         )
     elif week_complete:
-        tidbits.append(
-            _tidbit(
+        items.append(
+            _item(
                 "perfect_week",
                 "pool",
                 "week",
@@ -424,9 +442,13 @@ def _pool_accuracy_tidbits(
             if count <= 3
             else f"{count} people went 0-5 this week: {_names_text(names)}."
         )
-        short = f"0-5: {_names_text(names, 2)}" if count <= 2 else f"{count} people went 0-5"
-        tidbits.append(
-            _tidbit(
+        short = (
+            f"0-5: {_names_text(names, 2)}"
+            if count <= 2
+            else f"{count} people went 0-5"
+        )
+        items.append(
+            _item(
                 "winless_week",
                 "pool",
                 "week",
@@ -437,7 +459,7 @@ def _pool_accuracy_tidbits(
                 sample_size=count,
             )
         )
-    return tidbits
+    return items
 
 
 # -- the spread mattered ------------------------------------------------------
@@ -470,7 +492,11 @@ def _spread_mattered_counts(
             ]
             winner_lost_picks += len(burned)
             flipped_games.append(
-                {**_game_line(game), "winner": _team(game, winner), "picks_burned": len(burned)}
+                {
+                    **_game_line(game),
+                    "winner": _team(game, winner),
+                    "picks_burned": len(burned),
+                }
             )
     return {
         "games": covered + flipped + pushes,
@@ -482,8 +508,8 @@ def _spread_mattered_counts(
     }
 
 
-def _spread_mattered_tidbits(season: _Season) -> list[dict[str, Any]]:
-    tidbits = []
+def _spread_mattered_items(season: _Season) -> list[dict[str, Any]]:
+    items = []
     week = _spread_mattered_counts(season.week_games(season.week), season.picks_by_game)
     if week["games"]:
         if week["spread_flipped"] == 0:
@@ -505,8 +531,8 @@ def _spread_mattered_tidbits(season: _Season) -> list[dict[str, Any]]:
                 )
             short = f"Spread flipped {week['spread_flipped']} of {week['games']} games this week"
             score = 1.5 + min(1.0, week["spread_flipped"] / max(1, week["games"]) * 2)
-        tidbits.append(
-            _tidbit(
+        items.append(
+            _item(
                 "spread_mattered",
                 "spread",
                 "week",
@@ -526,8 +552,8 @@ def _spread_mattered_tidbits(season: _Season) -> list[dict[str, Any]]:
             f" ({season_counts['winner_covered']} of {season_counts['games']} games)."
         )
         season_data = {k: v for k, v in season_counts.items() if k != "flipped_games"}
-        tidbits.append(
-            _tidbit(
+        items.append(
+            _item(
                 "spread_mattered",
                 "spread",
                 "season",
@@ -541,7 +567,7 @@ def _spread_mattered_tidbits(season: _Season) -> list[dict[str, Any]]:
                 key="season",
             )
         )
-    return tidbits
+    return items
 
 
 # -- crowd record, fade the crowd, popular picks -------------------------------
@@ -588,7 +614,7 @@ def _wlp(entries: list[dict[str, Any]]) -> tuple[int, int, int]:
     return wins, losses, len(entries) - wins - losses
 
 
-def _crowd_tidbits(season: _Season) -> list[dict[str, Any]]:
+def _crowd_items(season: _Season) -> list[dict[str, Any]]:
     """crowd_record: the side more of the pool took, game by game.
     popular_picks: just the crowd sides picked by _POPULAR_POOL_SHARE of
     that week's pool - a team 12 people picked says more about the pool
@@ -596,7 +622,7 @@ def _crowd_tidbits(season: _Season) -> list[dict[str, Any]]:
     The pool size is that week's weekly_performance rows (every active
     member), not the people whose picks are visible so far, which before
     the Sunday deadline is only a handful."""
-    tidbits = []
+    items = []
     season_results = _crowd_results(season.games, season.picks_by_game)
     week_results = [e for e in season_results if e["week"] == season.week]
 
@@ -604,7 +630,8 @@ def _crowd_tidbits(season: _Season) -> list[dict[str, Any]]:
     for row in season.performance:
         pool_size_by_week[row["week_number"]] += 1
     min_picks_by_week = {
-        week: math.ceil(_POPULAR_POOL_SHARE * size) for week, size in pool_size_by_week.items()
+        week: math.ceil(_POPULAR_POOL_SHARE * size)
+        for week, size in pool_size_by_week.items()
     }
     min_picks = min_picks_by_week.get(season.week)
 
@@ -618,8 +645,8 @@ def _crowd_tidbits(season: _Season) -> list[dict[str, Any]]:
             headline += f" - fading it would be {_record_text(losses, wins, pushes)}."
         else:
             headline += "."
-        tidbits.append(
-            _tidbit(
+        items.append(
+            _item(
                 "crowd_record",
                 "crowd",
                 "season",
@@ -640,8 +667,8 @@ def _crowd_tidbits(season: _Season) -> list[dict[str, Any]]:
 
     wins, losses, pushes = _wlp(week_results)
     if wins + losses:
-        tidbits.append(
-            _tidbit(
+        items.append(
+            _item(
                 "crowd_record",
                 "crowd",
                 "week",
@@ -649,7 +676,12 @@ def _crowd_tidbits(season: _Season) -> list[dict[str, Any]]:
                 f"The crowd's side went {_record_text(wins, losses, pushes)}"
                 " against the spread this week.",
                 f"Crowd's side went {_record_text(wins, losses, pushes)} ATS this week",
-                {"wins": wins, "losses": losses, "pushes": pushes, "games": week_results},
+                {
+                    "wins": wins,
+                    "losses": losses,
+                    "pushes": pushes,
+                    "games": week_results,
+                },
                 sample_size=wins + losses,
             )
         )
@@ -658,7 +690,8 @@ def _crowd_tidbits(season: _Season) -> list[dict[str, Any]]:
     popular_season = [
         e
         for e in season_results
-        if e["week"] in min_picks_by_week and e["pick_count"] >= min_picks_by_week[e["week"]]
+        if e["week"] in min_picks_by_week
+        and e["pick_count"] >= min_picks_by_week[e["week"]]
     ]
     popular_week = sorted(
         (e for e in popular_season if e["week"] == season.week),
@@ -668,9 +701,11 @@ def _crowd_tidbits(season: _Season) -> list[dict[str, Any]]:
     wins, losses, pushes = _wlp(popular_week)
     if wins + losses:
         top = popular_week[0]
-        outcome = {"win": "covered", "loss": "didn't cover", "push": "pushed"}[top["result"]]
-        tidbits.append(
-            _tidbit(
+        outcome = {"win": "covered", "loss": "didn't cover", "push": "pushed"}[
+            top["result"]
+        ]
+        items.append(
+            _item(
                 "popular_picks",
                 "crowd",
                 "week",
@@ -701,8 +736,8 @@ def _crowd_tidbits(season: _Season) -> list[dict[str, Any]]:
             if len(set(min_picks_by_week.values())) == 1
             else f"{round(_POPULAR_POOL_SHARE * 100)}%+ of the pool"
         )
-        tidbits.append(
-            _tidbit(
+        items.append(
+            _item(
                 "popular_picks",
                 "crowd",
                 "season",
@@ -712,7 +747,9 @@ def _crowd_tidbits(season: _Season) -> list[dict[str, Any]]:
                 f"Popular picks are {_record_text(wins, losses, pushes)} ATS this season",
                 {
                     "pool_share": _POPULAR_POOL_SHARE,
-                    "min_picks_by_week": {str(w): n for w, n in sorted(min_picks_by_week.items())},
+                    "min_picks_by_week": {
+                        str(w): n for w, n in sorted(min_picks_by_week.items())
+                    },
                     "wins": wins,
                     "losses": losses,
                     "pushes": pushes,
@@ -721,7 +758,7 @@ def _crowd_tidbits(season: _Season) -> list[dict[str, Any]]:
                 key="season",
             )
         )
-    return tidbits
+    return items
 
 
 # -- chaos index --------------------------------------------------------------
@@ -782,17 +819,23 @@ def _week_chaos(
     }
 
 
-def _chaos_series(season: _Season, pool_series: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _chaos_series(
+    season: _Season, pool_series: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     pool_by_week = {row["week"]: row for row in pool_series}
     series = []
     for week_number in sorted({g["week_number"] for g in season.games}):
-        chaos = _week_chaos(season.week_games(week_number), pool_by_week.get(week_number))
+        chaos = _week_chaos(
+            season.week_games(week_number), pool_by_week.get(week_number)
+        )
         if chaos:
             series.append(chaos)
     return series
 
 
-def _chaos_tidbits(season: _Season, chaos_series: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _chaos_items(
+    season: _Season, chaos_series: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     """A complete week is ranked against the season's other complete weeks.
     A week in progress gets its index "so far", and only an "on pace"
     claim once _CHAOS_PACE_MIN_GAMES are final - before that, early swings
@@ -810,7 +853,9 @@ def _chaos_tidbits(season: _Season, chaos_series: list[dict[str, Any]]) -> list[
         f" {current['underdog_covers']} of {current['ats_decided']} and"
         f" {current['outright_upsets']} won outright."
     )
-    short = f"Chaos index {current['index']}" + (" so far" if current["partial"] else "")
+    short = f"Chaos index {current['index']}" + (
+        " so far" if current["partial"] else ""
+    )
     score = 1.3 if current["partial"] else 1.5
     rank = None
     others = [c for c in chaos_series if c["week"] != season.week and not c["partial"]]
@@ -828,7 +873,7 @@ def _chaos_tidbits(season: _Season, chaos_series: list[dict[str, Any]]) -> list[
             short += f"{pace} chalkiest of the season"
             score = 2.0 if current["partial"] else 2.3
     return [
-        _tidbit(
+        _item(
             "chaos_index",
             "chaos",
             "week",
@@ -844,7 +889,7 @@ def _chaos_tidbits(season: _Season, chaos_series: list[dict[str, Any]]) -> list[
 # -- twins and oppos ----------------------------------------------------------
 
 
-def _twins_and_oppos_tidbits(season: _Season) -> list[dict[str, Any]]:
+def _twins_and_oppos_items(season: _Season) -> list[dict[str, Any]]:
     """Twins: two or more users with the exact same 5 picks. Oppos: two
     users on the same 5 games, every one on the opposite side. Only users
     whose 5 picks are all visible count."""
@@ -855,7 +900,9 @@ def _twins_and_oppos_tidbits(season: _Season) -> list[dict[str, Any]]:
             picks_by_user[pick["user_id"]].append(pick)
 
     full = {
-        user_id: picks for user_id, picks in picks_by_user.items() if len(picks) == _PICKS_PER_WEEK
+        user_id: picks
+        for user_id, picks in picks_by_user.items()
+        if len(picks) == _PICKS_PER_WEEK
     }
 
     def record(picks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -872,18 +919,20 @@ def _twins_and_oppos_tidbits(season: _Season) -> list[dict[str, Any]]:
             for p in sorted(picks, key=lambda p: games[p["game_id"]]["game_time"])
         ]
 
-    tidbits = []
+    items = []
     groups: defaultdict[frozenset[tuple[int, int]], list[int]] = defaultdict(list)
     for user_id, picks in full.items():
-        groups[frozenset((p["game_id"], p["picked_team_id"]) for p in picks)].append(user_id)
+        groups[frozenset((p["game_id"], p["picked_team_id"]) for p in picks)].append(
+            user_id
+        )
     for user_ids in groups.values():
         if len(user_ids) < 2:
             continue
         users = _people([full[u][0] for u in user_ids])
         names = [u["name"] for u in users]
         first = full[user_ids[0]]
-        tidbits.append(
-            _tidbit(
+        items.append(
+            _item(
                 "twins",
                 "users",
                 "week",
@@ -907,7 +956,9 @@ def _twins_and_oppos_tidbits(season: _Season) -> list[dict[str, Any]]:
             continue
         rec_a, rec_b = record(picks_a), record(picks_b)
         name_a, name_b = picks_a[0]["name"], picks_b[0]["name"]
-        headline = f"Opposites: {name_a} and {name_b} took opposite sides of the same 5 games."
+        headline = (
+            f"Opposites: {name_a} and {name_b} took opposite sides of the same 5 games."
+        )
         if rec_a["graded"] == _PICKS_PER_WEEK:
             if rec_a["correct"] == rec_b["correct"]:
                 headline += f" They split it {rec_a['correct']}-{rec_b['correct']}."
@@ -918,8 +969,8 @@ def _twins_and_oppos_tidbits(season: _Season) -> list[dict[str, Any]]:
                     else (name_b, rec_b, rec_a)
                 )
                 headline += f" {leader} won it {lead['correct']}-{trail['correct']}."
-        tidbits.append(
-            _tidbit(
+        items.append(
+            _item(
                 "oppos",
                 "users",
                 "week",
@@ -944,7 +995,7 @@ def _twins_and_oppos_tidbits(season: _Season) -> list[dict[str, Any]]:
                 key=f"{min(user_a, user_b)}-{max(user_a, user_b)}",
             )
         )
-    return tidbits
+    return items
 
 
 # -- cover streaks ------------------------------------------------------------
@@ -954,7 +1005,7 @@ def _active_cover_streaks(season: _Season) -> list[dict[str, Any]]:
     """Every team's active run of covers or non-covers of _MIN_COVER_STREAK+,
     through its latest FINAL game with a spread, longest first. A push ends
     a streak either way. The key's top-level `cover_streaks` (a badge per
-    team) - the tidbits below only headline the longest."""
+    team) - the recap items below only headline the longest."""
     results_by_team: defaultdict[int, list[str]] = defaultdict(list)
     teams: dict[int, dict[str, Any]] = {}
     for game in season.games:  # already game_time order
@@ -979,13 +1030,15 @@ def _active_cover_streaks(season: _Season) -> list[dict[str, Any]]:
                 break
             length += 1
         if length >= _MIN_COVER_STREAK:
-            streaks.append({"team": teams[team_id], "streak_type": last, "length": length})
+            streaks.append(
+                {"team": teams[team_id], "streak_type": last, "length": length}
+            )
     streaks.sort(key=lambda s: (-s["length"], s["team"]["abbr"]))
     return streaks
 
 
-def _cover_streak_tidbits(streaks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    tidbits = []
+def _cover_streak_items(streaks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items = []
     for kind, verb, short_verb in (
         ("cover", "covered", "covered"),
         ("miss", "failed to cover", "missed"),
@@ -996,9 +1049,11 @@ def _cover_streak_tidbits(streaks: list[dict[str, Any]]) -> list[dict[str, Any]]
         best = of_kind[0]["length"]  # longest first
         leaders = [s["team"] for s in of_kind if s["length"] == best]
         abbrs = _names_text([t["abbr"] for t in leaders])
-        headline = f"{abbrs} {'have' if len(leaders) > 1 else 'has'} {verb} {best} straight."
-        tidbits.append(
-            _tidbit(
+        headline = (
+            f"{abbrs} {'have' if len(leaders) > 1 else 'has'} {verb} {best} straight."
+        )
+        items.append(
+            _item(
                 "cover_streak",
                 "teams",
                 "season",
@@ -1010,7 +1065,7 @@ def _cover_streak_tidbits(streaks: list[dict[str, Any]]) -> list[dict[str, Any]]
                 key=kind,
             )
         )
-    return tidbits
+    return items
 
 
 # -- biggest mover ------------------------------------------------------------
@@ -1050,53 +1105,69 @@ def _rank_moves(season: _Season) -> list[dict[str, Any]]:
     return moves
 
 
-def _biggest_mover_tidbits(moves: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _biggest_mover_items(moves: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Just the biggest climb and drop (ties listed together) - every move
     of _MIN_RANK_MOVE+ is in the key's top-level `movers` instead."""
-    tidbits = []
+    items = []
     climb = max(moves, key=lambda m: m["change"], default=None)
     drop = min(moves, key=lambda m: m["change"], default=None)
     if climb and climb["change"] >= _MIN_RANK_MOVE:
         climbers = sorted(m["name"] for m in moves if m["change"] == climb["change"])
-        tidbits.append(
-            _tidbit(
+        items.append(
+            _item(
                 "biggest_mover",
                 "users",
                 "week",
                 1.5 + climb["change"] / 10,
                 f"{_names_text(climbers)} jumped {climb['change']} spots"
-                + (f" to {_ordinal(climb['rank_after'])}." if len(climbers) == 1 else "."),
+                + (
+                    f" to {_ordinal(climb['rank_after'])}."
+                    if len(climbers) == 1
+                    else "."
+                ),
                 f"{_names_text(climbers, 2)} up {climb['change']} spots"
-                + (f" to {_ordinal(climb['rank_after'])}" if len(climbers) == 1 else ""),
-                {"direction": "up", "moves": [m for m in moves if m["change"] == climb["change"]]},
+                + (
+                    f" to {_ordinal(climb['rank_after'])}" if len(climbers) == 1 else ""
+                ),
+                {
+                    "direction": "up",
+                    "moves": [m for m in moves if m["change"] == climb["change"]],
+                },
                 sample_size=len(moves),
                 key="up",
             )
         )
     if drop and -drop["change"] >= _MIN_RANK_MOVE:
         droppers = sorted(m["name"] for m in moves if m["change"] == drop["change"])
-        tidbits.append(
-            _tidbit(
+        items.append(
+            _item(
                 "biggest_mover",
                 "users",
                 "week",
                 1.3 + -drop["change"] / 10,
                 f"{_names_text(droppers)} slid {-drop['change']} spots"
-                + (f" to {_ordinal(drop['rank_after'])}." if len(droppers) == 1 else "."),
+                + (
+                    f" to {_ordinal(drop['rank_after'])}."
+                    if len(droppers) == 1
+                    else "."
+                ),
                 f"{_names_text(droppers, 2)} down {-drop['change']} spots"
                 + (f" to {_ordinal(drop['rank_after'])}" if len(droppers) == 1 else ""),
-                {"direction": "down", "moves": [m for m in moves if m["change"] == drop["change"]]},
+                {
+                    "direction": "down",
+                    "moves": [m for m in moves if m["change"] == drop["change"]],
+                },
                 sample_size=len(moves),
                 key="down",
             )
         )
-    return tidbits
+    return items
 
 
 # -- upset of the week --------------------------------------------------------
 
 
-def _upset_tidbits(season: _Season) -> list[dict[str, Any]]:
+def _upset_items(season: _Season) -> list[dict[str, Any]]:
     """Biggest-spread underdog to win outright this week, and who had it."""
     upsets = []
     for game in season.week_games(season.week):
@@ -1118,7 +1189,7 @@ def _upset_tidbits(season: _Season) -> list[dict[str, Any]]:
             + (f": {_names_text(believer_names)}." if 0 < len(believers) <= 3 else ".")
         )
     return [
-        _tidbit(
+        _item(
             "upset_of_week",
             "chaos",
             "week",
@@ -1156,21 +1227,27 @@ def _standout(
         return []
     z = _z(successes, n)
     return [
-        _tidbit(
+        _item(
             kind,
             category,
             "season",
             min(_STANDOUT_MAX_SCORE, abs(z)),
             headline,
             short,
-            {**data, "successes": successes, "n": n, "pct": _pct(successes, n), "z": round(z, 2)},
+            {
+                **data,
+                "successes": successes,
+                "n": n,
+                "pct": _pct(successes, n),
+                "z": round(z, 2),
+            },
             sample_size=n,
             key=key,
         )
     ]
 
 
-def _game_split_tidbits(season: _Season) -> list[dict[str, Any]]:
+def _game_split_items(season: _Season) -> list[dict[str, Any]]:
     """League-wide cover splits: home vs road, favorites vs underdogs,
     home underdogs, underdogs in division games. Neutral-site games skip
     anything home/road."""
@@ -1198,11 +1275,11 @@ def _game_split_tidbits(season: _Season) -> list[dict[str, Any]]:
     # category "league": league-wide cover trends, independent of the pool's
     # own picks (those are pool_split, category "splits"). The ":league" id
     # suffix predates the category and is kept so ids stay stable.
-    tidbits = []
+    items = []
     leader = "Home" if home_covers * 2 >= home_n else "Road"
     lead = home_covers if leader == "Home" else home_n - home_covers
     record = _record_text(lead, home_n - lead)
-    tidbits += _standout(
+    items += _standout(
         "home_road_covers",
         "league",
         "league",
@@ -1216,7 +1293,7 @@ def _game_split_tidbits(season: _Season) -> list[dict[str, Any]]:
     leader = "Favorites" if fav_covers * 2 >= fav_n else "Underdogs"
     lead = fav_covers if leader == "Favorites" else fav_n - fav_covers
     record = _record_text(lead, fav_n - lead)
-    tidbits += _standout(
+    items += _standout(
         "favorite_covers",
         "league",
         "league",
@@ -1228,7 +1305,7 @@ def _game_split_tidbits(season: _Season) -> list[dict[str, Any]]:
         {"side": "favorite"},
     )
     record = _record_text(home_dog_covers, home_dog_n - home_dog_covers)
-    tidbits += _standout(
+    items += _standout(
         "home_underdog_covers",
         "league",
         "league",
@@ -1240,7 +1317,7 @@ def _game_split_tidbits(season: _Season) -> list[dict[str, Any]]:
         {"side": "home_underdog"},
     )
     record = _record_text(div_dog_covers, div_n - div_dog_covers)
-    tidbits += _standout(
+    items += _standout(
         "division_underdog_covers",
         "league",
         "league",
@@ -1251,16 +1328,19 @@ def _game_split_tidbits(season: _Season) -> list[dict[str, Any]]:
         f"Underdogs are {record} ATS in division games",
         {"side": "division_underdog"},
     )
-    return tidbits
+    return items
 
 
-def _pool_split_tidbits(season: _Season) -> list[dict[str, Any]]:
+def _pool_split_items(season: _Season) -> list[dict[str, Any]]:
     """The pool's own ATS record split by what kind of pick it was:
     favorite/underdog, home/road, kickoff slot, division game. Graded by
     ats_side() (same as season:trends), pushes left out. Also flags a
     lopsided favorite/underdog lean on its own."""
     counters: defaultdict[str, list[int]] = defaultdict(lambda: [0, 0])  # [correct, n]
-    fav_lean = [0, 0]  # [favorite picks, picks with a favorite] - share only, not a tidbit
+    fav_lean = [
+        0,
+        0,
+    ]  # [favorite picks, picks with a favorite] - share only, not a recap item
 
     for game in season.games:
         side = ats_side(game)
@@ -1296,9 +1376,9 @@ def _pool_split_tidbits(season: _Season) -> list[dict[str, Any]]:
         **{f"slot:{slot}": f"on {label} games" for slot, label in _SLOT_LABELS.items()},
     }
 
-    tidbits = []
+    items = []
     for bucket, (correct, n) in sorted(counters.items()):
-        tidbits += _standout(
+        items += _standout(
             "pool_split",
             bucket,
             "splits",
@@ -1312,14 +1392,14 @@ def _pool_split_tidbits(season: _Season) -> list[dict[str, Any]]:
         )
 
     # the lean itself isn't news (a pool always leans favorite), so it rides
-    # along on the favorite/underdog splits rather than being its own tidbit
-    for tidbit in tidbits:
-        if tidbit["data"]["bucket"] in ("fav:favorite", "fav:underdog"):
-            tidbit["data"]["favorite_pick_share"] = _pct(*fav_lean)
-    return tidbits
+    # along on the favorite/underdog splits rather than being its own recap item
+    for item in items:
+        if item["data"]["bucket"] in ("fav:favorite", "fav:underdog"):
+            item["data"]["favorite_pick_share"] = _pct(*fav_lean)
+    return items
 
 
-def _team_split_tidbits(season: _Season) -> list[dict[str, Any]]:
+def _team_split_items(season: _Season) -> list[dict[str, Any]]:
     """One team's ATS record in primetime, in division games, at home and
     on the road - only the ones that clear _STANDOUT_MIN_TEAM_GAMES and the
     z bar, which a team's small samples rarely do before midseason."""
@@ -1352,10 +1432,10 @@ def _team_split_tidbits(season: _Season) -> list[dict[str, Any]]:
         "home": "at home",
         "away": "on the road",
     }
-    tidbits = []
+    items = []
     for (team_id, bucket), (covers, n) in sorted(counters.items()):
         team = teams[team_id]
-        tidbits += _standout(
+        items += _standout(
             "team_split",
             f"{team['abbr']}:{bucket}",
             "teams",
@@ -1367,13 +1447,13 @@ def _team_split_tidbits(season: _Season) -> list[dict[str, Any]]:
             f"{team['abbr']} are {_record_text(covers, n - covers)} ATS {labels[bucket]}",
             {"team": team, "bucket": bucket, "label": labels[bucket]},
         )
-    return tidbits
+    return items
 
 
 # -- writer -------------------------------------------------------------------
 
 
-def compute_week_tidbits(d1: D1Client, week_number: int) -> dict[str, Any] | None:
+def compute_week_recap(d1: D1Client, week_number: int) -> dict[str, Any] | None:
     games = d1.query(_SEASON_GAMES_SQL, [SEASON, week_number]).results
     if not any(g["week_number"] == week_number for g in games):
         return None
@@ -1394,20 +1474,20 @@ def compute_week_tidbits(d1: D1Client, week_number: int) -> dict[str, Any] | Non
     moves = _rank_moves(season)
     cover_streaks = _active_cover_streaks(season)
 
-    tidbits = [
-        *_pool_accuracy_tidbits(season, pool_series, week_complete),
-        *_spread_mattered_tidbits(season),
-        *_crowd_tidbits(season),
-        *_chaos_tidbits(season, chaos_series),
-        *_twins_and_oppos_tidbits(season),
-        *_cover_streak_tidbits(cover_streaks),
-        *_biggest_mover_tidbits(moves),
-        *_upset_tidbits(season),
-        *_game_split_tidbits(season),
-        *_pool_split_tidbits(season),
-        *_team_split_tidbits(season),
+    items = [
+        *_pool_accuracy_items(season, pool_series, week_complete),
+        *_spread_mattered_items(season),
+        *_crowd_items(season),
+        *_chaos_items(season, chaos_series),
+        *_twins_and_oppos_items(season),
+        *_cover_streak_items(cover_streaks),
+        *_biggest_mover_items(moves),
+        *_upset_items(season),
+        *_game_split_items(season),
+        *_pool_split_items(season),
+        *_team_split_items(season),
     ]
-    tidbits.sort(key=lambda t: -t["score"])
+    items.sort(key=lambda t: -t["score"])
 
     return {
         "version": SCHEMA_VERSION,
@@ -1417,56 +1497,56 @@ def compute_week_tidbits(d1: D1Client, week_number: int) -> dict[str, Any] | Non
         "week_complete": week_complete,
         "games_final": games_final,
         "games_total": len(week_games),
-        "tidbits": tidbits,
+        "items": items,
         "series": {
             "pool_accuracy": pool_series,
             "chaos": chaos_series,
         },
         # every leaderboard move of _MIN_RANK_MOVE+ places (the mover
-        # tidbits only headline the biggest), for arrows on each row
+        # recap items only headline the biggest), for arrows on each row
         "movers": [m for m in moves if abs(m["change"]) >= _MIN_RANK_MOVE],
         # every active team streak of _MIN_COVER_STREAK+, for game badges
         "cover_streaks": cover_streaks,
     }
 
 
-def write_week_tidbits(week_number: int) -> None:
-    """Write week:{season}:{weekNN}:tidbits from compute_week_tidbits()."""
+def write_week_recap(week_number: int) -> None:
+    """Write week:{season}:{weekNN}:recap from compute_week_recap()."""
     d1 = D1Client(**get_d1_config())
-    payload = compute_week_tidbits(d1, week_number)
+    payload = compute_week_recap(d1, week_number)
     if payload is None:
         logger.warning(
-            "No games found for season %s week %s - not writing tidbits key",
+            "No games found for season %s week %s - not writing recap key",
             SEASON,
             week_number,
         )
         return
 
     kv = KVClient(**get_kv_config())
-    kv.write(f"week:{SEASON}:{week_number:02d}:tidbits", payload)
+    kv.write(f"week:{SEASON}:{week_number:02d}:recap", payload)
     logger.info(
-        "Wrote week:%s:%02d:tidbits (%d tidbits) to KV",
+        "Wrote week:%s:%02d:recap (%d items) to KV",
         SEASON,
         week_number,
-        len(payload["tidbits"]),
+        len(payload["items"]),
     )
 
 
-def write_current_week_tidbits() -> None:
-    """Resolve weeks.is_current and write that week's tidbits key."""
+def write_current_week_recap() -> None:
+    """Resolve weeks.is_current and write that week's recap key."""
     d1 = D1Client(**get_d1_config())
     current_week = resolve_current_week(d1)
     if current_week is None:
         logger.warning(
-            "No current week found for season %s - not writing tidbits key",
+            "No current week found for season %s - not writing recap key",
             SEASON,
         )
         return
 
-    write_week_tidbits(current_week)
+    write_week_recap(current_week)
 
 
-def write_recent_weeks_tidbits() -> None:
+def write_recent_weeks_recap() -> None:
     """What orchestration refreshes: the current week, any week that has
     started but isn't complete, and any week whose last kickoff was within
     _RECENT_WEEK_HOURS. CBS can move weeks.is_current on before Monday
@@ -1485,7 +1565,9 @@ def write_recent_weeks_tidbits() -> None:
         ],
     ).results
     if not rows:
-        logger.info("No current or recent weeks for season %s - no tidbits to write", SEASON)
+        logger.info(
+            "No current or recent weeks for season %s - no recap to write", SEASON
+        )
         return
     for row in rows:
-        write_week_tidbits(row["week_number"])
+        write_week_recap(row["week_number"])

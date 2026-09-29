@@ -52,7 +52,7 @@ _HOUSEKEEPING_STALE_SECONDS = 48 * 60 * 60  # 24h, quiet only
 _CBS_PICKS_QUIET_STALE_SECONDS = 12 * 60 * 60  # 30min, quiet only
 _PREGAME_WEATHER_STALE_SECONDS = 8 * 60 * 60  # 4h baseline, every tick
 _USER_PROFILES_STALE_SECONDS = 2 * 60 * 60  # 30min, every tick
-_TIDBITS_STALE_SECONDS = 30 * 60  # 5min, every tick
+_RECAP_STALE_SECONDS = 30 * 60  # 5min, every tick
 
 
 def _seconds_since(iso_value: str | None, now: datetime) -> float | None:
@@ -149,10 +149,10 @@ def write_admin_status() -> None:
                 [age("user_profiles_last_success_at")], _USER_PROFILES_STALE_SECONDS
             ),
         },
-        "tidbits_write": {
-            "last_at": state.get("tidbits_last_write_at"),
-            "last_success_at": state.get("tidbits_last_success_at"),
-            "stale": _is_stale([age("tidbits_last_success_at")], _TIDBITS_STALE_SECONDS),
+        "recap_write": {
+            "last_at": state.get("recap_last_write_at"),
+            "last_success_at": state.get("recap_last_success_at"),
+            "stale": _is_stale([age("recap_last_success_at")], _RECAP_STALE_SECONDS),
         },
         "sports_io_live_poll": {
             "last_at": state.get("sports_io_live_last_poll_at"),

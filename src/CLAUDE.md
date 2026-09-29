@@ -454,8 +454,8 @@ Cadences, and why each one is what it is:
   continuous rather than a single pre-kickoff pulse, since a forecast is
   worth re-checking repeatedly as it changes rather than just once right
   before kickoff.
-- **Tidbits KV keys, 5 min, live or quiet** (added 2026-09-28) -
-  `_run_tidbits_refresh()`: the current week plus any week in progress
+- **Recap KV keys, 5 min, live or quiet** (added 2026-09-28) -
+  `_run_recap_refresh()`: the current week plus any week in progress
   or finished in the last 12 hours, see "KV writer" below.
 - **Housekeeping, 24 hr, quiet periods only** — full Sports IO schedule
   refresh + `teams_loader.main()` (win/loss/tie records, added
@@ -671,19 +671,19 @@ Cloudflare KV for `cbs-pickem-web`'s Worker to read — D1 stays the system
 of record, KV is a serving cache (see root `CLAUDE.md`'s Commands list
 and `CLAUDE.local.md`'s "Web UI" section for the overall architecture
 decision). Eleven key types; six (games, game details, leaderboard, odds,
-week trends, tidbits) have a `write_week_*`/`write_current_week_*` pair (the
+week trends, recap) have a `write_week_*`/`write_current_week_*` pair (the
 latter resolves `weeks.is_current` via `resolve_current_week()` then
 delegates).
 
 **Split into one module per key, 2026-09-23** (was a single 1400+ line
 `src/kv_writer.py`): `games.py`, `leaderboard.py`, `odds.py`, `trends.py`,
-`tidbits.py`, `historical.py`, `user_profiles.py`, `admin.py`, plus
+`recap.py`, `historical.py`, `user_profiles.py`, `admin.py`, plus
 `shared.py` for the handful of things genuinely used across more than one
 of those (`GAMES_SQL`/`PICKS_SQL` — the literal same query used by both
 `games.py` and `trends.py`, not duplicated; `resolve_current_week()`;
 `game_team_dicts()`/`split_home_away()`; `ats_side()` and
 `standard_rank()`, moved from `trends.py`/`leaderboard.py` 2026-09-28 when
-`tidbits.py` needed both; `write_meta_current()` itself, since `meta:current` is
+`recap.py` needed both; `write_meta_current()` itself, since `meta:current` is
 just `resolve_current_week()` plus two pool-rule constants and the CBS
 pool link, not worth its own file). Two further cross-module dependencies were kept as direct
 imports rather than folded into `shared.py`, since each is really owned by
@@ -940,11 +940,11 @@ src.kv_writer.__main__`).
   sides), so it can never disagree with `team_ats_record`'s own
   `cover_pct`. Sorted by how far apart the two groups' accuracy is, so the
   most divergent (and most interesting) teams sort first.
-- `write_week_tidbits()` → `week:{season}:{weekNN}:tidbits` (added
-  2026-09-28, `tidbits.py`) - short rotating "did you know" items for the
+- `write_week_recap()` → `week:{season}:{weekNN}:recap` (added
+  2026-09-28, `recap.py`) - short rotating "did you know" items for the
   UI's weekly infographic: `{version, season, week, updated_at,
-  week_complete, games_final, games_total, tidbits: [...], series:
-  {pool_accuracy, chaos}, movers, cover_streaks}`. Each tidbit is `{id,
+  week_complete, games_final, games_total, items: [...], series:
+  {pool_accuracy, chaos}, movers, cover_streaks}`. Each item is `{id,
   kind, category, scope (week|season), score, headline, short,
   sample_size, data}`, sorted by `score` descending; the UI rotates
   through the top few and can render `headline` (or `short`, at most
@@ -954,12 +954,13 @@ src.kv_writer.__main__`).
   key's week (season data through that week only). `version`
   (`SCHEMA_VERSION`) is bumped whenever a kind is renamed/removed or a
   field changes shape, so the UI can catch a stale card mapping (it went
-  through this once with `public_enemy` → `trap_team`) - 2 as of
-  2026-09-28. Every person anywhere in the key is `{user_id, name}`
+  through this once with `public_enemy` → `trap_team`) - 3 as of
+  2026-09-29, when the key was renamed from `:tidbits` and its
+  `tidbits` list to `items`. Every person anywhere in the key is `{user_id, name}`
   (`_person()`), since the UI matches on id. `movers` is every
   leaderboard move of `_MIN_RANK_MOVE` (3)+ places vs last week and
   `cover_streaks` every active team streak of 3+ (`{team, streak_type,
-  length}`) - the `biggest_mover`/`cover_streak` tidbits only headline
+  length}`) - the `biggest_mover`/`cover_streak` items only headline
   the biggest, these feed row arrows and game badges. Categories: `pool`,
   `spread`, `crowd`, `chaos`, `users`, `teams`, `league` (the four
   league-wide cover kinds - their ids keep an older `:league` suffix) and
@@ -1012,20 +1013,21 @@ src.kv_writer.__main__`).
   with `ats_side()` like `season:trends`; only `pool_accuracy`/perfect/
   winless use CBS's grade. The pool's favorite-pick share is expected to
   be lopsided, so it rides along as `favorite_pick_share` on the
-  favorite/underdog `pool_split` data instead of being a tidbit (it
+  favorite/underdog `pool_split` data instead of being an item (it
   briefly was, and topped every week at z = 9). Thresholds and base scores
   are judgment calls, like the trends thresholds.
-  Written by orchestration every `TIDBITS_INTERVAL_SECONDS` (5 min, live
-  or quiet, `tidbits_write` in `meta:admin` with a stale flag) rather than
+  Written by orchestration every `RECAP_INTERVAL_SECONDS` (5 min, live
+  or quiet, `recap_write` in `meta:admin` with a stale flag) rather than
   every tick - it's an infographic, not a live number - via
-  `write_recent_weeks_tidbits()`: the current week, any started week not
+  `write_recent_weeks_recap()`: the current week, any started week not
   yet complete, and any week whose last kickoff (`weeks.end_time`) was
   within `_RECENT_WEEK_HOURS` (12). Only writing `is_current` (the first
   version) lost a week's final state whenever CBS moved the current week
   on before Monday night's game ended, and CBS's grades land a poll or
   two after a game goes FINAL anyway. Weeks 1-2 of 2026 were backfilled
-  by hand 2026-09-28 (`write_week_tidbits(n)`). UI reference Artifact
-  linked from `CLAUDE.local.md`'s tidbits TODO entry.
+  by hand 2026-09-28, and weeks 1-4 rewritten under the new key name
+  2026-09-29 (`write_week_recap(n)`). UI reference Artifact
+  linked from `CLAUDE.local.md`'s recap TODO entry.
 - `write_historical()` → `meta:historical` — see `db/CLAUDE.md`'s
   `historical_standings` section for what feeds this.
 - `write_user_profiles()` → `user:{user_id}:season:{season}`, one key per

@@ -10,7 +10,7 @@ from src.kv_writer import (
     write_current_week_leaderboard,
     write_current_week_game_details,
     write_current_week_odds,
-    write_current_week_tidbits,
+    write_current_week_recap,
     write_current_week_trends,
     write_historical,
     write_meta_current,
@@ -28,7 +28,7 @@ def main() -> None:
     write_current_week_odds()
     write_current_week_trends()
     write_season_trends()
-    write_current_week_tidbits()
+    write_current_week_recap()
     write_historical()
     write_user_profiles()
     write_admin_status()
