@@ -62,6 +62,8 @@ CBS and Sports IO are the only two required APIs. Odds API and weather API are o
 
 I used claude code for building out most of the models, schema boilerplates, this readme, etc to save time. I tried to comment where it was used heavily (models) otherwise it's probably obvious where it was used based on the commenting.
 
+Ok, since the 2026 season started, I've gone a little more AI heavy. You can tell via the commits if there's concern on AI usage.
+
 ## Season boundaries
 
 `config.SEASON` gets bumped by hand once a year, there's no auto-detection of "a new season started." Before bumping it, run `src.season_close_out` to lock in the final standings for the season that just ended. See `CLAUDE.md` for the details on why the ordering here matters.
