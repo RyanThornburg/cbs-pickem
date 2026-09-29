@@ -454,6 +454,8 @@ Cadences, and why each one is what it is:
   continuous rather than a single pre-kickoff pulse, since a forecast is
   worth re-checking repeatedly as it changes rather than just once right
   before kickoff.
+- **Tidbits KV key, 5 min, live or quiet** (added 2026-09-28) -
+  `_run_tidbits_refresh()`, see "KV writer" below.
 - **Housekeeping, 24 hr, quiet periods only** — full Sports IO schedule
   refresh + `teams_loader.main()` (win/loss/tie records, added
   2026-09-15) + `load_cbs_weeks()`/`load_cbs_games()` + `load_espn_games()`
@@ -667,18 +669,20 @@ from `CLAUDE.local.md`.
 Cloudflare KV for `cbs-pickem-web`'s Worker to read — D1 stays the system
 of record, KV is a serving cache (see root `CLAUDE.md`'s Commands list
 and `CLAUDE.local.md`'s "Web UI" section for the overall architecture
-decision). Ten key types; five (games, game details, leaderboard, odds,
-week trends) have a `write_week_*`/`write_current_week_*` pair (the
+decision). Eleven key types; six (games, game details, leaderboard, odds,
+week trends, tidbits) have a `write_week_*`/`write_current_week_*` pair (the
 latter resolves `weeks.is_current` via `resolve_current_week()` then
 delegates).
 
 **Split into one module per key, 2026-09-23** (was a single 1400+ line
 `src/kv_writer.py`): `games.py`, `leaderboard.py`, `odds.py`, `trends.py`,
-`historical.py`, `user_profiles.py`, `admin.py`, plus `shared.py` for the
-handful of things genuinely used across more than one of those (`GAMES_SQL`/
-`PICKS_SQL` — the literal same query used by both `games.py` and
-`trends.py`, not duplicated; `resolve_current_week()`; `game_team_dicts()`/
-`split_home_away()`; `write_meta_current()` itself, since `meta:current` is
+`tidbits.py`, `historical.py`, `user_profiles.py`, `admin.py`, plus
+`shared.py` for the handful of things genuinely used across more than one
+of those (`GAMES_SQL`/`PICKS_SQL` — the literal same query used by both
+`games.py` and `trends.py`, not duplicated; `resolve_current_week()`;
+`game_team_dicts()`/`split_home_away()`; `ats_side()` and
+`standard_rank()`, moved from `trends.py`/`leaderboard.py` 2026-09-28 when
+`tidbits.py` needed both; `write_meta_current()` itself, since `meta:current` is
 just `resolve_current_week()` plus two pool-rule constants and the CBS
 pool link, not worth its own file). Two further cross-module dependencies were kept as direct
 imports rather than folded into `shared.py`, since each is really owned by
@@ -802,7 +806,7 @@ src.kv_writer.__main__`).
   key from the same day was superseded and deleted).
 - `write_week_leaderboard()` → `week:{season}:{weekNN}:leaderboard` —
   cumulative/first-half/second-half scores and tie-aware `place`
-  (`_standard_rank()`, standard competition ranking: ties share a place,
+  (`shared.standard_rank()`, standard competition ranking: ties share a place,
   the next place skips) computed here rather than by the web app.
   **No custom live-grading** — `is_correct`/`trending_status`/
   `trending_score` are CBS's own fields, passed through as-is; deriving
@@ -935,6 +939,54 @@ src.kv_writer.__main__`).
   sides), so it can never disagree with `team_ats_record`'s own
   `cover_pct`. Sorted by how far apart the two groups' accuracy is, so the
   most divergent (and most interesting) teams sort first.
+- `write_week_tidbits()` → `week:{season}:{weekNN}:tidbits` (added
+  2026-09-28, `tidbits.py`) - short rotating "did you know" items for the
+  UI's weekly infographic: `{season, week, updated_at, week_complete,
+  games_final, games_total, tidbits: [...], series: {pool_accuracy,
+  chaos}}`. Each tidbit is `{id, kind, category, scope (week|season),
+  score, headline, sample_size, data}`, sorted by `score` descending; the
+  UI rotates through the top few and can render `headline` as-is or build
+  its own from `data`. `id` is unique within the key (`kind` plus a
+  suffix when a kind can appear more than once). Everything is "as of"
+  the key's week (season data through that week only).
+  Always-on kinds (hand-picked base score, higher when the week is
+  extreme): `pool_accuracy` (CBS's own `is_correct`, active users),
+  `perfect_week`/`winless_week` (all 5 picks graded), `spread_mattered`
+  (week and season: the straight-up winner didn't cover, plus how many
+  pool picks had the winner and still lost), `consensus_record` (week
+  and season, the pool's strict-majority side ATS, with the fade-the-crowd
+  inverse) and `consensus_locks` (80%+ games), `chaos_index` (fully-FINAL
+  weeks only: the average of underdog cover rate, doubled upset rate, pool
+  miss rate and big-favorite (7+) outright losses, as 0-10, ranked among
+  the season's weeks), `twins` (identical 5 picks), `oppos` (same 5
+  games, every pick opposite), `cover_streak` (active team streaks of
+  3+, a push ends one), `biggest_mover` (cumulative rank change vs last
+  week, ranked like the leaderboard, 3+ spots), `upset_of_week`
+  (biggest-spread underdog to win outright, and who had them).
+  Split kinds only appear when they clear `_stands_out()`: a floor on
+  sample size (`_STANDOUT_MIN_*`) and a binomial z-score of at least
+  `_STANDOUT_MIN_Z` (1.5) against a coin flip. Their score is that z,
+  capped at `_STANDOUT_MAX_SCORE` (3) since z grows with sample size and
+  would otherwise bury every weekly item by midseason. Kinds:
+  `home_road_covers`, `favorite_covers`, `home_underdog_covers`,
+  `division_underdog_covers` (league-wide), `pool_split` (the pool's ATS
+  record picking home/road, favorites/underdogs, by kickoff slot, in
+  division games) and `team_split` (one team's ATS in primetime, division
+  games, at home, on the road - rarely qualifies before midseason).
+  Neutral-site games skip anything home/road. Kickoff slots are Eastern
+  time: Thursday, Friday, Saturday, Sunday morning (before noon,
+  international), early (before 4), late (before 7), night, Monday;
+  primetime is Thursday, Sunday night and Monday. Pool/team splits grade
+  with `ats_side()` like `season:trends`; only `pool_accuracy`/perfect/
+  winless use CBS's grade. The pool's favorite-pick share is expected to
+  be lopsided, so it rides along as `favorite_pick_share` on the
+  favorite/underdog `pool_split` data instead of being a tidbit (it
+  briefly was, and topped every week at z = 9). Thresholds and base scores
+  are judgment calls, like the trends thresholds.
+  Written by orchestration every `TIDBITS_INTERVAL_SECONDS` (5 min, live
+  or quiet, `tidbits_write` in `meta:admin` with a stale flag) rather than
+  every tick - it's an infographic, not a live number. UI reference
+  Artifact linked from `CLAUDE.local.md`'s tidbits TODO entry.
 - `write_historical()` → `meta:historical` — see `db/CLAUDE.md`'s
   `historical_standings` section for what feeds this.
 - `write_user_profiles()` → `user:{user_id}:season:{season}`, one key per

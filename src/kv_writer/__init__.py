@@ -30,6 +30,11 @@ from src.kv_writer.leaderboard import (
 )
 from src.kv_writer.odds import write_current_week_odds, write_week_odds
 from src.kv_writer.shared import write_meta_current
+from src.kv_writer.tidbits import (
+    compute_week_tidbits,
+    write_current_week_tidbits,
+    write_week_tidbits,
+)
 from src.kv_writer.trends import (
     write_current_week_trends,
     write_season_trends,
@@ -39,11 +44,13 @@ from src.kv_writer.user_profiles import write_user_profiles
 
 __all__ = [
     "compute_week_leaderboard",
+    "compute_week_tidbits",
     "write_admin_status",
     "write_current_week_game_details",
     "write_current_week_games",
     "write_current_week_leaderboard",
     "write_current_week_odds",
+    "write_current_week_tidbits",
     "write_current_week_trends",
     "write_game_details",
     "write_games_weeks",
@@ -56,5 +63,6 @@ __all__ = [
     "write_week_games",
     "write_week_leaderboard",
     "write_week_odds",
+    "write_week_tidbits",
     "write_week_trends",
 ]

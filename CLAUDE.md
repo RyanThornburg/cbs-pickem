@@ -35,7 +35,7 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management and
 - Load CBS weeks/games/picks for the current week, or re-load a past week:
   `uv run python -m src.loaders.cbs_loader [local|prod] [week_number]`
 - Compute and write all KV keys the web UI reads (`meta:current`, the
-  current week's `games`/`leaderboard`/`odds`/`trends` and per-game
+  current week's `games`/`leaderboard`/`odds`/`trends`/`tidbits` and per-game
   `details`, `season:{season}:trends`, `meta:historical`, every
   `user:{user_id}:season:{season}`, `meta:admin`) from D1:
   `uv run python -m src.kv_writer [local|prod]` — normally called

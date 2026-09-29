@@ -12,6 +12,7 @@ from src.kv_writer.odds import open_close_consensus_by_game
 from src.kv_writer.shared import (
     GAMES_SQL,
     PICKS_SQL,
+    ats_side,
     game_team_dicts,
     now_iso,
     resolve_current_week,
@@ -103,10 +104,10 @@ def _all_alone_entries(
 ) -> list[dict[str, Any]]:
     """One user alone on a side while the other side has at least
     _ALL_ALONE_MIN_OPPOSING. `correct` is None until the game goes FINAL
-    with a real spread (same _ats_side() rules used everywhere else), then
+    with a real spread (same ats_side() rules used everywhere else), then
     True/False for whether this lone pick covered - what write_week_trends()
     uses to split lone_geniuses from lone_fools."""
-    side = _ats_side(game)
+    side = ats_side(game)
     covering_team_id = (
         game["home_id"]
         if side == "home"
@@ -290,27 +291,6 @@ def write_current_week_trends() -> None:
     write_week_trends(current_week)
 
 
-def _ats_side(game: dict[str, Any]) -> str | None:
-    """Which side covered game['cbs_spread'] - None if the game isn't
-    FINAL yet or is missing a spread/score. cbs_spread is the home team's
-    line (negative = home favored); home covers when its actual margin
-    beats that line."""
-    if game["status"] != "FINAL":
-        return None
-    if (
-        game["cbs_spread"] is None
-        or game["home_score"] is None
-        or game["away_score"] is None
-    ):
-        return None
-    adjusted = game["home_score"] - game["away_score"] + game["cbs_spread"]
-    if adjusted > 0:
-        return "home"
-    if adjusted < 0:
-        return "away"
-    return "push"
-
-
 def _spread_bucket(abs_spread: float) -> str:
     for label, low, high in _SPREAD_BUCKETS:
         if abs_spread >= low and (high is None or abs_spread < high):
@@ -339,7 +319,7 @@ def _pick_outcomes(
         )
         straight_up_correct = picked_team_id == winner_id
 
-    side = _ats_side(game)
+    side = ats_side(game)
     if side is None or side == "push":
         ats_correct = None
     else:
@@ -500,7 +480,7 @@ def _believers_and_faders(
     faders: defaultdict[int, dict[str, int]] = defaultdict(_new_side_counter)
 
     for game in games:
-        side = _ats_side(game)
+        side = ats_side(game)
         if side is None or side == "push":
             continue
         covering_team_id = game["home_id"] if side == "home" else game["away_id"]
@@ -586,7 +566,7 @@ def write_season_trends() -> None:
     pushes: Counter[int] = Counter()
     losses: Counter[int] = Counter()
     for game in games:
-        side = _ats_side(game)
+        side = ats_side(game)
         if side is None:
             continue
         if side == "push":

@@ -17,7 +17,7 @@ from config.config import (
 )
 from db.d1_client import D1Client
 from db.kv_client import KVClient
-from src.kv_writer.shared import PAID_PLACES, resolve_current_week
+from src.kv_writer.shared import PAID_PLACES, resolve_current_week, standard_rank
 
 logger = logging.getLogger(__name__)
 
@@ -45,20 +45,6 @@ SELECT user_id, COUNT(DISTINCT season_id) AS prior_seasons
 FROM historical_standings
 GROUP BY user_id
 """
-
-
-def _standard_rank(score_by_user: dict[int, int]) -> dict[int, int]:
-    """highest first, ties cause next number to be skipped"""
-    ranked = sorted(score_by_user.items(), key=lambda item: -item[1])
-    rank_by_user: dict[int, int] = {}
-    prev_score: int | None = None
-    prev_rank = 0
-    for i, (user_id, score) in enumerate(ranked, start=1):
-        if score != prev_score:
-            prev_rank = i
-            prev_score = score
-        rank_by_user[user_id] = prev_rank
-    return rank_by_user
 
 
 def _in_money(place: int | None, paid_places: int) -> bool:
@@ -116,9 +102,9 @@ def compute_week_leaderboard(
             trending_score[user_id] = row["trending_score"] or 0
             has_submitted_picks[user_id] = bool(row["has_submitted_picks"])
 
-    place = _standard_rank(cumulative_score)
-    first_half_place = _standard_rank(first_half_score)
-    second_half_place = _standard_rank(second_half_score) if in_second_half else {}
+    place = standard_rank(cumulative_score)
+    first_half_place = standard_rank(first_half_score)
+    second_half_place = standard_rank(second_half_score) if in_second_half else {}
 
     prior_seasons_by_user = _prior_seasons_by_user(d1)
 
