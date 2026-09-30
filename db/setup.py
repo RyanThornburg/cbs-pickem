@@ -7,8 +7,9 @@ import logging
 import re
 import sys
 
-from config.config import SCHEMA_PATH, configure_logging, get_d1_config, load_env
-from db.d1_client import D1Client, D1Error
+from config.config import SCHEMA_PATH, configure_logging, load_env
+from db.clients import get_d1
+from db.d1_client import D1Error
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ def _split_statements(sql: str) -> list[str]:
 
 
 def main() -> None:
-    client = D1Client(**get_d1_config())
+    client = get_d1()
     statements = _split_statements(SCHEMA_PATH.read_text())
 
     logger.info("Applying %d statements to D1", len(statements))

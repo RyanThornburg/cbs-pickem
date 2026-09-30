@@ -586,7 +586,7 @@ class TestSplits:
 class TestWriteRecentWeeks:
     @pytest.fixture(autouse=True)
     def _fakes(self, clients: Clients) -> None:
-        clients.use(recap)
+        """every test here writes through the fake D1/KV"""
 
     def test_which_weeks_get_refreshed(
         self, clients: Clients, seed: Seed, d1: FakeD1

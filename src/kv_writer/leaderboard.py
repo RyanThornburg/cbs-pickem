@@ -12,11 +12,9 @@ from config.config import (
     SEASON,
     SECOND_HALF_PAID_PLACES,
     SECOND_HALF_START_WEEK,
-    get_d1_config,
-    get_kv_config,
 )
+from db.clients import get_d1, get_kv
 from db.d1_client import D1Client
-from db.kv_client import KVClient
 from src.kv_writer.shared import PAID_PLACES, resolve_current_week, standard_rank
 
 logger = logging.getLogger(__name__)
@@ -156,8 +154,7 @@ def compute_week_leaderboard(
 
 def write_week_leaderboard(week_number: int) -> None:
     """Write week:{season}:{weekNN}:leaderboard from compute_week_leaderboard()."""
-    d1 = D1Client(**get_d1_config())
-    users_json = compute_week_leaderboard(d1, week_number)
+    users_json = compute_week_leaderboard(get_d1(), week_number)
     if users_json is None:
         logger.warning(
             "No weekly_performance for season %s week %s - not writing leaderboard key",
@@ -166,8 +163,7 @@ def write_week_leaderboard(week_number: int) -> None:
         )
         return
 
-    kv = KVClient(**get_kv_config())
-    kv.write(
+    get_kv().write(
         f"week:{SEASON}:{week_number:02d}:leaderboard",
         {
             "week": week_number,
@@ -186,8 +182,7 @@ def write_week_leaderboard(week_number: int) -> None:
 
 def write_current_week_leaderboard() -> None:
     """Resolve weeks.is_current and write that week's leaderboard key."""
-    d1 = D1Client(**get_d1_config())
-    current_week = resolve_current_week(d1)
+    current_week = resolve_current_week(get_d1())
     if current_week is None:
         logger.warning(
             "No current week found for season %s - not writing leaderboard key",

@@ -18,7 +18,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from api.sports_io_client import get_game_events
-from config.config import SEASON, configure_logging, get_d1_config, load_env
+from config.config import SEASON, configure_logging, load_env
+from db.clients import get_d1
 from db.d1_client import D1Client
 from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
 
@@ -159,7 +160,7 @@ def _load_plays_for_games(games: list[dict[str, Any]], client: D1Client) -> None
 def load_scoring_plays() -> None:
     """Refresh scoring plays for every game whose score moved since the
     last fetch - see the module docstring."""
-    client = D1Client(**get_d1_config())
+    client = get_d1()
     cutoff = (datetime.now(UTC) - timedelta(hours=FINAL_RECHECK_HOURS)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
@@ -172,7 +173,7 @@ def load_scoring_plays() -> None:
 def backfill_week_scoring_plays(week_number: int) -> None:
     """Every game in a week, regardless of the score check - for weeks that
     finished before this loader existed."""
-    client = D1Client(**get_d1_config())
+    client = get_d1()
     games = client.query(_WEEK_GAMES_SQL, [SEASON, week_number]).results
     if not games:
         logger.warning("No games for season %s week %s", SEASON, week_number)

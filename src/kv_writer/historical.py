@@ -7,9 +7,8 @@ record for each user's own profile key."""
 import logging
 from typing import Any
 
-from config.config import get_d1_config, get_kv_config
+from db.clients import get_d1, get_kv
 from db.d1_client import D1Client
-from db.kv_client import KVClient
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +75,7 @@ def write_historical() -> None:
     record, from historical_standings (backfilled once from the pre-2026
     archive, and going forward one row per user per season at close-out).
     Static/manual cadence - nothing changes here until a season closes."""
-    d1 = D1Client(**get_d1_config())
+    d1 = get_d1()
     rows = d1.query(_HISTORICAL_SQL).results
     if not rows:
         logger.warning(
@@ -151,8 +150,7 @@ def write_historical() -> None:
         second_half_champions_by_season.values(), key=lambda c: c["year"]
     )
 
-    kv = KVClient(**get_kv_config())
-    kv.write(
+    get_kv().write(
         "meta:historical",
         {
             "years": years,

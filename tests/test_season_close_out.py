@@ -23,7 +23,6 @@ LAST_WEEK = 18
 
 @pytest.fixture(autouse=True)
 def _fakes(clients: Clients, monkeypatch: pytest.MonkeyPatch) -> None:
-    clients.use(season_close_out, historical, odds, shared, user_profiles)
     monkeypatch.setattr(shared, "get_cbs_config", lambda: CBSConfig("u", "p", "pool1"))
 
 

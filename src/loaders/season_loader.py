@@ -12,8 +12,8 @@ import sys
 from typing import Any
 
 from api.sports_io_client import get_current_season
-from config.config import configure_logging, get_d1_config, load_env
-from db.d1_client import D1Client
+from config.config import configure_logging, load_env
+from db.clients import get_d1
 from src.loaders.loader_helper import sql_batch_call
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ ON CONFLICT(season_id) DO UPDATE SET
 
 def main() -> None:
     """load current season"""
-    client = D1Client(**get_d1_config())
+    client = get_d1()
     season = get_current_season()
     if season is None:
         logger.warning("Sports IO has no season flagged current! Nothing to load")

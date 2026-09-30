@@ -7,9 +7,8 @@ from collections.abc import Iterable
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
-from config.config import SEASON, get_d1_config, get_kv_config
-from db.d1_client import D1Client
-from db.kv_client import KVClient
+from config.config import SEASON
+from db.clients import get_d1, get_kv
 from src.kv_writer.shared import now_iso, resolve_current_week
 
 logger = logging.getLogger(__name__)
@@ -164,7 +163,7 @@ def write_game_details(game_ids: Iterable[int]) -> None:
     if not game_ids:
         return
 
-    d1 = D1Client(**get_d1_config())
+    d1 = get_d1()
     placeholders = ", ".join("?" * len(game_ids))
 
     def rows(sql: str) -> list[dict[str, Any]]:
@@ -181,7 +180,7 @@ def write_game_details(game_ids: Iterable[int]) -> None:
         for row in rows(_WIN_PROBABILITY_SQL)
     }
 
-    kv = KVClient(**get_kv_config())
+    kv = get_kv()
     written = 0
     for game in rows(_GAMES_SQL):
         game_id = game["game_id"]
@@ -206,7 +205,7 @@ def write_game_details(game_ids: Iterable[int]) -> None:
 
 def write_week_game_details(week_number: int) -> None:
     """every game in a week - backfill/full refresh"""
-    d1 = D1Client(**get_d1_config())
+    d1 = get_d1()
     write_game_details(
         row["game_id"]
         for row in d1.query(_WEEK_GAME_IDS_SQL, [SEASON, week_number]).results
@@ -215,7 +214,7 @@ def write_week_game_details(week_number: int) -> None:
 
 def write_current_week_game_details() -> None:
     """Resolve weeks.is_current and write every game's details key."""
-    d1 = D1Client(**get_d1_config())
+    d1 = get_d1()
     current_week = resolve_current_week(d1)
     if current_week is None:
         logger.warning(

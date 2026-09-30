@@ -49,9 +49,9 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management and
 - Run the tests (with coverage): `uv run pytest` — offline, no D1/KV/API
   calls. `tests/conftest.py`'s `d1` fixture is an in-memory SQLite
   stand-in for `D1Client` with `db/schema.sql` applied, plus a `seed`
-  helper for building rows and `clients`, which points a module's
-  `D1Client`/`KVClient` at the fakes so a `write_*()` function runs end
-  to end (`clients.kv.values` holds what it wrote). CBS tests replay saved pages from
+  helper for building rows and `clients`, which points
+  `db.clients.get_d1()`/`get_kv()` at the fakes so a `write_*()` function
+  runs end to end (`clients.kv.values` holds what it wrote). CBS tests replay saved pages from
   `tests/fixtures/cbs/`, anonymized copies of `data/` (gitignored, and the
   repo is public). To add a newly captured week:
   `uv run python -m tests.fixtures.sanitize_cbs <week_number>`.

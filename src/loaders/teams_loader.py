@@ -15,8 +15,8 @@ from typing import Any
 
 from api.sports_io_client import get_standings, get_teams
 from api.sports_io_models import Standing
-from config.config import SEASON, configure_logging, get_d1_config, load_env
-from db.d1_client import D1Client
+from config.config import SEASON, configure_logging, load_env
+from db.clients import get_d1
 from src.loaders.loader_helper import sql_batch_call
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ def _standings_by_team_id(standings: list[Standing]) -> dict[int, Standing]:
 
 def main() -> None:
     """load team data"""
-    client = D1Client(**get_d1_config())
+    client = get_d1()
     teams = get_teams()
     standings_by_team_id = _standings_by_team_id(get_standings())
 

@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from config.config import SCHEMA_PATH, SEASON
+from db import clients as db_clients
 from db.d1_client import D1QueryResult, _bind_params
 from db.setup import _split_statements
 
@@ -72,24 +73,16 @@ class FakeKV:
 
 
 class Clients:
-    """Points a module's D1Client/KVClient (and their config getters) at the
-    fakes, so a write_*() function runs end to end without Cloudflare."""
+    """Points db.clients.get_d1()/get_kv() at the fakes, so every loader and
+    write_*() function runs end to end without Cloudflare."""
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch, d1: FakeD1) -> None:
-        self._monkeypatch = monkeypatch
         self.d1 = d1
         self.kv = FakeKV()
-
-    def use(self, *modules: ModuleType) -> None:
-        for module in modules:
-            for name, fake in (
-                ("D1Client", lambda **_: self.d1),
-                ("KVClient", lambda **_: self.kv),
-                ("get_d1_config", dict),
-                ("get_kv_config", dict),
-            ):
-                if hasattr(module, name):
-                    self._monkeypatch.setattr(module, name, fake)
+        monkeypatch.setattr(db_clients, "D1Client", lambda **_: self.d1)
+        monkeypatch.setattr(db_clients, "KVClient", lambda **_: self.kv)
+        monkeypatch.setattr(db_clients, "get_d1_config", dict)
+        monkeypatch.setattr(db_clients, "get_kv_config", dict)
 
 
 class Seed:
@@ -226,6 +219,17 @@ def seed(d1: FakeD1) -> Seed:
     return Seed(d1)
 
 
+@pytest.fixture(autouse=True)
+def _fresh_clients() -> Iterator[None]:
+    """get_d1()/get_kv() are cached per process - drop them around every
+    test so one test's fakes never leak into the next"""
+    db_clients.get_d1.cache_clear()
+    db_clients.get_kv.cache_clear()
+    yield
+    db_clients.get_d1.cache_clear()
+    db_clients.get_kv.cache_clear()
+
+
 @pytest.fixture
 def clients(monkeypatch: pytest.MonkeyPatch, d1: FakeD1) -> Clients:
     return Clients(monkeypatch, d1)
@@ -253,38 +257,8 @@ def apis(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 @pytest.fixture
 def loaders(clients: Clients) -> Clients:
-    """every loader module writing to the fake D1"""
-    from src.loaders import (
-        cbs_loader,
-        espn_loader,
-        game_snapshots_loader,
-        loader_helper,
-        odds_loader,
-        player_stats_loader,
-        pregame_weather_loader,
-        scoring_plays_loader,
-        season_loader,
-        sports_io_loader,
-        stadiums_loader,
-        teams_loader,
-        win_probability_loader,
-    )
-
-    clients.use(
-        cbs_loader,
-        espn_loader,
-        game_snapshots_loader,
-        loader_helper,
-        odds_loader,
-        player_stats_loader,
-        pregame_weather_loader,
-        scoring_plays_loader,
-        season_loader,
-        sports_io_loader,
-        stadiums_loader,
-        teams_loader,
-        win_probability_loader,
-    )
+    """every loader module writing to the fake D1 - the same fakes as
+    `clients`, kept as its own name for the loader tests"""
     return clients
 
 

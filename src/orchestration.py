@@ -12,7 +12,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from config.config import configure_logging, get_d1_config, load_env
+from config.config import configure_logging, load_env
+from db.clients import get_d1
 from db.d1_client import D1Client
 from src.kv_writer import (
     write_admin_status,
@@ -476,7 +477,7 @@ def _run_recap_refresh(client: D1Client) -> None:
 
 
 def main() -> None:
-    client = D1Client(**get_d1_config())
+    client = get_d1()
     now = datetime.now(UTC)
 
     if _is_live_window_active(client):

@@ -5,7 +5,8 @@ Usage: uv run python -m src.season_close_out [local|prod]
 import logging
 import sys
 
-from config.config import SEASON, configure_logging, get_d1_config, load_env
+from config.config import SEASON, configure_logging, load_env
+from db.clients import get_d1
 from db.d1_client import D1Client
 from src.kv_writer import compute_week_leaderboard, write_historical
 
@@ -45,7 +46,7 @@ def close_out_season() -> None:
     """Close out config.SEASON (the current season) - compute_week_leaderboard()
     is itself hardcoded to config.SEASON, so this can never operate on any
     other season without mislabeling that season's real data."""
-    d1 = D1Client(**get_d1_config())
+    d1 = get_d1()
 
     final_week = _final_week_number(d1)
     if final_week is None:

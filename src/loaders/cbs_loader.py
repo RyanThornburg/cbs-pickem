@@ -25,8 +25,8 @@ from api.cbs_models import (
     Member,
     PoolEvent,
 )
-from config.config import SEASON, configure_logging, get_d1_config, load_env
-from db.d1_client import D1Client
+from config.config import SEASON, configure_logging, load_env
+from db.clients import get_d1
 from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
 
 logger = logging.getLogger(__name__)
@@ -222,7 +222,7 @@ def _pick_status_to_correct(pick_status: str) -> bool | None:
 def load_cbs_games(pool_period_id: str | None = None) -> None:
     """run at start of new week - or, with pool_period_id, backfill a past
     week (see backfill_cbs_week())"""
-    client = D1Client(**get_d1_config())
+    client = get_d1()
 
     data: FootballPickemPoolHome | None = get_cbs_pool_home(pool_period_id)
     if data is None:
@@ -356,7 +356,7 @@ def _add_user_picks(
 def load_cbs_user_picks(pool_period_id: str | None = None) -> None:
     """load users weekly picks - or, with pool_period_id, backfill a past
     week (see backfill_cbs_week())"""
-    client = D1Client(**get_d1_config())
+    client = get_d1()
 
     data: FootballPickemManagerPool = get_cbs_weekly(pool_period_id)
 
@@ -461,7 +461,7 @@ def backfill_cbs_week(week_number: int) -> None:
     one. Requires that week to already have a row in `weeks` with
     cbs_pool_period_id set (load_cbs_weeks() populates it for every
     period on every run, current or not - not just the current week's)."""
-    client = D1Client(**get_d1_config())
+    client = get_d1()
     row = client.query(_WEEK_POOL_PERIOD_ID_SQL, [SEASON, week_number]).results
     if not row or row[0]["cbs_pool_period_id"] is None:
         logger.warning(

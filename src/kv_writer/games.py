@@ -5,9 +5,8 @@ import logging
 from collections import defaultdict
 from typing import Any
 
-from config.config import SEASON, get_d1_config, get_kv_config
-from db.d1_client import D1Client
-from db.kv_client import KVClient
+from config.config import SEASON
+from db.clients import get_d1, get_kv
 from src.kv_writer.game_details import player_line
 from src.kv_writer.shared import GAMES_SQL, PICKS_SQL, now_iso, resolve_current_week
 
@@ -258,7 +257,7 @@ def write_week_games(week_number: int) -> None:
     who picked which side (naturally empty pre-lock - user_picks only ever
     has locked/revealed rows, see api/CLAUDE.md) and, for games currently in
     progress, the latest game_snapshots state."""
-    d1 = D1Client(**get_d1_config())
+    d1 = get_d1()
 
     games = d1.query(GAMES_SQL, [SEASON, week_number]).results
     if not games:
@@ -343,8 +342,7 @@ def write_week_games(week_number: int) -> None:
 
         games_json.append(game_json)
 
-    kv = KVClient(**get_kv_config())
-    kv.write(
+    get_kv().write(
         f"week:{SEASON}:{week_number:02d}:games",
         {
             "week": week_number,
@@ -362,7 +360,7 @@ def write_week_games(week_number: int) -> None:
 
 def write_current_week_games() -> None:
     """Resolve weeks.is_current and write that week's games key."""
-    d1 = D1Client(**get_d1_config())
+    d1 = get_d1()
     current_week = resolve_current_week(d1)
     if current_week is None:
         logger.warning(
@@ -388,7 +386,7 @@ def write_games_weeks(game_ids: set[int]) -> None:
     incomplete week."""
     if not game_ids:
         return
-    d1 = D1Client(**get_d1_config())
+    d1 = get_d1()
     ids = sorted(game_ids)
     rows = d1.query(
         _WEEKS_FOR_GAMES_SQL.format(", ".join("?" * len(ids))), [SEASON, *ids]
@@ -408,7 +406,7 @@ def write_incomplete_weeks_games(include_future: bool = False) -> None:
     the pipeline's KV write volume for keys whose data (the schedule) only
     changes on the daily sync. include_future=True covers those too, for
     that daily refresh."""
-    d1 = D1Client(**get_d1_config())
+    d1 = get_d1()
     if include_future:
         rows = d1.query(_INCOMPLETE_WEEKS_SQL, [SEASON]).results
     else:

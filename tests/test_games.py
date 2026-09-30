@@ -180,7 +180,7 @@ def board(seed: Seed) -> Board:
 
 @pytest.fixture(autouse=True)
 def _fakes(clients: Clients) -> None:
-    clients.use(games, game_details)
+    """every test here writes through the fake D1/KV"""
 
 
 def _week_key(clients: Clients, week: int = 1) -> dict[str, Any]:

@@ -26,8 +26,8 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-from config.config import configure_logging, get_d1_config, load_env
-from db.d1_client import D1Client
+from config.config import configure_logging, load_env
+from db.clients import get_d1
 from src.loaders.loader_helper import capture_pregame_forecast, sql_batch_call
 
 logger = logging.getLogger(__name__)
@@ -60,7 +60,7 @@ WHERE game_id = ?
 def load_pregame_weather() -> None:
     """capture a forecast for the current week's not-yet-started games with
     a known stadium"""
-    client = D1Client(**get_d1_config())
+    client = get_d1()
 
     upcoming_games = client.query(
         "SELECT g.game_id, g.game_time, s.latitude, s.longitude, s.roof_type "

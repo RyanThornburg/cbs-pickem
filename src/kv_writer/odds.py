@@ -8,9 +8,9 @@ import logging
 from collections import Counter, defaultdict
 from typing import Any
 
-from config.config import SEASON, get_d1_config, get_kv_config
+from config.config import SEASON
+from db.clients import get_d1, get_kv
 from db.d1_client import D1Client
-from db.kv_client import KVClient
 from src.kv_writer.shared import now_iso, resolve_current_week
 
 logger = logging.getLogger(__name__)
@@ -157,7 +157,7 @@ def write_week_odds(week_number: int) -> None:
     """Write week:{season}:{weekNN}:odds - each game's cbs_spread (what the
     pool is graded against) alongside an opening/closing consensus line and
     each _ODDS_BOOKMAKERS book's own latest spread/total/moneyline line."""
-    d1 = D1Client(**get_d1_config())
+    d1 = get_d1()
 
     games = d1.query(_WEEK_CBS_SPREADS_SQL, [SEASON, week_number]).results
     if not games:
@@ -181,8 +181,7 @@ def write_week_odds(week_number: int) -> None:
         for game in games
     ]
 
-    kv = KVClient(**get_kv_config())
-    kv.write(
+    get_kv().write(
         f"week:{SEASON}:{week_number:02d}:odds",
         {
             "week": week_number,
@@ -200,7 +199,7 @@ def write_week_odds(week_number: int) -> None:
 
 def write_current_week_odds() -> None:
     """Resolve weeks.is_current and write that week's odds key."""
-    d1 = D1Client(**get_d1_config())
+    d1 = get_d1()
     current_week = resolve_current_week(d1)
     if current_week is None:
         logger.warning(

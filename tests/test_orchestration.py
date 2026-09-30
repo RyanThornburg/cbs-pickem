@@ -15,15 +15,7 @@ from config.config import SEASON, CBSConfig
 from src import orchestration
 from src.kv_writer import (
     admin,
-    game_details,
-    games,
-    historical,
-    leaderboard,
-    odds,
-    recap,
     shared,
-    trends,
-    user_profiles,
 )
 from src.loaders import cbs_loader, stadiums_loader, teams_loader
 from src.scheduling import get_state, set_state
@@ -91,7 +83,6 @@ class Recorder:
 
 @pytest.fixture
 def tasks(monkeypatch: pytest.MonkeyPatch, clients: Clients) -> Recorder:
-    clients.use(orchestration)
     freeze_all(monkeypatch, QUIET)
     return Recorder(monkeypatch)
 
@@ -357,10 +348,6 @@ class TestEndToEnd:
             if week in (None, capture_info()["week"])
             else {"events": []}
         )
-        loaders.use(
-            orchestration, admin, game_details, games, historical, leaderboard,
-            odds, recap, shared, trends, user_profiles,
-        )  # fmt: skip
         monkeypatch.setattr(
             shared, "get_cbs_config", lambda: CBSConfig("u", "p", "pool1")
         )
@@ -479,7 +466,6 @@ class TestEndToEnd:
 def test_admin_status_stale_flags(
     clients: Clients, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    clients.use(admin)
     freeze_all(monkeypatch, QUIET)
     d1 = clients.d1
     set_state(d1, "housekeeping_last_success_at", iso(QUIET - timedelta(hours=47)))

@@ -5,9 +5,8 @@ import logging
 from collections import Counter, defaultdict
 from typing import Any
 
-from config.config import SEASON, get_d1_config, get_kv_config
-from db.d1_client import D1Client
-from db.kv_client import KVClient
+from config.config import SEASON
+from db.clients import get_d1, get_kv
 from src.kv_writer.odds import open_close_consensus_by_game
 from src.kv_writer.shared import (
     GAMES_SQL,
@@ -171,7 +170,7 @@ def write_week_trends(week_number: int) -> None:
     Popularity/cold-team splits only count a game once its picks are
     revealed (a game with zero total picks yet is unlocked, not actually
     cold - same ambiguity write_week_games() already documents)."""
-    d1 = D1Client(**get_d1_config())
+    d1 = get_d1()
 
     games = d1.query(GAMES_SQL, [SEASON, week_number]).results
     if not games:
@@ -245,8 +244,7 @@ def write_week_trends(week_number: int) -> None:
         open_close_consensus_by_game(d1, week_number, market="total"), game_lookup
     )
 
-    kv = KVClient(**get_kv_config())
-    kv.write(
+    get_kv().write(
         f"week:{SEASON}:{week_number:02d}:trends",
         {
             "week": week_number,
@@ -279,7 +277,7 @@ def write_week_trends(week_number: int) -> None:
 
 def write_current_week_trends() -> None:
     """Resolve weeks.is_current and write that week's trends key."""
-    d1 = D1Client(**get_d1_config())
+    d1 = get_d1()
     current_week = resolve_current_week(d1)
     if current_week is None:
         logger.warning(
@@ -526,7 +524,7 @@ def write_season_trends() -> None:
     a popularity-weighted "trap team" ranking (see _trap_team_ranking()),
     and a per-team believers-vs-faders accuracy split (see
     _believers_and_faders())."""
-    d1 = D1Client(**get_d1_config())
+    d1 = get_d1()
 
     games = d1.query(_SEASON_GAMES_SQL, [SEASON]).results
     if not games:
@@ -611,8 +609,7 @@ def write_season_trends() -> None:
     trap_team = _trap_team_ranking(team_pick_totals, team_ats_record)
     team_believers_faders = _believers_and_faders(games, picks_by_game, all_teams)
 
-    kv = KVClient(**get_kv_config())
-    kv.write(
+    get_kv().write(
         f"season:{SEASON}:trends",
         {
             "season": SEASON,

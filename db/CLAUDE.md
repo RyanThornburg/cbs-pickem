@@ -8,6 +8,12 @@ database, so local testing never touches real contest data). wrangler/Node
 are not runtime dependencies — wrangler is only used ad hoc, outside the app,
 to provision each D1 database once (`wrangler d1 create`).
 
+Nothing builds a `D1Client`/`KVClient` directly: `db/clients.py`'s
+`get_d1()`/`get_kv()` build one of each per process on first use
+(`functools.cache`), so a run shares one `requests.Session`, and tests
+swap in fakes in one place (`tests/conftest.py`'s `clients` fixture,
+which also clears the cache around every test).
+
 `db/schema.sql` is SQLite dialect. `updated_at` columns are kept current
 by `AFTER UPDATE` triggers, since SQLite has no inline syntax for that.
 Foreign keys are enforced — `D1Client.batch()`/`.query()` always send

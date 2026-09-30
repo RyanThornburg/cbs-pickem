@@ -255,7 +255,7 @@ def _odds(d1: FakeD1, game_id: int, book: str, point: float, captured_at: str) -
 class TestWriteWeekTrends:
     @pytest.fixture(autouse=True)
     def _fakes(self, clients: Clients) -> None:
-        clients.use(trends)
+        """every test here writes through the fake D1/KV"""
 
     def _key(self, clients: Clients, week: int = 1) -> dict[str, Any]:
         return clients.kv.values[f"week:{SEASON}:{week:02d}:trends"]
@@ -333,7 +333,7 @@ class TestWriteWeekTrends:
 class TestWriteSeasonTrends:
     @pytest.fixture(autouse=True)
     def _fakes(self, clients: Clients) -> None:
-        clients.use(trends)
+        """every test here writes through the fake D1/KV"""
 
     def test_season_key(self, clients: Clients, seed: Seed) -> None:
         week1 = Week(seed, 1)

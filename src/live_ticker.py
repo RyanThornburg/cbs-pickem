@@ -18,7 +18,8 @@ import logging
 import sys
 import time
 
-from config.config import configure_logging, get_d1_config, load_env
+from config.config import configure_logging, load_env
+from db.clients import get_d1
 from db.d1_client import D1Client
 from src.kv_writer import write_games_weeks
 from src.loaders.game_snapshots_loader import has_candidate_games, load_game_snapshots
@@ -53,7 +54,7 @@ def main() -> None:
     if not has_candidate_games():
         return
 
-    client = D1Client(**get_d1_config())
+    client = get_d1()
     started = time.monotonic()
     next_round = 0.0
     while next_round <= LAST_ROUND_START_SECONDS:

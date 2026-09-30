@@ -202,8 +202,7 @@ def _patch_cbs(
     """load_cbs_user_picks() reads `data` instead of scraping CBS, and
     writes to the fake D1"""
     monkeypatch.setattr(cbs_loader, "get_cbs_weekly", lambda _period=None: data)
-    monkeypatch.setattr(cbs_loader, "D1Client", lambda **_: d1)
-    monkeypatch.setattr(cbs_loader, "get_d1_config", dict)
+    monkeypatch.setattr(cbs_loader, "get_d1", lambda: d1)
 
 
 def _load_week(

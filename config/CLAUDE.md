@@ -15,9 +15,10 @@ Loaders section for the full reasoning): `if not
 load_env(sys.argv[1] if len(sys.argv) > 1 else "local"): sys.exit(1)`
 then call that module's `main()` with no arguments. No other function —
 not `main()`, not any `load_*()`/`write_*()` — takes an `env` parameter
-or calls `load_env()` itself; they all just call `get_d1_config()`/
-`get_kv_config()` directly, trusting `os.environ` is already populated
-for the rest of the process. See `db/setup.py` for the pattern.
+or calls `load_env()` itself; they all just call `db.clients.get_d1()`/
+`get_kv()`, which read `get_d1_config()`/`get_kv_config()` on first use,
+trusting `os.environ` is already populated for the rest of the process.
+See `db/setup.py` for the pattern.
 
 `config/config.py` also exposes `get_week_path(week)`,
 `get_players_path()`, and `get_pool_home_path(week)` — where scraped CBS

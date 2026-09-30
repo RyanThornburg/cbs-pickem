@@ -22,8 +22,8 @@ from typing import Any
 
 from api.espn_client import ABBREV_CORRECTIONS as ESPN_ABBREV_CORRECTIONS
 from api.espn_client import get_scoreboard
-from config.config import SEASON, configure_logging, get_d1_config, load_env
-from db.d1_client import D1Client
+from config.config import SEASON, configure_logging, load_env
+from db.clients import get_d1
 from src.loaders.loader_helper import mapping_gap_statement, sql_batch_call
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ def load_espn_games(include_complete: bool = False) -> None:
     incomplete weeks (or every week, with include_complete) - one ESPN call
     per week. Completed weeks are skipped by default since neither value
     changes once a game has been played."""
-    client = D1Client(**get_d1_config())
+    client = get_d1()
 
     sql = _WEEK_GAMES_SQL if include_complete else _WEEK_GAMES_SQL + " AND w.is_complete = 0"
     games_by_week: dict[int, dict[tuple[str, str], int]] = {}

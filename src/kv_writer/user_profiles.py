@@ -3,9 +3,8 @@
 import logging
 from datetime import UTC, datetime
 
-from config.config import SEASON, get_d1_config, get_kv_config
-from db.d1_client import D1Client
-from db.kv_client import KVClient
+from config.config import SEASON
+from db.clients import get_d1, get_kv
 from src.kv_writer.historical import career_record_by_user
 from src.user_stats import compute_user_profiles
 
@@ -25,14 +24,14 @@ def write_user_profiles() -> None:
     KV write for every active user on every minute-cron tick would be a lot
     of avoidable KV write volume for data that only actually changes when
     picks get made/graded)."""
-    d1 = D1Client(**get_d1_config())
+    d1 = get_d1()
     career_by_user = career_record_by_user(d1)
     profiles = compute_user_profiles(d1, career_by_user)
     if not profiles:
         logger.warning("No active users found - not writing user profile keys")
         return
 
-    kv = KVClient(**get_kv_config())
+    kv = get_kv()
     now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     for user_id, profile in profiles.items():
         kv.write(f"user:{user_id}:season:{SEASON}", {**profile, "updated_at": now})

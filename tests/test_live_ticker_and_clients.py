@@ -33,7 +33,6 @@ class TestLiveTicker:
     def ticker(
         self, clients: Clients, monkeypatch: pytest.MonkeyPatch
     ) -> dict[str, Any]:
-        clients.use(live_ticker)
         clock = FakeClock()
         monkeypatch.setattr(live_ticker.time, "monotonic", clock.monotonic)
         monkeypatch.setattr(live_ticker.time, "sleep", clock.sleep)

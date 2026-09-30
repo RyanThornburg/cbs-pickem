@@ -7,7 +7,7 @@ from typing import Any
 
 from api.weather_api import get_forecast
 from api.weather_api_models import Alert, DailyDataPoint, DataPoint, Forecast
-from config.config import get_d1_config
+from db.clients import get_d1
 from db.d1_client import D1Client, D1Error
 
 logger = logging.getLogger(__name__)
@@ -348,7 +348,7 @@ def sql_batch_call(
     re-raised, not turned into sys.exit() - SystemExit isn't an Exception,
     so exiting here used to slip past orchestration.py's try/except around
     tasks meant to fail softly and end the whole tick."""
-    client = client or D1Client(**get_d1_config())
+    client = client or get_d1()
     try:
         client.batch(statements)
     except D1Error:

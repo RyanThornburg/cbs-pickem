@@ -23,9 +23,9 @@ from itertools import combinations
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from config.config import SEASON, get_d1_config, get_kv_config
+from config.config import SEASON
+from db.clients import get_d1, get_kv
 from db.d1_client import D1Client
-from db.kv_client import KVClient
 from src.kv_writer.shared import (
     ats_side,
     game_team_dicts,
@@ -1512,7 +1512,7 @@ def compute_week_recap(d1: D1Client, week_number: int) -> dict[str, Any] | None:
 
 def write_week_recap(week_number: int) -> None:
     """Write week:{season}:{weekNN}:recap from compute_week_recap()."""
-    d1 = D1Client(**get_d1_config())
+    d1 = get_d1()
     payload = compute_week_recap(d1, week_number)
     if payload is None:
         logger.warning(
@@ -1522,8 +1522,7 @@ def write_week_recap(week_number: int) -> None:
         )
         return
 
-    kv = KVClient(**get_kv_config())
-    kv.write(f"week:{SEASON}:{week_number:02d}:recap", payload)
+    get_kv().write(f"week:{SEASON}:{week_number:02d}:recap", payload)
     logger.info(
         "Wrote week:%s:%02d:recap (%d items) to KV",
         SEASON,
@@ -1534,7 +1533,7 @@ def write_week_recap(week_number: int) -> None:
 
 def write_current_week_recap() -> None:
     """Resolve weeks.is_current and write that week's recap key."""
-    d1 = D1Client(**get_d1_config())
+    d1 = get_d1()
     current_week = resolve_current_week(d1)
     if current_week is None:
         logger.warning(
@@ -1554,7 +1553,7 @@ def write_recent_weeks_recap() -> None:
     poll or two after a game goes FINAL - writing only the current week
     lost the old week's final state (final chaos index, "nobody went 5-0",
     final accuracy)."""
-    d1 = D1Client(**get_d1_config())
+    d1 = get_d1()
     now = datetime.now(UTC)
     rows = d1.query(
         _RECENT_WEEKS_SQL,

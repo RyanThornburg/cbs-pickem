@@ -21,11 +21,9 @@ from config.config import (
     SECOND_HALF_PAID_PLACES,
     SECOND_HALF_START_WEEK,
     get_cbs_config,
-    get_d1_config,
-    get_kv_config,
 )
+from db.clients import get_d1, get_kv
 from db.d1_client import D1Client
-from db.kv_client import KVClient
 
 logger = logging.getLogger(__name__)
 
@@ -142,8 +140,7 @@ def split_home_away(
 
 def write_meta_current() -> None:
     """Write meta:current - which week is live right now, for this season."""
-    d1 = D1Client(**get_d1_config())
-    current_week = resolve_current_week(d1)
+    current_week = resolve_current_week(get_d1())
     if current_week is None:
         logger.warning(
             "No current week found for season %s - not writing meta:current",
@@ -151,8 +148,7 @@ def write_meta_current() -> None:
         )
         return
 
-    kv = KVClient(**get_kv_config())
-    kv.write(
+    get_kv().write(
         "meta:current",
         {
             "season": SEASON,

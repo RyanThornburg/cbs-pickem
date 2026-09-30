@@ -23,7 +23,8 @@ from typing import Any
 
 from api.sports_io_client import get_player_statistics
 from api.sports_io_models import PlayerStat
-from config.config import SEASON, configure_logging, get_d1_config, load_env
+from config.config import SEASON, configure_logging, load_env
+from db.clients import get_d1
 from db.d1_client import D1Client
 from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
 
@@ -189,13 +190,13 @@ def _load_for_games(games: list[dict[str, Any]], client: D1Client) -> set[int]:
 
 def load_live_player_stats() -> set[int]:
     """currently-live games - returns the game_ids whose stats changed"""
-    client = D1Client(**get_d1_config())
+    client = get_d1()
     return _load_for_games(client.query(_LIVE_GAMES_SQL).results, client)
 
 
 def load_week_player_stats(week_number: int) -> set[int]:
     """every game in a week - returns the game_ids whose stats changed"""
-    client = D1Client(**get_d1_config())
+    client = get_d1()
     games = client.query(_WEEK_GAMES_SQL, [SEASON, week_number]).results
     if not games:
         logger.warning("No games for season %s week %s", SEASON, week_number)

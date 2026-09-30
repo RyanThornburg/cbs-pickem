@@ -4,9 +4,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from config.config import get_d1_config, get_kv_config
-from db.d1_client import D1Client
-from db.kv_client import KVClient
+from db.clients import get_d1, get_kv
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +82,7 @@ def write_admin_status() -> None:
     See the comment above last_run below for what last_at vs
     last_success_at mean and which tasks get a stale flag.
     """
-    d1 = D1Client(**get_d1_config())
+    d1 = get_d1()
     now = datetime.now(UTC)
 
     state = {
@@ -188,8 +186,7 @@ def write_admin_status() -> None:
     mapping_gaps_totals = d1.query(_MAPPING_GAPS_TOTALS_SQL).results[0]
     system_events_totals = d1.query(_SYSTEM_EVENTS_TOTALS_SQL).results[0]
 
-    kv = KVClient(**get_kv_config())
-    kv.write(
+    get_kv().write(
         "meta:admin",
         {
             "updated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),

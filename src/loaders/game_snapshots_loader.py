@@ -19,7 +19,8 @@ from typing import Any
 from api.espn_client import ABBREV_CORRECTIONS as ESPN_ABBREV_CORRECTIONS
 from api.espn_client import get_scoreboard
 from api.espn_models import Competition, Situation
-from config.config import configure_logging, get_d1_config, load_env
+from config.config import configure_logging, load_env
+from db.clients import get_d1
 from db.d1_client import D1Client
 from src.loaders.loader_helper import (
     capture_weather,
@@ -230,14 +231,14 @@ def _candidate_games(client: D1Client) -> list[dict[str, Any]]:
 def has_candidate_games() -> bool:
     """whether any game could be live right now - one D1 query, no ESPN
     call, so src/live_ticker.py can exit straight away outside game time"""
-    return bool(_candidate_games(D1Client(**get_d1_config())))
+    return bool(_candidate_games(get_d1()))
 
 
 def load_game_snapshots() -> set[int]:
     """capture a snapshot for every game ESPN reports as in progress -
     returns the game_ids that got a new row (nothing changed means no row),
     so the caller only rewrites KV when something actually moved"""
-    client = D1Client(**get_d1_config())
+    client = get_d1()
 
     candidates = _candidate_games(client)
     if not candidates:

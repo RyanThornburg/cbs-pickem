@@ -12,7 +12,8 @@ from typing import Any
 
 from api.sports_io_client import get_games, get_games_by_date, get_team_statistics
 from api.sports_io_models import Game, TeamStatistics
-from config.config import SEASON, configure_logging, get_d1_config, load_env
+from config.config import SEASON, configure_logging, load_env
+from db.clients import get_d1
 from db.d1_client import D1Client
 from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
 
@@ -239,7 +240,7 @@ def _get_live_window_games() -> list[Game]:
 
 def load_games_data(live: bool = False) -> None:
     """load games from sports io"""
-    client = D1Client(**get_d1_config())
+    client = get_d1()
 
     games: list[Game] = get_games() if not live else _get_live_window_games()
 
@@ -531,7 +532,7 @@ def load_game_statistics(week: int) -> set[int]:
     """load per-team box score stats for every game in a week - meant for
     the end-of-week/game-finished capture, not live polling (see
     load_live_game_statistics for that). Returns the game_ids loaded."""
-    client = D1Client(**get_d1_config())
+    client = get_d1()
 
     week_row = client.query(
         "SELECT week_id FROM weeks WHERE season_id = ? AND week_number = ?",
@@ -554,7 +555,7 @@ def load_live_game_statistics() -> set[int]:
     """load per-team box score stats for every currently-live game - Sports
     IO's stats endpoint returns real partial stats mid-game (confirmed live
     2026-09-09), not just final box scores. Returns the game_ids loaded."""
-    client = D1Client(**get_d1_config())
+    client = get_d1()
     game_ids = _game_ids_by_status(client, ("IN_PROGRESS", "HALFTIME"))
     if not game_ids:
         logger.info("No live games to load stats for")

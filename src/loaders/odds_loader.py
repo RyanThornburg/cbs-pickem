@@ -10,8 +10,8 @@ from typing import Any
 
 from api.the_odds_api_client import get_odds
 from api.the_odds_api_models import Event
-from config.config import configure_logging, get_d1_config, load_env
-from db.d1_client import D1Client
+from config.config import configure_logging, load_env
+from db.clients import get_d1
 from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
 
 logger = logging.getLogger(__name__)
@@ -140,7 +140,7 @@ def _snapshot_statements_for_event(
 
 def load_the_odds_api_odds() -> None:
     """load odds from the odds api"""
-    client = D1Client(**get_d1_config())
+    client = get_d1()
     events: list[Event] = get_odds()
 
     odds_event_ids = id_map(client, "games", "odds_api_event_id", "game_id")
