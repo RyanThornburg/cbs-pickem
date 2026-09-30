@@ -18,7 +18,7 @@ from src.kv_writer import (
     shared,
 )
 from src.loaders import cbs_loader, stadiums_loader, teams_loader
-from src.scheduling import get_state, set_state
+from src.scheduling import get_state, record_system_event, set_state
 from tests.api_fixtures import FakeApis, FakeCBS, capture_info
 from tests.conftest import Clients, FakeD1, Seed, freeze_all, iso
 
@@ -488,3 +488,21 @@ def test_admin_status_stale_flags(
     assert last_run["deadline_last_synced_sunday"] == "2026-09-27"
     # live-only pollers report timestamps, no stale flag
     assert "stale" not in last_run["sports_io_live_poll"]
+
+
+def test_admin_flags_system_events_still_happening(
+    clients: Clients, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    d1 = clients.d1
+    freeze_all(monkeypatch, QUIET - timedelta(days=30))
+    record_system_event(d1, "odds_capture", "a month ago")
+    freeze_all(monkeypatch, QUIET - timedelta(hours=2))
+    record_system_event(d1, "housekeeping", "two hours ago")
+    freeze_all(monkeypatch, QUIET)
+
+    admin.write_admin_status()
+
+    events = clients.kv.values["meta:admin"]["system_events"]
+    assert (events["distinct_count"], events["active_count"]) == (2, 1)
+    active = {e["source"]: e["active"] for e in events["recent"]}
+    assert active == {"housekeeping": True, "odds_capture": False}

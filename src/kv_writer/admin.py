@@ -1,7 +1,7 @@
 """meta:admin - see src/CLAUDE.md's KV writer section."""
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from db.clients import get_d1, get_kv
@@ -26,7 +26,8 @@ LIMIT 20
 """
 
 _SYSTEM_EVENTS_TOTALS_SQL = """
-SELECT COUNT(*) AS distinct_count, COALESCE(SUM(occurrences), 0) AS total_occurrences
+SELECT COUNT(*) AS distinct_count, COALESCE(SUM(occurrences), 0) AS total_occurrences,
+    COALESCE(SUM(last_seen_at >= ?), 0) AS active_count
 FROM system_events
 """
 
@@ -52,6 +53,11 @@ _CBS_PICKS_QUIET_STALE_SECONDS = 12 * 60 * 60  # 30min, quiet only
 _PREGAME_WEATHER_STALE_SECONDS = 8 * 60 * 60  # 4h baseline, every tick
 _USER_PROFILES_STALE_SECONDS = 2 * 60 * 60  # 30min, every tick
 _RECAP_STALE_SECONDS = 30 * 60  # 5min, every tick
+
+# a system_events row counts as active (still happening) if it recurred
+# this recently - rows never age out, so without this a month-old failure
+# looks the same as one from a minute ago
+_SYSTEM_EVENT_ACTIVE_SECONDS = 24 * 60 * 60
 
 
 def _seconds_since(iso_value: str | None, now: datetime) -> float | None:
@@ -185,7 +191,14 @@ def write_admin_status() -> None:
     }
 
     mapping_gaps_totals = d1.query(_MAPPING_GAPS_TOTALS_SQL).results[0]
-    system_events_totals = d1.query(_SYSTEM_EVENTS_TOTALS_SQL).results[0]
+    active_since = utc_iso(now - timedelta(seconds=_SYSTEM_EVENT_ACTIVE_SECONDS))
+    system_events_totals = d1.query(_SYSTEM_EVENTS_TOTALS_SQL, [active_since]).results[
+        0
+    ]
+    recent_events = [
+        {**row, "active": row["last_seen_at"] >= active_since}
+        for row in d1.query(_SYSTEM_EVENTS_RECENT_SQL).results
+    ]
 
     get_kv().write(
         "meta:admin",
@@ -200,7 +213,9 @@ def write_admin_status() -> None:
             "system_events": {
                 "distinct_count": system_events_totals["distinct_count"],
                 "total_occurrences": system_events_totals["total_occurrences"],
-                "recent": d1.query(_SYSTEM_EVENTS_RECENT_SQL).results,
+                # recurred in the last _SYSTEM_EVENT_ACTIVE_SECONDS
+                "active_count": system_events_totals["active_count"],
+                "recent": recent_events,
             },
         },
     )

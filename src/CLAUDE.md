@@ -1139,7 +1139,11 @@ src.kv_writer.__main__`).
 - `write_admin_status()` → `meta:admin` (added 2026-09-11) — a health-check
   summary for an eventual admin page: when each `orchestration.py` task
   last ran (from `orchestration_state`) plus recent `mapping_gaps`/
-  `system_events` rows to review. Every task reports `last_at` (the
+  `system_events` rows to review. `system_events` rows never age out, so
+  each `recent` row carries `active` (recurred within
+  `_SYSTEM_EVENT_ACTIVE_SECONDS`, 24h) and the block has an
+  `active_count` (2026-09-29) - the UI can tell a live failure from an old
+  one without doing the time math itself. Every task reports `last_at` (the
   scheduling cursor, moved on every attempt) and `last_success_at` (moved
   only when it worked) - since 2026-09-27 every task has both as separate
   keys (see Orchestration's "No task can end the tick"); before that, the
