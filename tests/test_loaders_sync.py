@@ -104,6 +104,20 @@ class TestCbsAndSportsIoMerge:
             )
         assert _count(merged, "mapping_gaps") == 0
 
+    def test_backfill_asks_cbs_for_that_weeks_period(
+        self, merged: FakeD1, cbs: FakeCBS
+    ) -> None:
+        week = capture_info()["week"]
+        (row,) = _rows(
+            merged, "SELECT cbs_pool_period_id FROM weeks WHERE week_number = ?", [week]
+        )
+        cbs.periods.clear()
+
+        cbs_loader.backfill_cbs_week(week)
+
+        # both pages (games from pool home, picks from weekly standings)
+        assert cbs.periods and set(cbs.periods) == {row["cbs_pool_period_id"]}
+
     def test_sports_io_after_cbs_keeps_cbs_fields(self, merged: FakeD1) -> None:
         before = _rows(
             merged,

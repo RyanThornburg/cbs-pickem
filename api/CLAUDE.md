@@ -21,10 +21,10 @@ Three module-level functions build a `CBSClient` and drive it end-to-end
 2026-09-15** — both the weekly-standings and pool-home pages accept
 `?poolPeriodId=<id>` and return that specific period's data instead of
 always the current one (found by inspecting a saved pool-home payload's
-`poolPeriods` list, then testing the URL directly). Passing it sets
-`CBSClient.pool_period_id` before the fetch (the client already had the
-attribute and the URL-building logic for this - it just always stayed
-`None`, so nothing before now ever actually exercised it). `weeks.cbs_pool_period_id`
+`poolPeriods` list, then testing the URL directly). It's passed straight
+to `CBSClient.fetch_weekly_data(pool_period_id)`/
+`fetch_pool_home_data(pool_period_id)` (until 2026-09-29 it was a mutable
+`CBSClient.pool_period_id` attribute set before each fetch). `weeks.cbs_pool_period_id`
 already stores every period's id, not just the current one (`load_cbs_weeks()`
 iterates the full `pool_periods` list on every run), so no extra fetching
 is needed to discover a past week's id - `src/loaders/cbs_loader.py`'s

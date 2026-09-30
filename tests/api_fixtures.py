@@ -123,15 +123,21 @@ class FakeCBS:
         )
         entries = self.weekly["standings"]["weekly"]["rankedEntries"]
         self.members = [dict(e["entry"]["member"], email=None) for e in entries]
+        # every pool_period_id a fetch asked for (None = the current week)
+        self.periods: list[str | None] = []
         fake = self
 
         class Client:
-            pool_period_id: str | None = None
-
-            def fetch_pool_home_data(self) -> dict[str, Any]:
+            def fetch_pool_home_data(
+                self, pool_period_id: str | None = None
+            ) -> dict[str, Any]:
+                fake.periods.append(pool_period_id)
                 return json.loads(json.dumps(fake.home))
 
-            def fetch_weekly_data(self) -> dict[str, Any]:
+            def fetch_weekly_data(
+                self, pool_period_id: str | None = None
+            ) -> dict[str, Any]:
+                fake.periods.append(pool_period_id)
                 return json.loads(json.dumps(fake.weekly))
 
             def fetch_user_data(self) -> dict[str, Any]:

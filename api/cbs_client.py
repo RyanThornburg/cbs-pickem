@@ -116,7 +116,6 @@ class CBSClient:
         self.weekly_url = f"{self.pool_url}/standings/weekly"
         self.player_url = f"{self.pool_url}/players"
         self.login_url = f"https://www.cbssports.com/login?masterProductId={PRODUCT_ID}&product_abbrev=opm&show_opts=1&xurl={quote(self.weekly_url, '')}"
-        self.pool_period_id: str | None = None
 
     def _credential_login(self, page: Page) -> None:
         logger.info("Credentials are stale, attempting to log in")
@@ -192,31 +191,29 @@ class CBSClient:
         self.login()
         return self._fetch_common_pool(url, required_key, True)
 
-    def fetch_weekly_data(self) -> dict[str, Any]:
-        """return weekly data (or currently week if no period specified)"""
+    def fetch_weekly_data(self, pool_period_id: str | None = None) -> dict[str, Any]:
+        """return weekly data (the current week if no period specified)"""
         logger.info("Fetching weekly standings")
-        weekly_url = (
-            self.weekly_url
-            if self.pool_period_id is None
-            else f"{self.weekly_url}?poolPeriodId={self.pool_period_id}"
+        return self._fetch_common_pool(
+            _for_period(self.weekly_url, pool_period_id), "poolPeriod"
         )
-
-        return self._fetch_common_pool(weekly_url, "poolPeriod")
 
     def fetch_user_data(self) -> dict[str, Any]:
         """return the pool's players/members data"""
         return self._fetch_common_pool(self.player_url, "members")
 
-    def fetch_pool_home_data(self) -> dict[str, Any]:
-        """return the pool-home page's data
-        more per event details are found in this data
-        (odds market, pick-ownership %, colors)"""
-        url = (
-            self.pool_url
-            if self.pool_period_id is None
-            else f"{self.pool_url}?poolPeriodId={self.pool_period_id}"
+    def fetch_pool_home_data(self, pool_period_id: str | None = None) -> dict[str, Any]:
+        """return the pool-home page's data (the current week if no period
+        specified) - more per event details are found in this data (odds
+        market, pick-ownership %, colors)"""
+        return self._fetch_common_pool(
+            _for_period(self.pool_url, pool_period_id), "season"
         )
-        return self._fetch_common_pool(url, "season")
+
+
+def _for_period(url: str, pool_period_id: str | None) -> str:
+    """CBS pages take ?poolPeriodId= for a specific (past) week"""
+    return url if pool_period_id is None else f"{url}?poolPeriodId={pool_period_id}"
 
 
 def write_data(data: dict[str, Any], file_path: Path) -> None:
@@ -249,8 +246,7 @@ def get_cbs_weekly(pool_period_id: str | None = None) -> FootballPickemManagerPo
     logger.info("Running CBS Pick Data Fetch")
     try:
         cbs_client: CBSClient = _new_client()
-        cbs_client.pool_period_id = pool_period_id
-        data = cbs_client.fetch_weekly_data()
+        data = cbs_client.fetch_weekly_data(pool_period_id)
         cbs_data: FootballPickemManagerPool = FootballPickemManagerPool.model_validate(
             data
         )
@@ -300,8 +296,7 @@ def get_cbs_pool_home(
     logger.info("Running CBS Pool Home Fetch")
     try:
         cbs_client: CBSClient = _new_client()
-        cbs_client.pool_period_id = pool_period_id
-        data = cbs_client.fetch_pool_home_data()
+        data = cbs_client.fetch_pool_home_data(pool_period_id)
         cbs_data: FootballPickemPoolHome = FootballPickemPoolHome.model_validate(data)
         week_int: int = cbs_data.pool_period.order
 
