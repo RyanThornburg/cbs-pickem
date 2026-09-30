@@ -127,8 +127,8 @@ class CBSClient:
             page.get_by_test_id("password").fill(self.password)
             page.get_by_test_id("submit-button").click()
             page.wait_for_url(f"{self.weekly_url}**")
-        except Exception:
-            logger.exception(
+        except Exception as exc:
+            exc.add_note(
                 "Login failed. CBS may have changed their login form, or credentials are wrong"
             )
             raise
@@ -239,8 +239,8 @@ def get_cbs_users() -> list[Member]:
         logger.info("Parsed %d pool members", len(members))
         write_data(data, get_players_path())
         return members
-    except Exception:
-        logger.exception("Player fetch failed")
+    except Exception as exc:
+        exc.add_note("Player fetch failed")
         raise
 
 
@@ -269,8 +269,8 @@ def get_cbs_weekly(pool_period_id: str | None = None) -> FootballPickemManagerPo
         )
         write_data(data, get_week_path(week_int))
         return cbs_data
-    except Exception:
-        logger.exception("Scrape failed")
+    except Exception as exc:
+        exc.add_note("Scrape failed")
         raise
 
 
@@ -284,8 +284,8 @@ def get_cbs_pool_teams(pool_period_id: str | None = None) -> list[Team]:
         return [
             team for game in pool_events for team in (game.away_team, game.home_team)
         ]
-    except Exception:
-        logger.exception("Fetching team data failed")
+    except Exception as exc:
+        exc.add_note("Fetching team data failed")
         raise
 
 
@@ -322,8 +322,8 @@ def get_cbs_pool_home(
         )
         write_data(data, get_pool_home_path(week_int))
         return cbs_data
-    except Exception:
-        logger.exception("Pool home fetch failed")
+    except Exception as exc:
+        exc.add_note("Pool home fetch failed")
         raise
 
 

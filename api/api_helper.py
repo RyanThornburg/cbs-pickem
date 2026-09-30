@@ -65,8 +65,9 @@ def fetch_and_validate(
         items = [model.model_validate(item) for item in fetch()]
         logger.info("Parsed %d %s", len(items), label)
         return items
-    except Exception:
-        logger.exception("Fetch failed for %s", label)
+    except Exception as exc:
+        # a note, not a log line - whoever catches it (soft()) logs it once
+        exc.add_note(f"Fetch failed for {label}")
         raise
 
 
@@ -79,6 +80,7 @@ def fetch_and_validate_one(
         item = model.model_validate(fetch())
         logger.info("Parsed %s", label)
         return item
-    except Exception:
-        logger.exception("Fetch failed for %s", label)
+    except Exception as exc:
+        # a note, not a log line - whoever catches it (soft()) logs it once
+        exc.add_note(f"Fetch failed for {label}")
         raise

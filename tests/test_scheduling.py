@@ -2,11 +2,15 @@
 soft-fail wrapper (src/scheduling.py), the process lock, and the checks that
 decide whether live/pre-kickoff/pregame-weather work runs this tick."""
 
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
+from api.api_helper import fetch_and_validate
 from src import game_rules, orchestration, scheduling
 from src.orchestration import EASTERN, _current_week_deadline_utc
 from tests.conftest import FakeD1, Seed
@@ -110,6 +114,23 @@ class TestSoft:
         assert events.results == [
             {"source": "src", "message": "source is down", "occurrences": 2}
         ]
+
+    def test_a_failed_fetch_is_logged_once(
+        self, d1: FakeD1, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # fetch_and_validate() notes its context on the exception instead of
+        # logging it too, so error.log gets one entry per failure
+        def fetch() -> list[dict[str, Any]]:
+            raise RuntimeError("source is down")
+
+        with caplog.at_level(logging.ERROR):
+            scheduling.soft(
+                d1, "src", lambda: fetch_and_validate("teams", fetch, BaseModel)
+            )
+
+        (record,) = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert "Fetch failed for teams" in caplog.text
+        assert record.exc_info is not None
 
     def test_long_messages_are_truncated(self, d1: FakeD1) -> None:
         def fail_long() -> None:

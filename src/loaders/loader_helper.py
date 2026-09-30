@@ -345,15 +345,15 @@ def capture_pregame_forecast(
 def sql_batch_call(
     statements: list[tuple[str, list[Any] | None]], client: D1Client | None = None
 ) -> None:
-    """Run a batch of (sql, params) statements. A D1Error is logged and
-    re-raised, not turned into sys.exit() - SystemExit isn't an Exception,
-    so exiting here used to slip past orchestration.py's try/except around
-    tasks meant to fail softly and end the whole tick."""
+    """Run a batch of (sql, params) statements. A D1Error is re-raised, not
+    turned into sys.exit() - SystemExit isn't an Exception, so exiting here
+    used to slip past orchestration.py's soft() and end the whole tick. Not
+    logged here either: soft() logs it once."""
     client = client or get_d1()
     try:
         client.batch(statements)
-    except D1Error:
-        logger.exception("Loading data failed")
+    except D1Error as exc:
+        exc.add_note("Loading data failed")
         raise
 
 

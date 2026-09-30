@@ -145,3 +145,12 @@ motivation as `mapping_gaps` (see `db/CLAUDE.md`), but for real
 exceptions/failures rather than unmapped external values — the two are
 complementary, not overlapping: a mapping gap never raises, so it would
 never show up in `error.log` on its own.
+
+Log a failure once, where it's handled - not where it's raised. Code that
+catches an exception only to re-raise it doesn't log it; it adds context
+with `exc.add_note(...)` (`api_helper.fetch_and_validate()`, the
+`cbs_client` wrappers, `loader_helper.sql_batch_call()`), and
+`logger.exception` in whatever finally handles it (`scheduling.soft()`
+for the cron) prints the note with the traceback. Until 2026-09-29 those
+sites logged and re-raised, so every failure landed in `error.log` twice.
+A manual CLI run with no handler gets the traceback on the console only.
