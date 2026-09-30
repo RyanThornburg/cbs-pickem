@@ -3,7 +3,7 @@
 import json
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
 from api.weather_api import get_forecast
 from api.weather_api_models import Alert, DailyDataPoint, DataPoint, Forecast
@@ -18,8 +18,39 @@ logger = logging.getLogger(__name__)
 # weather is deliberately skipped for both rather than guessed at.
 ENCLOSED_ROOF_TYPES = ("Dome", "Retractable")
 
-_NO_WEATHER = (None, None, None, None, None, None, None, None, None, None, None)
-_NO_WINDOW = (None, None, None, None, None, None, None)
+
+class Weather(NamedTuple):
+    """conditions at one moment - a game_snapshots row's weather columns or
+    a games row's forecast_* kickoff columns, in column order"""
+
+    temp_f: int | None = None
+    feels_like_f: int | None = None
+    condition: str | None = None
+    icon: str | None = None
+    precip_type: str | None = None
+    wind_speed_mph: int | None = None
+    wind_gust_mph: int | None = None
+    wind_direction: str | None = None
+    precipitation_pct: int | None = None
+    visibility_mi: float | None = None
+    alerts_json: str | None = None
+
+
+class WeatherWindow(NamedTuple):
+    """a pregame forecast across the game window - games.forecast_window_*
+    plus forecast_hours_json, in column order"""
+
+    precip_pct_max: int | None = None
+    precip_type: str | None = None
+    wind_gust_mph_max: int | None = None
+    temp_f_low: int | None = None
+    temp_f_high: int | None = None
+    snow_accumulation_in: float | None = None
+    hours_json: str | None = None
+
+
+_NO_WEATHER = Weather()
+_NO_WINDOW = WeatherWindow()
 
 _COMPASS_POINTS = [
     "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
@@ -71,38 +102,34 @@ def _alert_overlaps(alert: Alert, window_start: datetime, window_end: datetime) 
     return start <= window_end
 
 
-def _datapoint_to_weather(
-    point: DataPoint, alerts: str | None
-) -> tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any]:
+def _datapoint_to_weather(point: DataPoint, alerts: str | None) -> Weather:
     """one Pirate Weather DataPoint (`currently` or an `hourly.data[]`
-    entry) as capture_weather()'s tuple shape"""
-    return (
-        round(point.temperature) if point.temperature is not None else None,
-        round(point.apparent_temperature)
+    entry)"""
+    return Weather(
+        temp_f=round(point.temperature) if point.temperature is not None else None,
+        feels_like_f=round(point.apparent_temperature)
         if point.apparent_temperature is not None
         else None,
-        point.summary,
-        point.icon,
-        point.precip_type,
-        round(point.wind_speed) if point.wind_speed is not None else None,
-        round(point.wind_gust) if point.wind_gust is not None else None,
-        _bearing_to_compass(point.wind_bearing)
+        condition=point.summary,
+        icon=point.icon,
+        precip_type=point.precip_type,
+        wind_speed_mph=round(point.wind_speed)
+        if point.wind_speed is not None
+        else None,
+        wind_gust_mph=round(point.wind_gust) if point.wind_gust is not None else None,
+        wind_direction=_bearing_to_compass(point.wind_bearing)
         if point.wind_bearing is not None
         else None,
-        round(point.precip_probability * 100)
+        precipitation_pct=round(point.precip_probability * 100)
         if point.precip_probability is not None
         else None,
-        point.visibility,
-        alerts,
+        visibility_mi=point.visibility,
+        alerts_json=alerts,
     )
 
 
 def _iso(epoch: int | None) -> str | None:
-    return (
-        utc_iso(datetime.fromtimestamp(epoch, UTC))
-        if epoch is not None
-        else None
-    )
+    return utc_iso(datetime.fromtimestamp(epoch, UTC)) if epoch is not None else None
 
 
 def _overlapping_alerts(
@@ -153,15 +180,13 @@ def capture_weather(
     longitude: float | None,
     roof_type: str | None,
     context: str,
-) -> tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any]:
-    """(temp_f, feels_like_f, condition, icon, precip_type, wind_speed_mph,
-    wind_gust_mph, wind_direction, precipitation_pct, visibility_mi, alerts)
-    for a stadium location *right now* (Pirate Weather's `currently`) - the
+) -> Weather:
+    """Weather at a stadium location *right now* (Pirate Weather's `currently`) - the
     live in-game case. None across the board for an enclosed roof, unknown
     coordinates, or a failed fetch (see _fetch_outdoor_forecast()). `icon`
     is Pirate Weather's own standardized identifier (e.g.
     "partly-cloudy-day", "rain", "clear-night") - meant for a UI icon set,
-    distinct from `condition`'s free-text summary. `alerts` is a JSON list
+    distinct from `condition`'s free-text summary. `alerts_json` is a JSON list
     (see _overlapping_alerts()) of game-relevant alerts active at this
     instant.
 
@@ -177,30 +202,23 @@ def capture_weather(
 def _hour_entry(point: DataPoint) -> dict[str, Any]:
     """one hourly entry for forecast_hours_json - the same per-point
     conversion as the kickoff forecast, minus visibility/alerts"""
-    (temp_f, feels_like_f, condition, icon, precip_type, wind_speed_mph,
-     wind_gust_mph, wind_direction, precipitation_pct, _, _) = _datapoint_to_weather(
-        point, None
-    )  # fmt: skip
+    weather = _datapoint_to_weather(point, None)
     return {
         "time": _iso(point.time),
-        "temp_f": temp_f,
-        "feels_like_f": feels_like_f,
-        "condition": condition,
-        "icon": icon,
-        "precip_type": precip_type,
-        "precipitation_pct": precipitation_pct,
-        "wind_speed_mph": wind_speed_mph,
-        "wind_gust_mph": wind_gust_mph,
-        "wind_direction": wind_direction,
+        "temp_f": weather.temp_f,
+        "feels_like_f": weather.feels_like_f,
+        "condition": weather.condition,
+        "icon": weather.icon,
+        "precip_type": weather.precip_type,
+        "precipitation_pct": weather.precipitation_pct,
+        "wind_speed_mph": weather.wind_speed_mph,
+        "wind_gust_mph": weather.wind_gust_mph,
+        "wind_direction": weather.wind_direction,
     }
 
 
-def _window_summary(
-    points: list[DataPoint],
-) -> tuple[Any, Any, Any, Any, Any, Any, Any]:
-    """(precip_pct_max, precip_type, wind_gust_mph_max, temp_f_low,
-    temp_f_high, snow_accumulation_in, hours_json) across a run of hourly
-    entries. precip_type is whatever's forecast at the wettest hour, not
+def _window_summary(points: list[DataPoint]) -> WeatherWindow:
+    """WeatherWindow across a run of hourly entries. precip_type is whatever's forecast at the wettest hour, not
     just the first non-null one - that's the hour that actually matters.
     hours_json is every entry itself (chronological, JSON text), so a UI
     can see which way it's trending - the aggregates alone can't say
@@ -210,60 +228,71 @@ def _window_summary(
 
     with_precip = [p for p in points if p.precip_probability is not None]
     wettest = (
-        max(with_precip, key=lambda p: p.precip_probability or 0) if with_precip else None
+        max(with_precip, key=lambda p: p.precip_probability or 0)
+        if with_precip
+        else None
     )
     gusts = [p.wind_gust for p in points if p.wind_gust is not None]
     temps = [p.temperature for p in points if p.temperature is not None]
     snow = [p.snow_accumulation for p in points if p.snow_accumulation is not None]
 
-    return (
-        round((wettest.precip_probability or 0) * 100) if wettest else None,
-        wettest.precip_type if wettest else None,
-        round(max(gusts)) if gusts else None,
-        round(min(temps)) if temps else None,
-        round(max(temps)) if temps else None,
-        round(sum(snow), 1) if snow else None,
-        json.dumps([_hour_entry(p) for p in sorted(points, key=lambda p: p.time)]),
+    return WeatherWindow(
+        precip_pct_max=round((wettest.precip_probability or 0) * 100)
+        if wettest
+        else None,
+        precip_type=wettest.precip_type if wettest else None,
+        wind_gust_mph_max=round(max(gusts)) if gusts else None,
+        temp_f_low=round(min(temps)) if temps else None,
+        temp_f_high=round(max(temps)) if temps else None,
+        snow_accumulation_in=round(sum(snow), 1) if snow else None,
+        hours_json=json.dumps(
+            [_hour_entry(p) for p in sorted(points, key=lambda p: p.time)]
+        ),
     )
 
 
 def _daily_to_forecast(
     day: DailyDataPoint, alerts: str | None
-) -> tuple[
-    tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any],
-    tuple[Any, Any, Any, Any, Any, Any, Any],
-]:
+) -> tuple[Weather, WeatherWindow]:
     """a whole-day entry mapped onto the same (kickoff, window) shapes as the
     hourly path. There's no single temperature for a day, so kickoff
     temp_f/feels_like_f stay None and the day's min/max goes into the
     window's temp_f_low/high instead - a day-long range, not a game-window
     one, which is why forecast_source gets recorded alongside it. No
     hourly breakdown exists, so hours_json is an empty list."""
-    kickoff = (
-        None,
-        None,
-        day.summary,
-        day.icon,
-        day.precip_type,
-        round(day.wind_speed) if day.wind_speed is not None else None,
-        round(day.wind_gust) if day.wind_gust is not None else None,
-        _bearing_to_compass(day.wind_bearing) if day.wind_bearing is not None else None,
+    precipitation_pct = (
         round(day.precip_probability * 100)
         if day.precip_probability is not None
-        else None,
-        day.visibility,
-        alerts,
+        else None
     )
-    window = (
-        round(day.precip_probability * 100)
-        if day.precip_probability is not None
+    wind_gust_mph = round(day.wind_gust) if day.wind_gust is not None else None
+    kickoff = Weather(
+        condition=day.summary,
+        icon=day.icon,
+        precip_type=day.precip_type,
+        wind_speed_mph=round(day.wind_speed) if day.wind_speed is not None else None,
+        wind_gust_mph=wind_gust_mph,
+        wind_direction=_bearing_to_compass(day.wind_bearing)
+        if day.wind_bearing is not None
         else None,
-        day.precip_type,
-        round(day.wind_gust) if day.wind_gust is not None else None,
-        round(day.temperature_min) if day.temperature_min is not None else None,
-        round(day.temperature_max) if day.temperature_max is not None else None,
-        round(day.snow_accumulation, 1) if day.snow_accumulation is not None else None,
-        "[]",
+        precipitation_pct=precipitation_pct,
+        visibility_mi=day.visibility,
+        alerts_json=alerts,
+    )
+    window = WeatherWindow(
+        precip_pct_max=precipitation_pct,
+        precip_type=day.precip_type,
+        wind_gust_mph_max=wind_gust_mph,
+        temp_f_low=round(day.temperature_min)
+        if day.temperature_min is not None
+        else None,
+        temp_f_high=round(day.temperature_max)
+        if day.temperature_max is not None
+        else None,
+        snow_accumulation_in=round(day.snow_accumulation, 1)
+        if day.snow_accumulation is not None
+        else None,
+        hours_json="[]",
     )
     return kickoff, window
 
@@ -276,15 +305,11 @@ def capture_pregame_forecast(
     kickoff: datetime,
     window_hours: float,
     alert_window_hours: float,
-) -> tuple[
-    str | None,
-    tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any],
-    tuple[Any, Any, Any, Any, Any, Any, Any],
-]:
+) -> tuple[str | None, Weather, WeatherWindow]:
     """(source, kickoff, window) forecast for a game that hasn't started yet.
 
     source "hourly" (the normal case):
-    - kickoff: same shape as capture_weather(), but from the `hourly` entry
+    - kickoff: a Weather like capture_weather()'s, but from the `hourly` entry
       whose hour contains kickoff - not `currently`, which would just be
       conditions whenever this capture happened to run (e.g. Tuesday's
       weather for a Sunday game).

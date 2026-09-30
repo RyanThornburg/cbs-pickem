@@ -14,7 +14,7 @@ Usage: uv run python -m src.loaders.game_snapshots_loader [local|prod]
 import logging
 import sys
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
 from api.espn_client import get_scoreboard, team_pair
 from api.espn_models import Competition, Situation
@@ -58,7 +58,7 @@ WHERE snapshot_id IN (
 # carry the previous reading forward instead of spending a Pirate Weather call
 WEATHER_REFRESH_SECONDS = 5 * 60
 
-# game_snapshots' weather columns, in capture_weather()'s tuple order
+# game_snapshots' weather columns, in Weather's field order
 _WEATHER_COLUMNS = (
     "temperature_f",
     "feels_like_f",
@@ -73,19 +73,52 @@ _WEATHER_COLUMNS = (
     "weather_alerts_json",
 )
 
-_NO_SITUATION = (None,) * 16
+
+class GameState(NamedTuple):
+    """clock and score from ESPN's competition - quarter 5 is overtime, same
+    as ESPN's period; possession is None when ESPN has no one on offense
+    (between quarters, halftime). game_snapshots column order."""
+
+    quarter: int | None
+    time_remaining: str | None
+    status_desc: str | None
+    possession: str | None
+    home_score: int | None
+    away_score: int | None
+
+
+class PlaySituation(NamedTuple):
+    """ESPN's down/distance/last play/win probability - all None if ESPN has
+    no situation for this game right now (e.g. halftime). game_snapshots
+    column order."""
+
+    down: int | None = None
+    distance: int | None = None
+    yard_line: int | None = None
+    down_distance_text: str | None = None
+    possession_text: str | None = None
+    is_red_zone: bool | None = None
+    home_timeouts: int | None = None
+    away_timeouts: int | None = None
+    last_play_text: str | None = None
+    last_play_type: str | None = None
+    drive_text: str | None = None
+    drive_start_yard_line: int | None = None
+    drive_start_text: str | None = None
+    home_win_pct: float | None = None
+    away_win_pct: float | None = None
+    last_play_id: str | None = None
+
+
+_NO_SITUATION = PlaySituation()
 
 
 def _win_pct(fraction: float | None) -> float | None:
     return None if fraction is None else round(fraction * 100, 1)
 
 
-def _situation_fields(situation: Situation | None) -> tuple[Any, ...]:
-    """(down, distance, yard_line, down_distance_text, possession_text,
-    is_red_zone, home_timeouts, away_timeouts, last_play_text,
-    last_play_type, drive_text, drive_start_yard_line, drive_start_text,
-    home_win_pct, away_win_pct, last_play_id).
-    None across the board if ESPN has no situation for this game right
+def _situation_fields(situation: Situation | None) -> PlaySituation:
+    """None across the board if ESPN has no situation for this game right
     now - e.g. between plays like halftime, or if ESPN's
     abbreviation-matched event wasn't found."""
     if situation is None:
@@ -95,31 +128,31 @@ def _situation_fields(situation: Situation | None) -> tuple[Any, ...]:
     probability = last_play.probability if last_play else None
     drive = last_play.drive if last_play else None
     drive_start = drive.start if drive else None
-    return (
-        situation.down,
-        situation.distance,
-        situation.yard_line,
-        situation.down_distance_text,
-        situation.possession_text,
-        situation.is_red_zone,
-        situation.home_timeouts,
-        situation.away_timeouts,
+    return PlaySituation(
+        down=situation.down,
+        distance=situation.distance,
+        yard_line=situation.yard_line,
+        down_distance_text=situation.down_distance_text,
+        possession_text=situation.possession_text,
+        is_red_zone=situation.is_red_zone,
+        home_timeouts=situation.home_timeouts,
+        away_timeouts=situation.away_timeouts,
         # ESPN sometimes pads this with a leading space
-        last_play.text.strip() if last_play and last_play.text else None,
-        last_play.type.text if last_play and last_play.type else None,
-        drive.description if drive else None,
-        drive_start.yard_line if drive_start else None,
-        drive_start.text if drive_start else None,
-        _win_pct(probability.home_win_percentage) if probability else None,
-        _win_pct(probability.away_win_percentage) if probability else None,
-        last_play.id if last_play else None,
+        last_play_text=last_play.text.strip() if last_play and last_play.text else None,
+        last_play_type=last_play.type.text if last_play and last_play.type else None,
+        drive_text=drive.description if drive else None,
+        drive_start_yard_line=drive_start.yard_line if drive_start else None,
+        drive_start_text=drive_start.text if drive_start else None,
+        home_win_pct=_win_pct(probability.home_win_percentage) if probability else None,
+        away_win_pct=_win_pct(probability.away_win_percentage) if probability else None,
+        last_play_id=last_play.id if last_play else None,
     )
 
 
 def _snapshot_weather(
     row: dict[str, Any], previous: dict[str, Any] | None
 ) -> tuple[Any, ...]:
-    """capture_weather()'s tuple plus weather_captured_at. Reuses the
+    """capture_weather()'s Weather plus weather_captured_at. Reuses the
     previous snapshot's reading while it's under WEATHER_REFRESH_SECONDS
     old. weather_captured_at stays null for an enclosed roof or a failed
     fetch, so those retry on the next snapshot (enclosed never calls out)."""
@@ -186,11 +219,7 @@ def _fetch_espn_lookup() -> tuple[
     return by_espn_id, by_teams
 
 
-def _game_state_fields(competition: Competition) -> tuple[Any, ...]:
-    """(quarter, time_remaining, status_desc, possession, home_score,
-    away_score) from ESPN's competition - quarter 5 is overtime, same as
-    ESPN's period; possession is None when ESPN has no one on offense
-    (between quarters, halftime)."""
+def _game_state_fields(competition: Competition) -> GameState:
     by_side = {c.home_away: c for c in competition.competitors}
     home, away = by_side.get("home"), by_side.get("away")
     situation = competition.situation
@@ -200,13 +229,17 @@ def _game_state_fields(competition: Competition) -> tuple[Any, ...]:
             possession = "HOME"
         elif away is not None and situation.possession_team_id == away.team.id:
             possession = "AWAY"
-    return (
-        competition.status.period,
-        competition.status.display_clock,
-        competition.status.type.name,
-        possession,
-        int(home.score) if home is not None and home.score.isdigit() else None,
-        int(away.score) if away is not None and away.score.isdigit() else None,
+    return GameState(
+        quarter=competition.status.period,
+        time_remaining=competition.status.display_clock,
+        status_desc=competition.status.type.name,
+        possession=possession,
+        home_score=int(home.score)
+        if home is not None and home.score.isdigit()
+        else None,
+        away_score=int(away.score)
+        if away is not None and away.score.isdigit()
+        else None,
     )
 
 
@@ -293,7 +326,7 @@ def load_game_snapshots() -> set[int]:
     captured: set[int] = set()
     for row, competition in live:
         state = _game_state_fields(competition)
-        situation_fields = _situation_fields(competition.situation)
+        situation = _situation_fields(competition.situation)
         previous = latest_by_game_id.get(row["game_id"])
         # nothing happened since the prior snapshot - clock, score and
         # ESPN's latest play id all unchanged
@@ -303,7 +336,13 @@ def load_game_snapshots() -> set[int]:
             previous["home_score"],
             previous["away_score"],
             previous["last_play_id"],
-        ) == (state[0], state[1], state[4], state[5], situation_fields[-1]):
+        ) == (
+            state.quarter,
+            state.time_remaining,
+            state.home_score,
+            state.away_score,
+            situation.last_play_id,
+        ):
             continue
 
         statements.append(
@@ -312,7 +351,7 @@ def load_game_snapshots() -> set[int]:
                 [
                     row["game_id"],
                     *state,
-                    *situation_fields,
+                    *situation,
                     *_snapshot_weather(row, previous),
                 ],
             )
