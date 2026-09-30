@@ -31,8 +31,14 @@ def career_record_by_user(d1: D1Client) -> dict[int, dict[str, Any]]:
     until season_close_out.py runs at year-end). Shared by write_historical()
     (meta:historical's career list) and src/user_stats.py's
     compute_user_profiles() (each user's own profile key)."""
+    return _career_record(d1.query(_HISTORICAL_SQL).results)
+
+
+def _career_record(rows: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    """career_record_by_user() from already-fetched _HISTORICAL_SQL rows -
+    write_historical() needs the rows itself too, so it queries once"""
     career: dict[int, dict[str, Any]] = {}
-    for row in d1.query(_HISTORICAL_SQL).results:
+    for row in rows:
         record = career.setdefault(
             row["user_id"],
             {
@@ -87,7 +93,7 @@ def write_historical() -> None:
     champions_by_season: dict[int, dict[str, Any]] = {}
     first_half_champions_by_season: dict[int, dict[str, Any]] = {}
     second_half_champions_by_season: dict[int, dict[str, Any]] = {}
-    career = career_record_by_user(d1)
+    career = _career_record(rows)
 
     for row in rows:
         season_key = str(row["season_id"])

@@ -312,7 +312,7 @@ class FootballPickemManagerPoolStandings(CBSModel):
 
 class FootballPickemManagerPool(CBSModel):
     """Root of the commonPool payload returned by
-    `client.extract_weekly_standings()`."""
+    `CBSClient.fetch_weekly_data()`."""
 
     typename: Literal["FootballPickemManagerPool"] = Field(alias="__typename")
     id: str

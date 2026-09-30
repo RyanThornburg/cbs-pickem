@@ -357,7 +357,8 @@ def capture_pregame_forecast(
     daily = forecast.daily.data if forecast.daily else []
     day_ends = [d.time for d in daily[1:]] + [daily[-1].time + 86400] if daily else []
     kickoff_day = next(
-        (d for d, end in zip(daily, day_ends) if d.time <= kickoff_ts < end), None
+        (d for d, end in zip(daily, day_ends, strict=True) if d.time <= kickoff_ts < end),
+        None,
     )
     if kickoff_day is not None:
         logger.info("Kickoff past the hourly horizon for %s, using daily", context)

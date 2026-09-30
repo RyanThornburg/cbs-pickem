@@ -73,7 +73,7 @@ def _fetch_html_data(context: APIRequestContext, weekly_url: str) -> str:
     response = context.get(weekly_url)
     if response.status in RETRY_ERRORS:
         raise FetchStatusError(f"CBS returned {response.status} for {weekly_url}")
-    elif response.status != 200:
+    if response.status != 200:
         logger.warning(
             "Non-200 status, non-retryable status %s for %s",
             response.status,

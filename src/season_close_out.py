@@ -32,8 +32,7 @@ def _final_week_number(d1: D1Client) -> int | None:
         "SELECT MAX(week_number) AS week_number FROM weeks WHERE season_id = ?",
         [SEASON],
     )
-    week_number = result.results[0]["week_number"] if result.results else None
-    return week_number
+    return result.results[0]["week_number"] if result.results else None
 
 
 def _season_pool_name(d1: D1Client) -> str | None:

@@ -194,10 +194,6 @@ class FirstDowns(SportsIOModel):
     fourth_down_efficiency: str
 
 
-class Plays(SportsIOModel):
-    total: int
-
-
 class Yards(SportsIOModel):
     total: int
     yards_per_play: str
@@ -244,7 +240,7 @@ class CountStat(SportsIOModel):
 
 class TeamGameStatistics(SportsIOModel):
     first_downs: FirstDowns
-    plays: Plays
+    plays: CountStat
     yards: Yards
     passing: Passing
     rushings: Rushing

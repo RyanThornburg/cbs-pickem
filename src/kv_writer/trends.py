@@ -557,17 +557,21 @@ def write_season_trends() -> None:
 
     team_ats_record = []
     for team_id, team in all_teams.items():
-        c, p, l = covers.get(team_id, 0), pushes.get(team_id, 0), losses.get(team_id, 0)
-        if c + p + l == 0:
+        won, pushed, lost = (
+            covers.get(team_id, 0),
+            pushes.get(team_id, 0),
+            losses.get(team_id, 0),
+        )
+        if won + pushed + lost == 0:
             continue
-        decided = c + l
+        decided = won + lost
         team_ats_record.append(
             {
                 **team,
-                "covers": c,
-                "pushes": p,
-                "losses": l,
-                "cover_pct": round(c / decided, 3) if decided else None,
+                "covers": won,
+                "pushes": pushed,
+                "losses": lost,
+                "cover_pct": round(won / decided, 3) if decided else None,
             }
         )
     team_ats_record.sort(key=lambda e: (-(e["cover_pct"] or 0), -e["covers"]))

@@ -94,7 +94,7 @@ def write_admin_status() -> None:
         return _seconds_since(state.get(key), now)
 
     # last_at is the scheduling cursor, bumped on every attempt - every
-    # task in orchestration.py runs through its _soft() wrapper, so the
+    # task in orchestration.py runs through scheduling.soft(), so the
     # cursor moves even when the attempt failed. last_success_at is a
     # separate cursor set only when the task worked. Staleness always
     # compares against the success cursor, so a task that fails every time

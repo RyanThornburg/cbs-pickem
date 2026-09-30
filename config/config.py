@@ -49,18 +49,19 @@ def get_players_path() -> Path:
     return DATA_DIR / "players.json"
 
 
-def get_week_path(week: int) -> Path:
-    week_str = f"{week:02d}"
-    path_week = DATA_DIR / f"Week{week_str}"
+def _week_file(week: int, prefix: str) -> Path:
+    """data/Week{NN}/{prefix}_{NN}.json, creating the week's folder"""
+    path_week = DATA_DIR / f"Week{week:02d}"
     path_week.mkdir(parents=True, exist_ok=True)
-    return path_week / f"cbs_week_{week_str}.json"
+    return path_week / f"{prefix}_{week:02d}.json"
+
+
+def get_week_path(week: int) -> Path:
+    return _week_file(week, "cbs_week")
 
 
 def get_pool_home_path(week: int) -> Path:
-    week_str = f"{week:02d}"
-    path_week = DATA_DIR / f"Week{week_str}"
-    path_week.mkdir(parents=True, exist_ok=True)
-    return path_week / f"cbs_pool_home_{week_str}.json"
+    return _week_file(week, "cbs_pool_home")
 
 
 def configure_logging(level: int = logging.INFO):
@@ -91,7 +92,7 @@ def load_env(env: str = "local") -> bool:
     """Load env specific configuration"""
 
     env_file = Path(__file__).parent / f".env.{env}"
-    if os.path.exists(env_file):
+    if env_file.exists():
         load_dotenv(env_file)
         logger.debug("Loaded %s environment", env)
     else:
@@ -113,7 +114,7 @@ def load_env(env: str = "local") -> bool:
 
     if missing_vars:
         logger.error(
-            "Missing required environment variables %s", (",").join(missing_vars)
+            "Missing required environment variables %s", ", ".join(missing_vars)
         )
         return False
 
