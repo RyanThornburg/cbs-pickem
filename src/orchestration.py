@@ -12,7 +12,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from config.config import configure_logging, load_env
+from config.config import cli_env, configure_logging, load_env
 from db.clients import get_d1
 from db.d1_client import D1Client
 from src.game_rules import DONE_STATUSES, LIVE_WINDOW_HOURS, sql_list
@@ -43,7 +43,7 @@ from src.loaders.sports_io_loader import (
     load_games_data,
     load_live_game_statistics,
 )
-from src.loaders.teams_loader import main as load_teams
+from src.loaders.teams_loader import load_teams
 from src.loaders.win_probability_loader import load_final_win_probability
 from src.scheduling import (
     acquire_lock,
@@ -511,7 +511,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     configure_logging()
-    env = sys.argv[1] if len(sys.argv) > 1 else "local"
+    env = cli_env()
     if not load_env(env):
         sys.exit(1)
     tick_lock = acquire_lock(f"orchestration.{env}")

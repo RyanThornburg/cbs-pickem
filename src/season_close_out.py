@@ -3,9 +3,8 @@ Usage: uv run python -m src.season_close_out [local|prod]
 """
 
 import logging
-import sys
 
-from config.config import SEASON, configure_logging, load_env
+from config.config import SEASON, run_cli
 from db.clients import get_d1
 from db.d1_client import D1Client
 from src.kv_writer import compute_week_leaderboard, write_historical
@@ -99,7 +98,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    configure_logging()
-    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
-        sys.exit(1)
-    main()
+    run_cli(main)

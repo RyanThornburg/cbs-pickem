@@ -4,10 +4,9 @@ Seed NFL stadiums - static reference data, not fetched from any API.
 """
 
 import logging
-import sys
 from typing import Any
 
-from config.config import configure_logging, load_env
+from config.config import run_cli
 from db.d1_client import Statement
 from src.loaders.loader_helper import sql_batch_call
 
@@ -445,7 +444,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    configure_logging()
-    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
-        sys.exit(1)
-    main()
+    run_cli(main)

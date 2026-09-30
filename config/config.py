@@ -2,6 +2,8 @@
 import logging
 import logging.handlers
 import os
+import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -116,6 +118,21 @@ def load_env(env: str = "local") -> bool:
         return False
 
     return True
+
+
+def cli_env() -> str:
+    """the [local|prod] command-line argument - local if none given"""
+    return sys.argv[1] if len(sys.argv) > 1 else "local"
+
+
+def run_cli(main: Callable[[], object]) -> None:
+    """a module's `if __name__ == "__main__":` - configure logging, load the
+    env named on the command line (see cli_env()), then run `main`. Any
+    further arguments (e.g. a week number) are main()'s to read."""
+    configure_logging()
+    if not load_env(cli_env()):
+        sys.exit(1)
+    main()
 
 
 def get_d1_config() -> dict[str, str]:

@@ -282,7 +282,7 @@ def season(apis: Any, loaders: Clients, seed: Seed) -> FakeD1:
 
     seed.season()
     stadiums_loader.load_stadiums()
-    teams_loader.main()
+    teams_loader.load_teams()
     sports_io_loader.load_games_data()
     return loaders.d1
 

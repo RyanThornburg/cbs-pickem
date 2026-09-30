@@ -353,7 +353,7 @@ class TestEndToEnd:
         )
         seed.season()
         stadiums_loader.load_stadiums()
-        teams_loader.main()
+        teams_loader.load_teams()
         cbs_loader.map_cbs_to_sports_io()
         cbs_loader.load_cbs_users()
         self.kv = loaders.kv

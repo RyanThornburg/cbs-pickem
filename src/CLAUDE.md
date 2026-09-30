@@ -18,12 +18,11 @@ invocation only ever targets local or prod, never both — so threading it
 through every call was pure boilerplate with no real flexibility behind
 it. `load_env(env)` is called **exactly once per process**, at the
 bottom of whichever module was actually invoked from the command line
-(`if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"): sys.exit(1)`
-then `main()`) — after that, `os.environ` is populated for the rest of
+(`run_cli(main)`, see `config/CLAUDE.md`) — after that, `os.environ` is populated for the rest of
 the process, and every other function (`main()` included) takes no `env`
 argument and never calls `load_env()` itself, trusting it already ran.
 This is what lets `orchestration.py` call any loader's `load_*()`
-function (or another module's `main()`, e.g. `teams_loader.main()`)
+function (or another module's `main()`, e.g. `teams_loader.load_teams()`)
 directly with no argument, and lets each module still work standalone
 via its own `if __name__ == "__main__":` (`uv run python -m
 src.loaders.X [local|prod]`) — only that one call site per module needs
@@ -45,7 +44,7 @@ already never took `env` (see `config/CLAUDE.md`).
   (`src/new_season.py`'s bootstrap) since team profiles are static
   season-long data - the record fields are the first thing on this table
   that actually needs to stay fresh, so `orchestration.py`'s housekeeping
-  now also calls `teams_loader.main()` daily (see Orchestration
+  now also calls `teams_loader.load_teams()` daily (see Orchestration
   below) to keep them current; the rest of the row (name/city/logo/etc.)
   just gets harmlessly re-upserted with itself in the same call.
 - `stadiums_loader.py` — upserts a static, hand-curated 38-row seed (30
@@ -471,7 +470,7 @@ Cadences, and why each one is what it is:
   `_run_recap_refresh()`: the current week plus any week in progress
   or finished in the last 12 hours, see "KV writer" below.
 - **Housekeeping, 24 hr, quiet periods only** — full Sports IO schedule
-  refresh + `teams_loader.main()` (win/loss/tie records, added
+  refresh + `teams_loader.load_teams()` (win/loss/tie records, added
   2026-09-15) + `load_cbs_weeks()`/`load_cbs_games()` + `load_espn_games()`
   + `write_meta_current()` + the current week's odds key
   (`write_current_week_odds()`, added 2026-09-29) + the future weeks' games KV keys

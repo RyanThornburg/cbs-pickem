@@ -402,7 +402,7 @@ class TestTeams:
         standing = apis.responses[Endpoint.STANDINGS][0]
         standing["won"] += 1
 
-        teams_loader.main()
+        teams_loader.load_teams()
 
         row = _rows(
             season,
@@ -416,14 +416,14 @@ class TestTeams:
         self, apis: FakeApis, loaders: Clients
     ) -> None:
         apis.responses[Endpoint.TEAMS][0]["code"] = None
-        teams_loader.main()
+        teams_loader.load_teams()
         assert _count(loaders.d1, "teams") == 31
 
     def test_team_missing_from_standings(
         self, apis: FakeApis, loaders: Clients
     ) -> None:
         dropped = apis.responses[Endpoint.STANDINGS].pop()
-        teams_loader.main()
+        teams_loader.load_teams()
         row = _rows(
             loaders.d1,
             "SELECT division, wins FROM teams WHERE sports_io_team_id = ?",
@@ -463,7 +463,7 @@ class TestStadiumsAndSeason:
             "INSERT INTO seasons (season_id, is_active) VALUES (?, 1)", [SEASON - 1]
         )
 
-        season_loader.main()
+        season_loader.load_season()
 
         rows = _rows(
             loaders.d1,
@@ -478,5 +478,5 @@ class TestStadiumsAndSeason:
         self, apis: FakeApis, loaders: Clients
     ) -> None:
         apis.responses[Endpoint.LEAGUES] = []
-        season_loader.main()
+        season_loader.load_season()
         assert _count(loaders.d1, "seasons") == 0

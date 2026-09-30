@@ -22,9 +22,8 @@ Usage: uv run python -m src.loaders.pregame_weather_loader [local|prod]
 """
 
 import logging
-import sys
 
-from config.config import configure_logging, load_env
+from config.config import run_cli
 from db.clients import get_d1
 from db.d1_client import Statement
 from src.loaders.loader_helper import capture_pregame_forecast, sql_batch_call
@@ -117,7 +116,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    configure_logging()
-    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
-        sys.exit(1)
-    main()
+    run_cli(main)

@@ -7,7 +7,7 @@ import logging
 import re
 import sys
 
-from config.config import SCHEMA_PATH, configure_logging, load_env
+from config.config import SCHEMA_PATH, run_cli
 from db.clients import get_d1
 from db.d1_client import D1Error
 
@@ -60,7 +60,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    configure_logging()
-    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
-        sys.exit(1)
-    main()
+    run_cli(main)

@@ -18,7 +18,7 @@ import logging
 import sys
 import time
 
-from config.config import configure_logging, load_env
+from config.config import cli_env, configure_logging, load_env
 from db.clients import get_d1
 from db.d1_client import D1Client
 from src.kv_writer import write_games_weeks
@@ -67,7 +67,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     configure_logging()
-    env = sys.argv[1] if len(sys.argv) > 1 else "local"
+    env = cli_env()
     if not load_env(env):
         sys.exit(1)
     run_lock = acquire_lock(f"live_ticker.{env}")

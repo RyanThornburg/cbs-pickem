@@ -8,11 +8,10 @@ is cleared first so at most one season is ever active at a time.
 """
 
 import logging
-import sys
 from typing import Any
 
 from api.sports_io_client import get_current_season
-from config.config import configure_logging, load_env
+from config.config import run_cli
 from db.clients import get_d1
 from src.loaders.loader_helper import sql_batch_call
 
@@ -31,7 +30,7 @@ ON CONFLICT(season_id) DO UPDATE SET
 """
 
 
-def main() -> None:
+def load_season() -> None:
     """load current season"""
     client = get_d1()
     season = get_current_season()
@@ -59,8 +58,9 @@ def main() -> None:
     logger.info("Season load complete")
 
 
+def main() -> None:
+    load_season()
+
+
 if __name__ == "__main__":
-    configure_logging()
-    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
-        sys.exit(1)
-    main()
+    run_cli(main)

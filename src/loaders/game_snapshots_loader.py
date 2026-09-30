@@ -12,13 +12,12 @@ Usage: uv run python -m src.loaders.game_snapshots_loader [local|prod]
 """
 
 import logging
-import sys
 from datetime import UTC, datetime, timedelta
 from typing import Any, NamedTuple
 
 from api.espn_client import get_scoreboard, team_pair
 from api.espn_models import Competition, Situation
-from config.config import configure_logging, load_env
+from config.config import run_cli
 from db.clients import get_d1
 from db.d1_client import D1Client, Statement
 from src.game_rules import DONE_STATUSES, LIVE_WINDOW_HOURS, sql_list
@@ -374,7 +373,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    configure_logging()
-    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
-        sys.exit(1)
-    main()
+    run_cli(main)

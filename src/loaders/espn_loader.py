@@ -17,10 +17,9 @@ Usage: uv run python -m src.loaders.espn_loader [local|prod]
 """
 
 import logging
-import sys
 
 from api.espn_client import get_scoreboard, team_pair
-from config.config import SEASON, configure_logging, load_env
+from config.config import SEASON, run_cli
 from db.clients import get_d1
 from db.d1_client import Statement
 from src.loaders.loader_helper import mapping_gap_statement, sql_batch_call
@@ -94,7 +93,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    configure_logging()
-    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
-        sys.exit(1)
-    main()
+    run_cli(main)

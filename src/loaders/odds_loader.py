@@ -4,11 +4,10 @@ Usage: uv run python -m src.loaders.odds_loader [local|prod]
 """
 
 import logging
-import sys
 
 from api.the_odds_api_client import get_odds
 from api.the_odds_api_models import Event
-from config.config import configure_logging, load_env
+from config.config import run_cli
 from db.clients import get_d1
 from db.d1_client import Statement
 from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
@@ -189,7 +188,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    configure_logging()
-    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
-        sys.exit(1)
-    main()
+    run_cli(main)

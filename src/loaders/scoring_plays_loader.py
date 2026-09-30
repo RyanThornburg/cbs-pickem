@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from api.sports_io_client import get_game_events
-from config.config import SEASON, configure_logging, load_env
+from config.config import SEASON, run_cli
 from db.clients import get_d1
 from db.d1_client import D1Client, Statement
 from src.game_rules import LIVE_STATUSES, sql_list
@@ -190,7 +190,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    configure_logging()
-    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
-        sys.exit(1)
-    main()
+    run_cli(main)

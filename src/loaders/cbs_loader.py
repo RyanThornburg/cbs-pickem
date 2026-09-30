@@ -24,7 +24,7 @@ from api.cbs_models import (
     Member,
     PoolEvent,
 )
-from config.config import SEASON, configure_logging, load_env
+from config.config import SEASON, run_cli
 from db.clients import get_d1
 from db.d1_client import Statement
 from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
@@ -474,11 +474,13 @@ def backfill_cbs_week(week_number: int) -> None:
     logger.info("Backfilled CBS data for season %s week %s", SEASON, week_number)
 
 
-if __name__ == "__main__":
-    configure_logging()
-    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
-        sys.exit(1)
+def _cli() -> None:
+    """a week number re-loads that past week instead of the current one"""
     if len(sys.argv) > 2:
         backfill_cbs_week(int(sys.argv[2]))
     else:
         main()
+
+
+if __name__ == "__main__":
+    run_cli(_cli)

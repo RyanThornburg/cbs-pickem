@@ -11,9 +11,12 @@ For everything else — D1/KV, which is most of the codebase —
 `load_env(env)` is called **exactly once per process**, and only from the
 `if __name__ == "__main__":` block of whichever module was actually
 invoked from the command line (added 2026-09-15, see `src/CLAUDE.md`'s
-Loaders section for the full reasoning): `if not
-load_env(sys.argv[1] if len(sys.argv) > 1 else "local"): sys.exit(1)`
-then call that module's `main()` with no arguments. No other function —
+Loaders section for the full reasoning): `run_cli(main)` (2026-09-29),
+which configures logging, calls `load_env(cli_env())` (`cli_env()` is the
+`[local|prod]` argument, local by default), exits on failure, then calls
+`main()` with no arguments. Orchestration and the live ticker spell those
+steps out because they also take a per-env lock (`acquire_lock()` lives in
+`src/scheduling.py`, which `config` can't import). No other function —
 not `main()`, not any `load_*()`/`write_*()` — takes an `env` parameter
 or calls `load_env()` itself; they all just call `db.clients.get_d1()`/
 `get_kv()`, which read `get_d1_config()`/`get_kv_config()` on first use,

@@ -1,14 +1,12 @@
 """CLI entry point - see __init__.py. `python -m src.kv_writer [local|prod]`
 runs this file, not __init__.py."""
 
-import sys
-
-from config.config import configure_logging, load_env
+from config.config import run_cli
 from src.kv_writer import (
     write_admin_status,
+    write_current_week_game_details,
     write_current_week_games,
     write_current_week_leaderboard,
-    write_current_week_game_details,
     write_current_week_odds,
     write_current_week_recap,
     write_current_week_trends,
@@ -35,7 +33,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    configure_logging()
-    if not load_env(sys.argv[1] if len(sys.argv) > 1 else "local"):
-        sys.exit(1)
-    main()
+    run_cli(main)
