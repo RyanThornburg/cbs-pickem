@@ -104,6 +104,40 @@ class TestCbsAndSportsIoMerge:
             )
         assert _count(merged, "mapping_gaps") == 0
 
+    def test_cbs_lagging_never_undoes_a_final(
+        self, merged: FakeD1, cbs: FakeCBS
+    ) -> None:
+        # Sports IO has called the game; CBS still shows it in progress
+        event = cbs.home["poolPeriod"]["poolEvents"][0]
+        merged.query(
+            "UPDATE games SET status = 'FINAL', status_desc = 'Finished', "
+            "home_score = 30, away_score = 27 WHERE cbs_event_id = ?",
+            [event["cbsEventId"]],
+        )
+        event.update(
+            gameStatusDesc="INPROGRESS",
+            gameStatus="P",
+            homeTeamScore=24,
+            awayTeamScore=27,
+            homeTeamSpread=-2.5,
+        )
+
+        cbs_loader.load_cbs_games()
+
+        (game,) = _rows(
+            merged,
+            "SELECT status, status_desc, home_score, away_score, cbs_spread "
+            "FROM games WHERE cbs_event_id = ?",
+            [event["cbsEventId"]],
+        )
+        assert game == {
+            "status": "FINAL",
+            "status_desc": "Finished",
+            "home_score": 30,
+            "away_score": 27,
+            "cbs_spread": -2.5,  # CBS's own fields still update
+        }
+
     def test_backfill_asks_cbs_for_that_weeks_period(
         self, merged: FakeD1, cbs: FakeCBS
     ) -> None:

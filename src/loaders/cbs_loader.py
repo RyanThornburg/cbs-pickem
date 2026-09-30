@@ -60,7 +60,19 @@ ON CONFLICT(user_id, week_id) DO UPDATE SET
     trending_score = excluded.trending_score
 """
 
-_UPSERT_GAMES_SQL = """
+
+def _keep_final(column: str) -> str:
+    """CBS can lag Sports IO at the end of a game, and once a game is FINAL
+    CBS's still-in-progress score/status must not undo it: Sports IO's live
+    poll stops seeing a game once it's over, so nothing would put it back
+    until the next daily housekeeping."""
+    return (
+        f"CASE WHEN games.status = 'FINAL' THEN games.{column} "
+        f"ELSE excluded.{column} END"
+    )
+
+
+_UPSERT_GAMES_SQL = f"""
 INSERT INTO games (week_id, home_team_id, away_team_id, cbs_event_id, game_time, cbs_spread,
     home_score, away_score, status, tv_network, gametracker_url, status_desc)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -70,22 +82,22 @@ ON CONFLICT(cbs_event_id) DO UPDATE SET
     away_team_id = excluded.away_team_id,
     game_time = excluded.game_time,
     cbs_spread = excluded.cbs_spread,
-    home_score = excluded.home_score,
-    away_score = excluded.away_score,
-    status = excluded.status,
+    home_score = {_keep_final("home_score")},
+    away_score = {_keep_final("away_score")},
+    status = {_keep_final("status")},
     tv_network = excluded.tv_network,
     gametracker_url = excluded.gametracker_url,
-    status_desc = excluded.status_desc
+    status_desc = {_keep_final("status_desc")}
 ON CONFLICT(week_id, home_team_id, away_team_id) DO UPDATE SET
     cbs_event_id = excluded.cbs_event_id,
     game_time = excluded.game_time,
     cbs_spread = excluded.cbs_spread,
-    home_score = excluded.home_score,
-    away_score = excluded.away_score,
-    status = excluded.status,
+    home_score = {_keep_final("home_score")},
+    away_score = {_keep_final("away_score")},
+    status = {_keep_final("status")},
     tv_network = excluded.tv_network,
     gametracker_url = excluded.gametracker_url,
-    status_desc = excluded.status_desc
+    status_desc = {_keep_final("status_desc")}
 """
 _UPDATE_CBS_TEAM_SQL = """
 UPDATE teams SET

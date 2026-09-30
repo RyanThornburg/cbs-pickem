@@ -62,6 +62,14 @@ creates the row and leaves the other source's external-id column `NULL`;
 whichever runs second matches via the natural-key conflict target,
 backfills its own external id, and both `game_id`/`week_id` values stay
 stable across both writes — no duplicate row, no lost data either way.
+
+Both sources also write a game's live fields (status, status_desc,
+scores), and CBS can lag Sports IO at the end of a game. CBS's upsert
+leaves those four alone once the stored row is `FINAL`
+(`cbs_loader._keep_final()`, 2026-09-29) - otherwise a housekeeping run
+or the Sunday sweep could put a finished game back in progress, and
+nothing would fix it until the next daily run, since Sports IO's live
+poll only sees games it still lists as live.
 The same shape applies to `games.espn_event_id` (matched via
 `(home_abbrev, away_abbrev)` at the loader level rather than a DB
 constraint, since ESPN never creates a `games` row itself — it only ever
