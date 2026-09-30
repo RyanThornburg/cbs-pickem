@@ -190,6 +190,40 @@ class TestCbsAndSportsIoMerge:
         assert _count(merged, "user_picks") > 0
         assert _count(merged, "mapping_gaps") == 0
 
+    def test_members_who_left_are_deactivated(
+        self, merged: FakeD1, cbs: FakeCBS, seed: Seed
+    ) -> None:
+        cbs_loader.load_cbs_users()
+        # an archive-only user with no cbs_id is left as it is
+        no_cbs_id = seed.user("From the archive")
+        left = cbs.members.pop()
+
+        cbs_loader.load_cbs_users()
+
+        active = {
+            r["cbs_id"]: r["is_active"]
+            for r in _rows(merged, "SELECT cbs_id, is_active FROM users")
+            if r["cbs_id"] is not None
+        }
+        assert active[left["id"]] == 0
+        assert all(active[m["id"]] == 1 for m in cbs.members)
+        (archive,) = _rows(
+            merged, "SELECT is_active FROM users WHERE user_id = ?", [no_cbs_id]
+        )
+        assert archive == {"is_active": 1}
+
+    def test_empty_member_list_deactivates_no_one(
+        self, merged: FakeD1, cbs: FakeCBS
+    ) -> None:
+        cbs_loader.load_cbs_users()
+        cbs.members.clear()
+
+        cbs_loader.load_cbs_users()
+
+        assert _rows(merged, "SELECT COUNT(*) AS n FROM users WHERE is_active = 0") == [
+            {"n": 0}
+        ]
+
     def test_users_reload_in_place(self, merged: FakeD1, cbs: FakeCBS) -> None:
         cbs_loader.load_cbs_users()
         cbs.members[0]["name"] = "Renamed"

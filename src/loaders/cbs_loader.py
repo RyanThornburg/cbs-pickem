@@ -4,6 +4,7 @@ Usage: uv run python -m src.loaders.cbs_loader [local|prod]
 Backfill a past week: uv run python -m src.loaders.cbs_loader [local|prod] <week_number>
 """
 
+import json
 import logging
 import sys
 from collections.abc import Sequence
@@ -99,6 +100,14 @@ ON CONFLICT(week_id, home_team_id, away_team_id) DO UPDATE SET
     gametracker_url = excluded.gametracker_url,
     status_desc = {_keep_final("status_desc")}
 """
+# members who left the pool - `?` is a JSON list of the current members'
+# cbs_ids (one bound param, however big the pool; D1 caps a query at 100)
+_DEACTIVATE_FORMER_USERS_SQL = """
+UPDATE users SET is_active = FALSE
+WHERE cbs_id IS NOT NULL AND is_active
+    AND cbs_id NOT IN (SELECT value FROM json_each(?))
+"""
+
 _UPDATE_CBS_TEAM_SQL = """
 UPDATE teams SET
     cbs_team_id = ?,
@@ -161,7 +170,10 @@ def _cbs_starts_at_to_iso(starts_at_millis: int) -> str:
 
 
 def load_cbs_users() -> None:
-    """load users table from cbs data"""
+    """load users table from cbs data - everyone in CBS's member list is
+    active, and anyone with a cbs_id who isn't any more is marked inactive
+    (so they stop getting a profile key). Only on a non-empty member list,
+    in the same batch, so a bad fetch can't deactivate the whole pool."""
     users: list[Member] = get_cbs_users()
 
     statements: list[Statement] = [
@@ -171,6 +183,9 @@ def load_cbs_users() -> None:
     if not statements:
         logger.warning("No Users to load")
         return
+    statements.append(
+        (_DEACTIVATE_FORMER_USERS_SQL, [json.dumps([user.id for user in users])])
+    )
     sql_batch_call(statements)
 
 
