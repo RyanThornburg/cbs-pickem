@@ -47,6 +47,7 @@ from src.loaders.win_probability_loader import load_final_win_probability
 from src.scheduling import (
     acquire_lock,
     get_state,
+    run_and_record,
     run_on_interval,
     set_state,
     should_run,
@@ -192,28 +193,25 @@ def _run_win_probability_capture(client: D1Client) -> None:
     """Every tick - load_final_win_probability() only calls ESPN for FINAL
     games that don't have a curve yet (one D1 query otherwise). ESPN is
     undocumented, so a failure is recorded, never raised."""
-    if soft(
+    run_and_record(
         client,
         "win_probability_capture",
         lambda: _write_game_details(client, load_final_win_probability()),
-    ):
-        set_state(client, "win_probability_last_success_at", utc_iso())
-    set_state(client, "win_probability_last_run_at", utc_iso())
+        "win_probability_last_run_at",
+        "win_probability_last_success_at",
+    )
 
 
 def _capture_odds(client: D1Client, state_key: str, success_key: str) -> None:
     """Odds aren't required/shouldn't block, don't raise but log error.
-    state_key is the scheduling cursor (set on every attempt, see finally);
-    success_key is only set when the capture actually worked, so meta:admin
-    can tell a task that keeps failing apart from one that's healthy."""
+    state_key is the scheduling cursor, success_key only moves when the
+    capture worked - see run_and_record()."""
 
     def capture() -> None:
         load_the_odds_api_odds()
         write_current_week_odds()
 
-    if soft(client, "odds_capture", capture):
-        set_state(client, success_key, utc_iso())
-    set_state(client, state_key, utc_iso())
+    run_and_record(client, "odds_capture", capture, state_key, success_key)
 
 
 def _run_scoring_plays_refresh(client: D1Client) -> None:
@@ -221,9 +219,13 @@ def _run_scoring_plays_refresh(client: D1Client) -> None:
     Sports IO for games whose score moved since their last fetch (one D1
     query otherwise), and a game's last score can land after the live
     window closes. Enrichment, so a failure is recorded, never raised."""
-    if soft(client, "scoring_plays_refresh", load_scoring_plays):
-        set_state(client, "scoring_plays_last_success_at", utc_iso())
-    set_state(client, "scoring_plays_last_run_at", utc_iso())
+    run_and_record(
+        client,
+        "scoring_plays_refresh",
+        load_scoring_plays,
+        "scoring_plays_last_run_at",
+        "scoring_plays_last_success_at",
+    )
 
 
 def _run_quiet_period_tasks(client: D1Client) -> None:
@@ -335,9 +337,13 @@ def _run_pregame_weather_capture(client: D1Client, now: datetime) -> None:
     if not should_run(client, "weather_pregame_last_capture_at", interval):
         return
 
-    if soft(client, "pregame_weather_capture", load_pregame_weather):
-        set_state(client, "weather_pregame_last_success_at", utc_iso())
-    set_state(client, "weather_pregame_last_capture_at", utc_iso())
+    run_and_record(
+        client,
+        "pregame_weather_capture",
+        load_pregame_weather,
+        "weather_pregame_last_capture_at",
+        "weather_pregame_last_success_at",
+    )
 
 
 def _run_deadline_sweep(client: D1Client, now: datetime) -> None:

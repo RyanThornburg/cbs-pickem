@@ -75,6 +75,24 @@ def soft(client: D1Client, source: str, task: Callable[[], object]) -> bool:
         return False
 
 
+def run_and_record(
+    client: D1Client,
+    source: str,
+    task: Callable[[], object],
+    cursor_key: str,
+    success_key: str,
+) -> bool:
+    """Run `task` via soft(), then stamp the keys: `cursor_key` on every
+    attempt (what the task's schedule reads), `success_key` only when it
+    worked, which is what meta:admin reads to tell a failing task from a
+    healthy one. True if the task worked."""
+    worked = soft(client, source, task)
+    if worked:
+        set_state(client, success_key, utc_iso())
+    set_state(client, cursor_key, utc_iso())
+    return worked
+
+
 def run_on_interval(
     client: D1Client,
     source: str,
@@ -83,16 +101,12 @@ def run_on_interval(
     success_key: str,
     interval_seconds: int,
 ) -> None:
-    """The standard interval task: run `task` via soft() once
-    `interval_seconds` has passed since `cursor_key`. The cursor moves on
-    every attempt, so a task that keeps failing retries once per interval
-    rather than every tick; `success_key` only moves when it worked, which
-    is what meta:admin reads to tell a failing task from a healthy one."""
-    if not should_run(client, cursor_key, interval_seconds):
-        return
-    if soft(client, source, task):
-        set_state(client, success_key, utc_iso())
-    set_state(client, cursor_key, utc_iso())
+    """The standard interval task: run_and_record() once `interval_seconds`
+    has passed since `cursor_key`. The cursor moves on every attempt, so a
+    task that keeps failing retries once per interval rather than every
+    tick."""
+    if should_run(client, cursor_key, interval_seconds):
+        run_and_record(client, source, task, cursor_key, success_key)
 
 
 def acquire_lock(name: str) -> TextIO | None:

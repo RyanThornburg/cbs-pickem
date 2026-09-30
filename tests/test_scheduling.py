@@ -120,6 +120,14 @@ class TestSoft:
         assert len(message) == 500
 
 
+class TestRunAndRecord:
+    def test_runs_every_call_and_reports_success(self, d1: FakeD1) -> None:
+        # no interval check - that's run_on_interval()'s job
+        assert scheduling.run_and_record(d1, "src", lambda: None, "cursor", "success")
+        assert not scheduling.run_and_record(d1, "src", _fail, "cursor", "success")
+        assert d1.query("SELECT COUNT(*) AS n FROM system_events").results[0]["n"] == 1
+
+
 class TestRunOnInterval:
     @staticmethod
     def _run(d1: FakeD1, task: Callable[[], object]) -> None:

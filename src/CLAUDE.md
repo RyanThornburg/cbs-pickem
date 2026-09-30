@@ -338,7 +338,8 @@ thing last ran — this is what lets a stateless, repeatedly-invoked
 process behave like a real scheduler without needing its own persistent
 process or internal sleep loop.
 
-The helpers both cron processes share - `soft()`, `run_on_interval()`,
+The helpers both cron processes share - `soft()`, `run_and_record()`,
+`run_on_interval()`,
 the `orchestration_state` cursor functions (`get_state()`/`set_state()`/
 `should_run()`), `record_system_event()` and `acquire_lock()` - live in
 `src/scheduling.py` (moved out of `orchestration.py` 2026-09-27 when
@@ -356,7 +357,12 @@ retried the CBS login every minute. Interval tasks go through
 `run_on_interval(client, source, task, cursor_key, success_key,
 interval)`: the cursor moves on every attempt, so a task that keeps
 failing retries once per interval rather than every tick, and
-`success_key` moves only when it worked (what `meta:admin` reads).
+`success_key` moves only when it worked (what `meta:admin` reads). That
+soft-run-then-stamp step is `run_and_record(client, source, task,
+cursor_key, success_key)` on its own, used directly by the tasks that
+decide when to run some other way (win probability and scoring plays
+every tick, odds, pregame weather's two cadences, live_ticker's
+snapshots).
 Housekeeping runs its steps independently (one failing doesn't skip the
 rest) but still counts as failed if any step did. The two tasks gated on
 something other than an interval - the deadline sweep (a date) and the

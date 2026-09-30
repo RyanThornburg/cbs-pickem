@@ -23,8 +23,7 @@ from db.clients import get_d1
 from db.d1_client import D1Client
 from src.kv_writer import write_games_weeks
 from src.loaders.game_snapshots_loader import has_candidate_games, load_game_snapshots
-from src.scheduling import acquire_lock, set_state, soft
-from src.timestamps import utc_iso
+from src.scheduling import acquire_lock, run_and_record, soft
 
 logger = logging.getLogger(__name__)
 
@@ -39,13 +38,13 @@ def _round(client: D1Client) -> None:
     that changed. Cursor/success keys match what orchestration used to set
     for snapshots, so meta:admin's game_snapshot_capture entry still works."""
     changed: set[int] = set()
-    if soft(
+    run_and_record(
         client,
         "game_snapshot_capture",
         lambda: changed.update(load_game_snapshots()),
-    ):
-        set_state(client, "game_snapshot_last_success_at", utc_iso())
-    set_state(client, "game_snapshot_last_capture_at", utc_iso())
+        "game_snapshot_last_capture_at",
+        "game_snapshot_last_success_at",
+    )
 
     if changed:
         soft(client, "live_games_kv_write", lambda: write_games_weeks(changed))
