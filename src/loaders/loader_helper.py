@@ -8,7 +8,7 @@ from typing import Any, NamedTuple
 from api.weather_api import get_forecast
 from api.weather_api_models import Alert, DailyDataPoint, DataPoint, Forecast
 from db.clients import get_d1
-from db.d1_client import D1Client, D1Error
+from db.d1_client import D1Client, D1Error, Statement
 from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
@@ -368,7 +368,7 @@ def capture_pregame_forecast(
 
 
 def sql_batch_call(
-    statements: list[tuple[str, list[Any] | None]], client: D1Client | None = None
+    statements: list[Statement], client: D1Client | None = None
 ) -> None:
     """Run a batch of (sql, params) statements. A D1Error is re-raised, not
     turned into sys.exit() - SystemExit isn't an Exception, so exiting here
@@ -403,7 +403,7 @@ ON CONFLICT(source, entity_type, raw_value) DO UPDATE SET
 
 def mapping_gap_statement(
     source: str, entity_type: str, raw_value: Any, context: str | None = None
-) -> tuple[str, list[Any] | None]:
+) -> Statement:
     """(sql, params) for one mapping_gaps upsert - append to whatever
     statements list a loader is already building right next to its
     logger.warning() on a lookup miss"""

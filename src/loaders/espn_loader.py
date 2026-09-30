@@ -18,11 +18,11 @@ Usage: uv run python -m src.loaders.espn_loader [local|prod]
 
 import logging
 import sys
-from typing import Any
 
 from api.espn_client import get_scoreboard, team_pair
 from config.config import SEASON, configure_logging, load_env
 from db.clients import get_d1
+from db.d1_client import Statement
 from src.loaders.loader_helper import mapping_gap_statement, sql_batch_call
 
 logger = logging.getLogger(__name__)
@@ -56,8 +56,8 @@ def load_espn_games(include_complete: bool = False) -> None:
         logger.info("No games to sync from ESPN")
         return
 
-    statements: list[tuple[str, list[Any] | None]] = []
-    gap_statements: list[tuple[str, list[Any] | None]] = []
+    statements: list[Statement] = []
+    gap_statements: list[Statement] = []
     for week_number, game_ids in sorted(games_by_week.items()):
         try:
             scoreboard = get_scoreboard(week_number)

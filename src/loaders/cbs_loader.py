@@ -8,7 +8,6 @@ import logging
 import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Any
 
 from api.cbs_client import (
     ABBREV_CORRECTIONS,
@@ -27,6 +26,7 @@ from api.cbs_models import (
 )
 from config.config import SEASON, configure_logging, load_env
 from db.clients import get_d1
+from db.d1_client import Statement
 from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
 from src.timestamps import utc_iso
 
@@ -146,7 +146,7 @@ def load_cbs_users() -> None:
     """load users table from cbs data"""
     users: list[Member] = get_cbs_users()
 
-    statements: list[tuple[str, list[Any] | None]] = [
+    statements: list[Statement] = [
         (_UPSERT_USERS_SQL, [user.name, user.email, user.id, True]) for user in users
     ]
 
@@ -162,7 +162,7 @@ def map_cbs_to_sports_io():
     Match on abbreviation and add CBS-only fields.
     """
     cbs_teams = get_cbs_pool_teams()
-    statements: list[tuple[str, list[Any] | None]] = [
+    statements: list[Statement] = [
         (
             _UPDATE_CBS_TEAM_SQL,
             [
@@ -191,7 +191,7 @@ def load_cbs_weeks() -> None:
     if data is None:
         return
 
-    statements: list[tuple[str, list[Any] | None]] = [
+    statements: list[Statement] = [
         (
             _UPSERT_WEEK_SQL,
             [SEASON, period.order, period.description, period.id, period.is_current],
@@ -245,8 +245,8 @@ def load_cbs_games(pool_period_id: str | None = None) -> None:
 
     games = data.pool_period.pool_events
 
-    statements: list[tuple[str, list[Any] | None]] = []
-    gap_statements: list[tuple[str, list[Any] | None]] = []
+    statements: list[Statement] = []
+    gap_statements: list[Statement] = []
     for game in games:
         home_team_id = team_ids.get(game.home_team.cbs_team_id)
         away_team_id = team_ids.get(game.away_team.cbs_team_id)
@@ -291,11 +291,9 @@ def load_cbs_games(pool_period_id: str | None = None) -> None:
             )
         )
 
-    if statements:
+    if statements or gap_statements:
         sql_batch_call(statements + gap_statements, client)
-        logger.info("Upserted %d games into D1", len(statements))
-    elif gap_statements:
-        sql_batch_call(gap_statements, client)
+    logger.info("Upserted %d games into D1", len(statements))
 
 
 def _add_user_picks(
@@ -303,11 +301,11 @@ def _add_user_picks(
     picks: list[FootballPickemWeeklyStandingsPick],
     game_ids: dict[int, int],
     team_ids: dict[int, int],
-) -> tuple[list[tuple[str, list[Any] | None]], list[tuple[str, list[Any] | None]]]:
+) -> tuple[list[Statement], list[Statement]]:
     """(pick upserts, mapping gap rows) for one user - the caller runs every
     user's in one batch"""
-    statements: list[tuple[str, list[Any] | None]] = []
-    gap_statements: list[tuple[str, list[Any] | None]] = []
+    statements: list[Statement] = []
+    gap_statements: list[Statement] = []
     for pick in picks:
         assert pick.pick_info is not None  # filtered by the caller
         cbs_item_id = pick.pick_info.cbs_item_id
@@ -387,9 +385,9 @@ def load_cbs_user_picks(pool_period_id: str | None = None) -> None:
         data.standings.weekly.ranked_entries
     )
 
-    weekly_statements: list[tuple[str, list[Any] | None]] = []
-    pick_statements: list[tuple[str, list[Any] | None]] = []
-    gap_statements: list[tuple[str, list[Any] | None]] = []
+    weekly_statements: list[Statement] = []
+    pick_statements: list[Statement] = []
+    gap_statements: list[Statement] = []
 
     for entry in entries:
         member: Member = entry.entry.member

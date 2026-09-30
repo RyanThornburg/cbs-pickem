@@ -16,6 +16,9 @@ D1_API_BASE = "https://api.cloudflare.com/client/v4"
 TIMEOUT_SECONDS = 60
 
 
+# one (sql, params) entry for D1Client.batch()
+type Statement = tuple[str, list[Any] | None]
+
 class D1Error(RuntimeError):
     """Raised when a D1 query fails (non-2xx response or success=False)."""
 
@@ -53,7 +56,7 @@ class D1Client:
         return self.batch([(sql, params)])[0]
 
     def batch(
-        self, statements: list[tuple[str, list[Any] | None]]
+        self, statements: list[Statement]
     ) -> list[D1QueryResult]:
         """Run multiple statements as a single atomic transaction.
 

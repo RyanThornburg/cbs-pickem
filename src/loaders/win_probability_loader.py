@@ -25,7 +25,7 @@ from api.espn_client import get_summary
 from api.espn_models import Summary
 from config.config import SEASON, configure_logging, load_env
 from db.clients import get_d1
-from db.d1_client import D1Client
+from db.d1_client import D1Client, Statement
 from src.loaders.loader_helper import sql_batch_call
 from src.timestamps import utc_iso
 
@@ -92,7 +92,7 @@ def _points(summary: Summary) -> list[dict[str, Any]]:
 
 def _load_for_games(games: list[dict[str, Any]], client: D1Client) -> set[int]:
     """fetch and store each game's curve - returns the game_ids stored"""
-    statements: list[tuple[str, list[Any] | None]] = []
+    statements: list[Statement] = []
     stored: set[int] = set()
     for game in games:
         try:

@@ -11,12 +11,12 @@ Upserts are using sports_io_team_id
 
 import logging
 import sys
-from typing import Any
 
 from api.sports_io_client import get_standings, get_teams
 from api.sports_io_models import Standing
 from config.config import SEASON, configure_logging, load_env
 from db.clients import get_d1
+from db.d1_client import Statement
 from src.loaders.loader_helper import sql_batch_call
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ def main() -> None:
     teams = get_teams()
     standings_by_team_id = _standings_by_team_id(get_standings())
 
-    statements: list[tuple[str, list[Any] | None]] = []
+    statements: list[Statement] = []
     for team in teams:
         if not team.code:
             logger.warning(

@@ -8,13 +8,12 @@ import logging
 import re
 import sys
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from api.sports_io_client import get_games, get_games_by_date, get_team_statistics
 from api.sports_io_models import Game, TeamStatistics
 from config.config import SEASON, configure_logging, load_env
 from db.clients import get_d1
-from db.d1_client import D1Client
+from db.d1_client import D1Client, Statement
 from src.game_rules import LIVE_STATUSES
 from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
 from src.timestamps import utc_iso
@@ -311,8 +310,8 @@ def load_games_data(live: bool = False) -> None:
         ).results
     }
 
-    statements: list[tuple[str, list[Any] | None]] = []
-    gap_statements: list[tuple[str, list[Any] | None]] = []
+    statements: list[Statement] = []
+    gap_statements: list[Statement] = []
     for game in regular_season_games:
         week_id = week_ids.get(game.game.week)
         home_team_id = team_ids.get(game.teams.home.id)
@@ -395,11 +394,9 @@ def load_games_data(live: bool = False) -> None:
             )
         )
 
-    if statements:
+    if statements or gap_statements:
         sql_batch_call(statements + gap_statements, client)
-        logger.info("Upserted %d games into D1", len(statements))
-    elif gap_statements:
-        sql_batch_call(gap_statements, client)
+    logger.info("Upserted %d games into D1", len(statements))
 
 
 def _fetch_week_game_id_map(week_id: int, client: D1Client) -> dict[int, int]:
@@ -414,7 +411,7 @@ def _fetch_week_game_id_map(week_id: int, client: D1Client) -> dict[int, int]:
 
 def _game_team_stats_statement(
     game_id: int, team_id: int, team_stats: TeamStatistics
-) -> tuple[str, list[Any] | None]:
+) -> Statement:
     stats = team_stats.statistics
     third_down_conversions, third_down_attempts = _parse_made_attempted(
         stats.first_downs.third_down_efficiency
@@ -494,8 +491,8 @@ def _load_stats_for_game_ids(
     that got at least one stats row, for the caller's KV write."""
     team_ids = id_map(client, "teams", "sports_io_team_id", "team_id")
 
-    statements: list[tuple[str, list[Any] | None]] = []
-    gap_statements: list[tuple[str, list[Any] | None]] = []
+    statements: list[Statement] = []
+    gap_statements: list[Statement] = []
     loaded: set[int] = set()
     for sports_io_game_id, game_id in game_ids.items():
         for team_stats in get_team_statistics(sports_io_game_id):

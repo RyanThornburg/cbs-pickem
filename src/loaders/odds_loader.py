@@ -5,12 +5,12 @@ Usage: uv run python -m src.loaders.odds_loader [local|prod]
 
 import logging
 import sys
-from typing import Any
 
 from api.the_odds_api_client import get_odds
 from api.the_odds_api_models import Event
 from config.config import configure_logging, load_env
 from db.clients import get_d1
+from db.d1_client import Statement
 from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
 from src.timestamps import utc_iso
 
@@ -45,13 +45,12 @@ def _resolve_game_id(
     odds_event_ids: dict[str, int],
     team_ids: dict[str, int],
     games_by_matchup: dict[tuple[int, int, str], int],
-    backfill_statements: list[tuple[str, list[Any] | None]],
-    gap_statements: list[tuple[str, list[Any] | None]],
-) -> int | None:
-    """first see if odds id exists, fall back to home id, away id, game time"""
+) -> tuple[int | None, list[Statement]]:
+    """(game_id, mapping gaps) - by odds_api_event_id if it's linked
+    already, else by home id, away id, game time"""
     game_id = odds_event_ids.get(event.id)
     if game_id is not None:
-        return game_id
+        return game_id, []
 
     home_team_id = team_ids.get(event.home_team)
     away_team_id = team_ids.get(event.away_team)
@@ -62,19 +61,15 @@ def _resolve_game_id(
             event.home_team,
             event.away_team,
         )
-        if home_team_id is None:
-            gap_statements.append(
-                mapping_gap_statement(
-                    "the_odds_api", "team", event.home_team, "_resolve_game_id"
-                )
+        gaps = [
+            mapping_gap_statement("the_odds_api", "team", name, "_resolve_game_id")
+            for name, team_id in (
+                (event.home_team, home_team_id),
+                (event.away_team, away_team_id),
             )
-        if away_team_id is None:
-            gap_statements.append(
-                mapping_gap_statement(
-                    "the_odds_api", "team", event.away_team, "_resolve_game_id"
-                )
-            )
-        return None
+            if team_id is None
+        ]
+        return None, gaps
 
     game_id = games_by_matchup.get((home_team_id, away_team_id, event.commence_time))
     if game_id is None:
@@ -85,18 +80,13 @@ def _resolve_game_id(
             event.home_team,
             event.commence_time,
         )
-        return None
-
-    backfill_statements.append(
-        (_UPDATE_GAME_ODDS_API_EVENT_ID_SQL, [event.id, game_id])
-    )
-    return game_id
+    return game_id, []
 
 
 def _snapshot_statements_for_event(
     event: Event, game_id: int
-) -> list[tuple[str, list[Any] | None]]:
-    statements: list[tuple[str, list[Any] | None]] = []
+) -> list[Statement]:
+    statements: list[Statement] = []
     for bookmaker in event.bookmakers:
         for market in bookmaker.markets:
             common_market = _MARKET_MAP.get(market.key)
@@ -152,9 +142,9 @@ def load_the_odds_api_odds() -> None:
         ).results
     }
 
-    backfill_statements: list[tuple[str, list[Any] | None]] = []
-    gap_statements: list[tuple[str, list[Any] | None]] = []
-    snapshot_statements: list[tuple[str, list[Any] | None]] = []
+    backfill_statements: list[Statement] = []
+    gap_statements: list[Statement] = []
+    snapshot_statements: list[Statement] = []
 
     now = utc_iso()
 
@@ -163,26 +153,23 @@ def load_the_odds_api_odds() -> None:
             # skip games that start so odds_snapshots only ever holds pre-kickoff lines.
             continue
 
-        game_id = _resolve_game_id(
-            event,
-            odds_event_ids,
-            team_ids,
-            games_by_matchup,
-            backfill_statements,
-            gap_statements,
+        game_id, gaps = _resolve_game_id(
+            event, odds_event_ids, team_ids, games_by_matchup
         )
+        gap_statements.extend(gaps)
         if game_id is None:
             continue
+        if event.id not in odds_event_ids:
+            # first sighting - link it so later captures join on the id
+            backfill_statements.append(
+                (_UPDATE_GAME_ODDS_API_EVENT_ID_SQL, [event.id, game_id])
+            )
 
         snapshot_statements.extend(_snapshot_statements_for_event(event, game_id))
 
-    if backfill_statements:
+    if backfill_statements or gap_statements:
         sql_batch_call(backfill_statements + gap_statements, client)
-        logger.info(
-            "Linked %d games to odds_api_event_id", len(backfill_statements)
-        )
-    elif gap_statements:
-        sql_batch_call(gap_statements, client)
+    logger.info("Linked %d games to odds_api_event_id", len(backfill_statements))
 
     if not snapshot_statements:
         logger.warning("No odds from The Odds API to load")

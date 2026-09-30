@@ -25,7 +25,7 @@ from api.sports_io_client import get_player_statistics
 from api.sports_io_models import PlayerStat
 from config.config import SEASON, configure_logging, load_env
 from db.clients import get_d1
-from db.d1_client import D1Client
+from db.d1_client import D1Client, Statement
 from src.game_rules import LIVE_STATUSES, sql_list
 from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
 
@@ -119,13 +119,13 @@ def _load_for_games(games: list[dict[str, Any]], client: D1Client) -> set[int]:
         ).results
     }
 
-    gap_statements: list[tuple[str, list[Any] | None]] = []
+    gap_statements: list[Statement] = []
     changed: set[int] = set()
     row_changes = 0
     for game in games:
         game_id = game["game_id"]
         # one batch per game - a whole week at once is ~1,300 statements
-        statements: list[tuple[str, list[Any] | None]] = []
+        statements: list[Statement] = []
         try:
             teams = get_player_statistics(game["sports_io_game_id"])
         except Exception:

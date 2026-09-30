@@ -20,7 +20,7 @@ from api.espn_client import get_scoreboard, team_pair
 from api.espn_models import Competition, Situation
 from config.config import configure_logging, load_env
 from db.clients import get_d1
-from db.d1_client import D1Client
+from db.d1_client import D1Client, Statement
 from src.game_rules import DONE_STATUSES, LIVE_WINDOW_HOURS, sql_list
 from src.loaders.loader_helper import (
     capture_weather,
@@ -275,8 +275,8 @@ def load_game_snapshots() -> set[int]:
     if not espn_by_id:
         return set()
 
-    gap_statements: list[tuple[str, list[Any] | None]] = []
-    espn_backfill_statements: list[tuple[str, list[Any] | None]] = []
+    gap_statements: list[Statement] = []
+    espn_backfill_statements: list[Statement] = []
     live: list[tuple[dict[str, Any], Competition]] = []
     for row in candidates:
         if row["espn_event_id"] is not None:
@@ -322,7 +322,7 @@ def load_game_snapshots() -> set[int]:
         ).results
     }
 
-    statements: list[tuple[str, list[Any] | None]] = []
+    statements: list[Statement] = []
     captured: set[int] = set()
     for row, competition in live:
         state = _game_state_fields(competition)

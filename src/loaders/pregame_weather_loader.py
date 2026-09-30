@@ -23,10 +23,10 @@ Usage: uv run python -m src.loaders.pregame_weather_loader [local|prod]
 
 import logging
 import sys
-from typing import Any
 
 from config.config import configure_logging, load_env
 from db.clients import get_d1
+from db.d1_client import Statement
 from src.loaders.loader_helper import capture_pregame_forecast, sql_batch_call
 from src.timestamps import parse_utc_iso, utc_iso
 
@@ -74,7 +74,7 @@ def load_pregame_weather() -> None:
         return
 
     captured_at = utc_iso()
-    statements: list[tuple[str, list[Any] | None]] = []
+    statements: list[Statement] = []
     skipped = 0
     for row in upcoming_games:
         game_time = parse_utc_iso(row["game_time"])

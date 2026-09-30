@@ -15,7 +15,7 @@ import pytest
 from api import sports_io_client, the_odds_api_client, weather_api
 from config.config import SCHEMA_PATH, SEASON
 from db import clients as db_clients
-from db.d1_client import D1QueryResult, _bind_params
+from db.d1_client import D1QueryResult, Statement, _bind_params
 from db.setup import _split_statements
 from src import timestamps
 
@@ -38,7 +38,7 @@ class FakeD1:
         return self.batch([(sql, params)])[0]
 
     def batch(
-        self, statements: list[tuple[str, list[Any] | None]]
+        self, statements: list[Statement]
     ) -> list[D1QueryResult]:
         # atomic like D1's batch: all statements land or none do
         results: list[D1QueryResult] = []

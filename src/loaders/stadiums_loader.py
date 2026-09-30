@@ -8,6 +8,7 @@ import sys
 from typing import Any
 
 from config.config import configure_logging, load_env
+from db.d1_client import Statement
 from src.loaders.loader_helper import sql_batch_call
 
 logger = logging.getLogger(__name__)
@@ -418,7 +419,7 @@ ON CONFLICT(name) DO UPDATE SET
 
 def load_stadiums() -> None:
     """seed/update the static stadiums list"""
-    statements: list[tuple[str, list[Any] | None]] = [
+    statements: list[Statement] = [
         (
             _UPSERT_STADIUM_SQL,
             [
