@@ -15,6 +15,7 @@ from src.loaders import (
     scoring_plays_loader,
     win_probability_loader,
 )
+from src.timestamps import utc_iso
 from tests.api_fixtures import FakeApis, capture_info, fixture
 from tests.conftest import FakeD1, freeze
 
@@ -181,7 +182,8 @@ class TestGameSnapshots:
         assert snap["temperature_f"] == round(current["temperature"])
         assert snap["weather_icon"] == current["icon"]
         assert json.loads(snap["weather_alerts_json"]) == []
-        assert snap["weather_captured_at"] is not None
+        # the same ISO8601 UTC text as every other timestamp
+        assert snap["weather_captured_at"] == utc_iso(live.now)
 
     def test_nothing_changed_means_no_row(self, live: Live) -> None:
         game_snapshots_loader.load_game_snapshots()
@@ -200,6 +202,18 @@ class TestGameSnapshots:
         assert live.apis.weather_calls == 1
         assert second["weather_captured_at"] == first["weather_captured_at"]
         assert second["temperature_f"] == first["temperature_f"]
+
+    def test_reuses_weather_stamped_in_the_old_format(self, live: Live) -> None:
+        # rows before 2026-09-29 stored "YYYY-MM-DD HH:MM:SS"
+        game_snapshots_loader.load_game_snapshots()
+        old_format = (live.now - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+        live.d1.query("UPDATE game_snapshots SET weather_captured_at = ?", [old_format])
+        make_live(live.event, clock="2:40", play_id="p2")
+
+        game_snapshots_loader.load_game_snapshots()
+
+        assert live.apis.weather_calls == 1
+        assert live.snapshots()[-1]["weather_captured_at"] == old_format
 
     def test_same_clock_new_play_still_counts(self, live: Live) -> None:
         # e.g. a penalty with no time off the clock

@@ -156,9 +156,11 @@ def _snapshot_weather(
     old. weather_captured_at stays null for an enclosed roof or a failed
     fetch, so those retry on the next snapshot (enclosed never calls out)."""
     if previous is not None and previous["weather_captured_at"] is not None:
-        captured = datetime.strptime(
-            previous["weather_captured_at"], "%Y-%m-%d %H:%M:%S"
-        ).replace(tzinfo=UTC)
+        # fromisoformat, not parse_utc_iso: rows before 2026-09-29 stored
+        # "YYYY-MM-DD HH:MM:SS" (UTC, no zone) - it reads both
+        captured = datetime.fromisoformat(previous["weather_captured_at"])
+        if captured.tzinfo is None:
+            captured = captured.replace(tzinfo=UTC)
         if (datetime.now(UTC) - captured).total_seconds() < WEATHER_REFRESH_SECONDS:
             return (
                 *(previous[column] for column in _WEATHER_COLUMNS),
@@ -168,11 +170,7 @@ def _snapshot_weather(
     weather = capture_weather(
         row["latitude"], row["longitude"], row["roof_type"], f"game_id={row['game_id']}"
     )
-    captured_at = (
-        datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
-        if any(value is not None for value in weather)
-        else None
-    )
+    captured_at = utc_iso() if any(value is not None for value in weather) else None
     return (*weather, captured_at)
 
 

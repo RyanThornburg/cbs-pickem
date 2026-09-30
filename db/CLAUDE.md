@@ -86,8 +86,14 @@ source, convert to this same format before it touches the DB rather than
 storing whatever the source natively gives you. `src/timestamps.py`'s
 `utc_iso(dt=None)`/`parse_utc_iso()` are the only place the format
 string lives - use them rather than writing `strftime(...)` by hand.
-(`game_snapshots.weather_captured_at` is the one exception, still
-`%Y-%m-%d %H:%M:%S` - a separate TODO in `CLAUDE.local.md`.)
+`game_snapshots.weather_captured_at` was the one app-written exception
+(`%Y-%m-%d %H:%M:%S`) until 2026-09-29; prod's 369 existing rows were
+converted the same day. The exception that remains is SQLite's own
+`DEFAULT CURRENT_TIMESTAMP` audit columns (`created_at`/`updated_at`/
+`captured_at`, and the `updated_at` triggers): SQLite writes those as
+`YYYY-MM-DD HH:MM:SS` UTC with no zone. Nothing compares them against
+app timestamps today; `datetime.fromisoformat()` reads both shapes if
+something ever needs to.
 
 `weeks.start_time`/`end_time` are themselves *derived* from `game_time`
 (min/max across that week's games) — the reason they need to be full
