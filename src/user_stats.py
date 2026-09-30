@@ -206,6 +206,59 @@ def _pick_bias(user_rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _record(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """picks counts every pick, wins/losses only graded ones - a push or a
+    game not played yet has is_correct None."""
+    graded = [bool(row["is_correct"]) for row in rows if row["is_correct"] is not None]
+    wins = sum(graded)
+    return {
+        "picks": len(rows),
+        "wins": wins,
+        "losses": len(graded) - wins,
+        "win_pct": round(wins / len(graded), 3) if graded else None,
+    }
+
+
+def _pick_records(user_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Plain W-L records, nothing filtered or ranked: by side of the pick
+    (home/away/favorite/underdog, pick'ems in neither of the last two) and
+    per team, picking that team and picking against it."""
+    by_side: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+    for_team: defaultdict[int, list[dict[str, Any]]] = defaultdict(list)
+    against_team: defaultdict[int, list[dict[str, Any]]] = defaultdict(list)
+    team_dict_by_id: dict[int, dict[str, Any]] = {}
+    for row in user_rows:
+        picked = row["picked_team_id"]
+        is_home = picked == row["home_team_id"]
+        opponent = row["away_team_id"] if is_home else row["home_team_id"]
+        by_side["home" if is_home else "away"].append(row)
+        favorite = _is_favorite(row, is_home)
+        if favorite is not None:
+            by_side["favorite" if favorite else "underdog"].append(row)
+        for_team[picked].append(row)
+        against_team[opponent].append(row)
+        team_dict_by_id[picked] = _game_team_dict(picked, row)
+        team_dict_by_id[opponent] = _game_team_dict(opponent, row)
+
+    teams = [
+        {
+            "team": team,
+            "picked": _record(for_team[team_id]),
+            "against": _record(against_team[team_id]),
+        }
+        for team_id, team in sorted(
+            team_dict_by_id.items(), key=lambda item: item[1]["abbr"]
+        )
+    ]
+    return {
+        **{
+            side: _record(by_side[side])
+            for side in ("home", "away", "favorite", "underdog")
+        },
+        "teams": teams,
+    }
+
+
 def _team_records(user_rows: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
     """Per-team personal record (graded picks only), for teams picked at
     least _MIN_TEAM_PICKS_FOR_RECORD times."""
@@ -539,6 +592,7 @@ def compute_user_profiles(
             "hot_streak": _hot_streak(completed_weeks),
             "team_pick_streak": _team_pick_streaks(user_rows) if user_rows else None,
             "pick_bias": _pick_bias(user_rows) if user_rows else None,
+            "records": _pick_records(user_rows) if user_rows else None,
             "contrarian": _contrarian_block(user_rows, side_counts_by_game)
             if user_rows
             else None,

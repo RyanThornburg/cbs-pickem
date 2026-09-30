@@ -1073,7 +1073,12 @@ src.kv_writer.__main__`).
   career record (`historical.py`'s `career_record_by_user()`) and does the
   per-user KV writes. Covers career record, rolling hot streak (weeks at
   ≥80% accuracy), team-pick streak, home/away/favorite/underdog bias
-  (season-wide `pct`/`picks` only, no streak - see below),
+  (season-wide `pct`/`picks` only, no streak - see below), plain W-L
+  `records` (home/away/favorite/underdog, plus `teams`: every team the
+  user's picks touched, with `picked` and `against` records - no minimum,
+  nothing ranked; `picks` counts every pick, `wins`/`losses` only graded
+  ones, since a push is `is_correct` None like an unplayed game; added
+  2026-09-30),
   contrarian-vs-chalk accuracy, best/worst week, consistency (score
   stddev), clutch (accuracy in each period's deciding week), and four
   team-callout fields forming a 2×2 (picks-for-this-team-only vs

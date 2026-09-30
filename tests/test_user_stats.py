@@ -116,6 +116,69 @@ class TestFavorite:
         assert bias["underdog"] == {"pct": 0.333, "picks": 3}
 
 
+class TestPickRecords:
+    def test_by_side(self) -> None:
+        rows = [
+            _pick_row(1, True, spread=-3.0),  # home favorite
+            _pick_row(1, False, spread=-3.0),  # home favorite
+            _pick_row(2, True, spread=-3.0),  # away underdog
+            _pick_row(2, None, spread=0.0),  # away, pick'em, push/not played
+        ]
+        records = us._pick_records(rows)
+        assert records["home"] == {"picks": 2, "wins": 1, "losses": 1, "win_pct": 0.5}
+        assert records["away"] == {"picks": 2, "wins": 1, "losses": 0, "win_pct": 1.0}
+        assert records["favorite"] == {
+            "picks": 2,
+            "wins": 1,
+            "losses": 1,
+            "win_pct": 0.5,
+        }
+        assert records["underdog"] == {
+            "picks": 1,
+            "wins": 1,
+            "losses": 0,
+            "win_pct": 1.0,
+        }
+
+    def test_side_with_no_picks(self) -> None:
+        records = us._pick_records([_pick_row(1, True)])
+        assert records["away"] == {
+            "picks": 0,
+            "wins": 0,
+            "losses": 0,
+            "win_pct": None,
+        }
+
+    def test_every_team_picked_and_against(self) -> None:
+        rows = [
+            _pick_row(1, True, home=1, away=2),  # took 1 over 2
+            _pick_row(3, False, home=1, away=3),  # took 3 over 1
+            _pick_row(2, None, home=2, away=4),  # took 2 over 4, not graded
+        ]
+        teams = {t["team"]["id"]: t for t in us._pick_records(rows)["teams"]}
+
+        # a single pick still counts - no floor, it's just the record
+        assert list(teams) == [1, 2, 3, 4]  # sorted by abbreviation
+        assert teams[1]["team"] == {"id": 1, "abbr": "T1", "name": "Team 1"}
+        assert teams[1]["picked"] == {
+            "picks": 1,
+            "wins": 1,
+            "losses": 0,
+            "win_pct": 1.0,
+        }
+        assert teams[1]["against"] == {
+            "picks": 1,
+            "wins": 0,
+            "losses": 1,
+            "win_pct": 0.0,
+        }
+        assert teams[2]["picked"]["picks"] == 1
+        assert teams[2]["picked"]["win_pct"] is None
+        assert teams[2]["against"]["wins"] == 1
+        assert teams[4]["picked"]["picks"] == 0
+        assert teams[4]["against"]["picks"] == 1
+
+
 def _records(*results: tuple[int, int, int]) -> dict[int, dict[str, Any]]:
     """(team_id, wins, losses) -> _team_records() shape"""
     return {
@@ -399,7 +462,13 @@ class TestComputeUserProfiles:
         assert season["total_picks"] == 0
         assert season["accuracy_pct"] is None
         assert season["current_rank"] is None
-        for block in ("team_pick_streak", "pick_bias", "contrarian", "trap_team"):
+        for block in (
+            "team_pick_streak",
+            "pick_bias",
+            "records",
+            "contrarian",
+            "trap_team",
+        ):
             assert season[block] is None
 
     def test_career_block(self, d1: FakeD1, seed: Seed) -> None:
