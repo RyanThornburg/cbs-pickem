@@ -126,9 +126,7 @@ def _box_score(
     }
 
 
-def _players(
-    game: dict[str, Any], rows: list[dict[str, Any]]
-) -> dict[str, Any] | None:
+def _players(game: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     """None until player stats exist. Each side a {group: [player lines]}
     map (group keys lowercased, e.g. "kick_returns"), players ranked by
     their group's main stat."""
@@ -186,9 +184,7 @@ def write_game_details(game_ids: Iterable[int]) -> None:
     for game in rows(_GAMES_SQL):
         game_id = game["game_id"]
         details = {
-            "box_score": _box_score(
-                game, team_stats[game_id], player_rows[game_id]
-            ),
+            "box_score": _box_score(game, team_stats[game_id], player_rows[game_id]),
             "players": _players(game, player_rows[game_id]),
             # ESPN, chronological, one point per play plus a pre-kickoff
             # point (period 0) - only once the game is FINAL

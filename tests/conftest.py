@@ -37,9 +37,7 @@ class FakeD1:
     def query(self, sql: str, params: list[Any] | None = None) -> D1QueryResult:
         return self.batch([(sql, params)])[0]
 
-    def batch(
-        self, statements: list[Statement]
-    ) -> list[D1QueryResult]:
+    def batch(self, statements: list[Statement]) -> list[D1QueryResult]:
         # atomic like D1's batch: all statements land or none do
         results: list[D1QueryResult] = []
         self.conn.execute("BEGIN")

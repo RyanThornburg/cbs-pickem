@@ -13,7 +13,9 @@ from db.d1_client import D1Client
 from src.game_rules import favorite_side, standard_rank
 
 _HOT_STREAK_THRESHOLD_PCT = 0.8  # "80% or better" - the user's own bar
-_MIN_TEAM_PICKS_FOR_RECORD = 2  # floor so a single 0-1/1-0 doesn't qualify as a team record
+_MIN_TEAM_PICKS_FOR_RECORD = (
+    2  # floor so a single 0-1/1-0 doesn't qualify as a team record
+)
 
 _SEASON_USER_PICKS_SQL = """
 SELECT up.user_id, u.name, w.week_number, g.game_id, g.game_time,
@@ -57,10 +59,22 @@ def _season_trend(season_history: list[dict[str, Any]]) -> dict[str, Any] | None
     last_season, prior_season = usable[-1], usable[-2]
     rank_change = last_season["rank"] - prior_season["rank"]
     return {
-        "last_season": {"season": last_season["season"], "rank": last_season["rank"], "score": last_season["score"]},
-        "prior_season": {"season": prior_season["season"], "rank": prior_season["rank"], "score": prior_season["score"]},
+        "last_season": {
+            "season": last_season["season"],
+            "rank": last_season["rank"],
+            "score": last_season["score"],
+        },
+        "prior_season": {
+            "season": prior_season["season"],
+            "rank": prior_season["rank"],
+            "score": prior_season["score"],
+        },
         "rank_change": rank_change,
-        "direction": "improving" if rank_change < 0 else "declining" if rank_change > 0 else "same",
+        "direction": "improving"
+        if rank_change < 0
+        else "declining"
+        if rank_change > 0
+        else "same",
     }
 
 
@@ -89,7 +103,11 @@ def _consecutive_week_runs(weeks: list[int], latest_week: int) -> tuple[int, int
 
 
 def _team_dict(row: dict[str, Any]) -> dict[str, Any]:
-    return {"id": row["picked_team_id"], "abbr": row["team_abbr"], "name": row["team_name"]}
+    return {
+        "id": row["picked_team_id"],
+        "abbr": row["team_abbr"],
+        "name": row["team_name"],
+    }
 
 
 def _game_team_dict(team_id: int, row: dict[str, Any]) -> dict[str, Any]:
@@ -297,7 +315,9 @@ def _team_readability(user_rows: list[dict[str, Any]]) -> dict[int, dict[str, An
             continue
         picked = row["picked_team_id"]
         opponent = (
-            row["away_team_id"] if picked == row["home_team_id"] else row["home_team_id"]
+            row["away_team_id"]
+            if picked == row["home_team_id"]
+            else row["home_team_id"]
         )
         correct = int(row["is_correct"])
         for team_id in (picked, opponent):
@@ -337,7 +357,9 @@ def _blind_spot_and_sweet_spot(
     )
 
 
-def _game_side_pick_counts(all_picks_rows: list[dict[str, Any]]) -> dict[int, tuple[int, int]]:
+def _game_side_pick_counts(
+    all_picks_rows: list[dict[str, Any]],
+) -> dict[int, tuple[int, int]]:
     """Per game, (home_pick_count, away_pick_count) across every user in the
     pool - what a single pick is judged "contrarian" against."""
     home_counts: Counter[int] = Counter()
@@ -385,10 +407,14 @@ def _contrarian_block(
     return {
         "contrarian_picks": contrarian_total,
         "contrarian_accuracy_pct": (
-            round(contrarian_correct / contrarian_graded, 3) if contrarian_graded else None
+            round(contrarian_correct / contrarian_graded, 3)
+            if contrarian_graded
+            else None
         ),
         "chalk_picks": chalk_total,
-        "chalk_accuracy_pct": round(chalk_correct / chalk_graded, 3) if chalk_graded else None,
+        "chalk_accuracy_pct": round(chalk_correct / chalk_graded, 3)
+        if chalk_graded
+        else None,
     }
 
 
@@ -432,7 +458,9 @@ def _consistency(completed_weeks: list[dict[str, Any]]) -> dict[str, Any] | None
     return {"stddev": round(pstdev(scores), 2), "weeks_counted": len(scores)}
 
 
-def _clutch(completed_weeks: list[dict[str, Any]], money_weeks: set[int]) -> dict[str, Any] | None:
+def _clutch(
+    completed_weeks: list[dict[str, Any]], money_weeks: set[int]
+) -> dict[str, Any] | None:
     if not completed_weeks:
         return None
     money_rows = [row for row in completed_weeks if row["week_number"] in money_weeks]
@@ -508,7 +536,9 @@ def compute_user_profiles(
         current_season = {
             "total_picks": total_made,
             "total_correct": total_correct,
-            "accuracy_pct": round(total_correct / total_made, 3) if total_made else None,
+            "accuracy_pct": round(total_correct / total_made, 3)
+            if total_made
+            else None,
             "current_rank": current_rank_by_user.get(user_id),
             "hot_streak": _hot_streak(completed_weeks),
             "team_pick_streak": _team_pick_streaks(user_rows) if user_rows else None,

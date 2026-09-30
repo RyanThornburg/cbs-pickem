@@ -129,7 +129,9 @@ def _load_for_games(games: list[dict[str, Any]], client: D1Client) -> set[int]:
         try:
             teams = get_player_statistics(game["sports_io_game_id"])
         except Exception:
-            logger.exception("Player stats fetch failed for game_id=%s - skipping", game_id)
+            logger.exception(
+                "Player stats fetch failed for game_id=%s - skipping", game_id
+            )
             continue
         if not teams:
             # not started yet (or Sports IO hiccup) - never wipe stored rows

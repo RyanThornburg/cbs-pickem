@@ -129,7 +129,9 @@ def _all_alone_entries(
             "picked_team_id": team_id,
             "abbr": abbr,
             "opposing_count": len(opposing),
-            "correct": None if covering_team_id is None else team_id == covering_team_id,
+            "correct": None
+            if covering_team_id is None
+            else team_id == covering_team_id,
         }
         if week_number is not None:
             entry["week_number"] = week_number
@@ -306,7 +308,12 @@ def _pick_outcomes(
 
 
 def _new_accuracy_counter() -> dict[str, int]:
-    return {"straight_up_correct": 0, "straight_up_total": 0, "ats_correct": 0, "ats_total": 0}
+    return {
+        "straight_up_correct": 0,
+        "straight_up_total": 0,
+        "ats_correct": 0,
+        "ats_total": 0,
+    }
 
 
 def _record_pick_outcome(
@@ -366,7 +373,9 @@ def _spread_bucket_trends(
             straight_up_correct, ats_correct = _pick_outcomes(
                 game, pick["picked_team_id"]
             )
-            _record_pick_outcome(overall[bucket_label], straight_up_correct, ats_correct)
+            _record_pick_outcome(
+                overall[bucket_label], straight_up_correct, ats_correct
+            )
 
             side = "home" if pick["picked_team_id"] == game["home_id"] else "away"
             _record_pick_outcome(
@@ -485,8 +494,8 @@ def _believers_and_faders(
         if believers[team_id]["total"] or faders[team_id]["total"]
     ]
     results.sort(
-        key=lambda e: -abs(
-            (e["believers"]["accuracy"] or 0) - (e["faders"]["accuracy"] or 0)
+        key=lambda e: (
+            -abs((e["believers"]["accuracy"] or 0) - (e["faders"]["accuracy"] or 0))
         )
     )
     return results

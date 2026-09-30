@@ -48,6 +48,7 @@ def team_pair(competition: Competition) -> tuple[str | None, str | None]:
         ABBREV_CORRECTIONS.get(away, away) if away else None,
     )
 
+
 logger: logging.Logger = logging.getLogger(__name__)
 
 

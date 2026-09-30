@@ -19,6 +19,7 @@ TIMEOUT_SECONDS = 60
 # one (sql, params) entry for D1Client.batch()
 type Statement = tuple[str, list[Any] | None]
 
+
 class D1Error(RuntimeError):
     """Raised when a D1 query fails (non-2xx response or success=False)."""
 
@@ -55,9 +56,7 @@ class D1Client:
         """Run a single statement (SELECT/INSERT/UPDATE/DELETE)."""
         return self.batch([(sql, params)])[0]
 
-    def batch(
-        self, statements: list[Statement]
-    ) -> list[D1QueryResult]:
+    def batch(self, statements: list[Statement]) -> list[D1QueryResult]:
         """Run multiple statements as a single atomic transaction.
 
         Every call enables foreign keys (`PRAGMA foreign_keys = ON`) as part

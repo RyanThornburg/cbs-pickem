@@ -344,9 +344,7 @@ class TestTeamStats:
 
     # DELAYED too, so stats keep polling through a weather delay
     @pytest.mark.parametrize("status", ["HALFTIME", "DELAYED"])
-    def test_live_games_only(
-        self, season: FakeD1, apis: FakeApis, status: str
-    ) -> None:
+    def test_live_games_only(self, season: FakeD1, apis: FakeApis, status: str) -> None:
         game_id = capture_info()["sports_io_game_id"]
         season.query(
             "UPDATE games SET status = ? WHERE sports_io_game_id = ?",

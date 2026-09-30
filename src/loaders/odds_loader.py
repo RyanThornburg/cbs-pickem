@@ -82,9 +82,7 @@ def _resolve_game_id(
     return game_id, []
 
 
-def _snapshot_statements_for_event(
-    event: Event, game_id: int
-) -> list[Statement]:
+def _snapshot_statements_for_event(event: Event, game_id: int) -> list[Statement]:
     statements: list[Statement] = []
     for bookmaker in event.bookmakers:
         for market in bookmaker.markets:

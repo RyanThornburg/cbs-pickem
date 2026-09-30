@@ -180,6 +180,7 @@ class TestHelpers:
     def test_kickoff_slot(self, kickoff: str, slot: str) -> None:
         assert recap._kickoff_slot({"game_time": kickoff}) == slot
 
+
 class TestPayload:
     def test_no_games_is_none(self, d1: FakeD1, seed: Seed) -> None:
         seed.week(1)

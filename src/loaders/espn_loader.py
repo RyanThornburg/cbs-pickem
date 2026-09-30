@@ -35,7 +35,9 @@ JOIN teams at ON at.team_id = g.away_team_id
 WHERE w.season_id = ?
 """
 
-_UPDATE_GAME_SQL = "UPDATE games SET espn_event_id = ?, neutral_site = ? WHERE game_id = ?"
+_UPDATE_GAME_SQL = (
+    "UPDATE games SET espn_event_id = ?, neutral_site = ? WHERE game_id = ?"
+)
 
 
 def load_espn_games(include_complete: bool = False) -> None:
@@ -45,7 +47,11 @@ def load_espn_games(include_complete: bool = False) -> None:
     changes once a game has been played."""
     client = get_d1()
 
-    sql = _WEEK_GAMES_SQL if include_complete else _WEEK_GAMES_SQL + " AND w.is_complete = 0"
+    sql = (
+        _WEEK_GAMES_SQL
+        if include_complete
+        else _WEEK_GAMES_SQL + " AND w.is_complete = 0"
+    )
     games_by_week: dict[int, dict[tuple[str, str], int]] = {}
     for row in client.query(sql, [SEASON]).results:
         games_by_week.setdefault(row["week_number"], {})[
@@ -61,7 +67,9 @@ def load_espn_games(include_complete: bool = False) -> None:
         try:
             scoreboard = get_scoreboard(week_number)
         except Exception:
-            logger.exception("ESPN scoreboard fetch failed for week %s - skipping", week_number)
+            logger.exception(
+                "ESPN scoreboard fetch failed for week %s - skipping", week_number
+            )
             continue
 
         for event in scoreboard.events:
@@ -77,10 +85,14 @@ def load_espn_games(include_complete: bool = False) -> None:
                     week_number,
                 )
                 gap_statements.append(
-                    mapping_gap_statement("espn", "team_pair", f"{away}@{home}", "load_espn_games")
+                    mapping_gap_statement(
+                        "espn", "team_pair", f"{away}@{home}", "load_espn_games"
+                    )
                 )
                 continue
-            statements.append((_UPDATE_GAME_SQL, [event.id, competition.neutral_site, game_id]))
+            statements.append(
+                (_UPDATE_GAME_SQL, [event.id, competition.neutral_site, game_id])
+            )
 
     if statements or gap_statements:
         sql_batch_call(statements + gap_statements, client)

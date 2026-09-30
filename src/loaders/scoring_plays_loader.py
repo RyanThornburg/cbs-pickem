@@ -106,7 +106,10 @@ def _load_plays_for_games(games: list[dict[str, Any]], client: D1Client) -> None
                 )
                 gap_statements.append(
                     mapping_gap_statement(
-                        "sports_io", "event_quarter", event.quarter, "load_scoring_plays"
+                        "sports_io",
+                        "event_quarter",
+                        event.quarter,
+                        "load_scoring_plays",
                     )
                 )
 

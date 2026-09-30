@@ -357,7 +357,11 @@ def capture_pregame_forecast(
     daily = forecast.daily.data if forecast.daily else []
     day_ends = [d.time for d in daily[1:]] + [daily[-1].time + 86400] if daily else []
     kickoff_day = next(
-        (d for d, end in zip(daily, day_ends, strict=True) if d.time <= kickoff_ts < end),
+        (
+            d
+            for d, end in zip(daily, day_ends, strict=True)
+            if d.time <= kickoff_ts < end
+        ),
         None,
     )
     if kickoff_day is not None:
@@ -368,9 +372,7 @@ def capture_pregame_forecast(
     return None, _NO_WEATHER, _NO_WINDOW
 
 
-def sql_batch_call(
-    statements: list[Statement], client: D1Client | None = None
-) -> None:
+def sql_batch_call(statements: list[Statement], client: D1Client | None = None) -> None:
     """Run a batch of (sql, params) statements. A D1Error is re-raised, not
     turned into sys.exit() - SystemExit isn't an Exception, so exiting here
     used to slip past orchestration.py's soft() and end the whole tick. Not

@@ -172,7 +172,9 @@ _SPORTS_IO_LONG_STATUS_MAP = {
 }
 
 
-def _sports_io_status_to_common(short_status: str | None, long_status: str | None) -> str | None:
+def _sports_io_status_to_common(
+    short_status: str | None, long_status: str | None
+) -> str | None:
     """Map Sports IO's game.status.short (falling back to .long when short is null)
     onto the common games.status vocabulary"""
     if short_status is None:
@@ -385,7 +387,9 @@ def load_games_data(live: bool = False) -> None:
                     game.scores.away.quarter_3,
                     game.scores.away.quarter_4,
                     game.scores.away.overtime,
-                    _sports_io_status_to_common(game.game.status.short, game.game.status.long),
+                    _sports_io_status_to_common(
+                        game.game.status.short, game.game.status.long
+                    ),
                     game.game.status.long,
                     stadium_id,
                     is_international,
