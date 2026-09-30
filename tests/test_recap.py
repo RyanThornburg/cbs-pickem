@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 
 from config.config import SEASON
+from src.game_rules import ats_side
 from src.kv_writer import recap
-from src.kv_writer.shared import ats_side
 from tests.conftest import Clients, FakeD1, Seed, iso
 
 # Sunday 1pm ET of week 1; week N is 7 days later per week
@@ -179,20 +179,6 @@ class TestHelpers:
     )
     def test_kickoff_slot(self, kickoff: str, slot: str) -> None:
         assert recap._kickoff_slot({"game_time": kickoff}) == slot
-
-    def test_favorite_and_winner(self) -> None:
-        game = {
-            "cbs_spread": 3.0,
-            "status": "FINAL",
-            "home_score": 20,
-            "away_score": 17,
-        }
-        assert recap._favorite_side(game) == "away"
-        assert recap._winner_side(game) == "home"
-        assert recap._favorite_side({**game, "cbs_spread": 0}) is None
-        assert recap._winner_side({**game, "away_score": 20}) is None
-        assert recap._winner_side({**game, "status": "IN_PROGRESS"}) is None
-
 
 class TestPayload:
     def test_no_games_is_none(self, d1: FakeD1, seed: Seed) -> None:

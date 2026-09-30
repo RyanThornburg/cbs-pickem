@@ -12,8 +12,8 @@ from config.config import (
     SECOND_HALF_PAID_PLACES,
     SECOND_HALF_START_WEEK,
 )
+from src.game_rules import standard_rank
 from src.kv_writer.leaderboard import compute_week_leaderboard
-from src.kv_writer.shared import standard_rank
 from tests.conftest import FakeD1, Seed
 
 

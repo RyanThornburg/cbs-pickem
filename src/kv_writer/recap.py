@@ -26,12 +26,15 @@ from zoneinfo import ZoneInfo
 from config.config import SEASON
 from db.clients import get_d1, get_kv
 from db.d1_client import D1Client
-from src.kv_writer.shared import (
+from src.game_rules import (
     ats_side,
-    for_current_week,
-    game_team_dicts,
+    favorite_side,
+    other_side,
+    pick_side,
     standard_rank,
+    winner_side,
 )
+from src.kv_writer.shared import for_current_week, game_team_dicts
 from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
@@ -228,38 +231,6 @@ def _item(
 def _team(game: dict[str, Any], side: str) -> dict[str, Any]:
     home, away = game_team_dicts(game)
     return home if side == "home" else away
-
-
-def _other(side: str) -> str:
-    return "away" if side == "home" else "home"
-
-
-def _favorite_side(game: dict[str, Any]) -> str | None:
-    """None for a pick'em or missing spread."""
-    spread = game["cbs_spread"]
-    if spread is None or spread == 0:
-        return None
-    return "home" if spread < 0 else "away"
-
-
-def _winner_side(game: dict[str, Any]) -> str | None:
-    """Straight-up winner - None until FINAL, or for an actual tie."""
-    if (
-        game["status"] != "FINAL"
-        or game["home_score"] is None
-        or game["away_score"] is None
-        or game["home_score"] == game["away_score"]
-    ):
-        return None
-    return "home" if game["home_score"] > game["away_score"] else "away"
-
-
-def _pick_side(game: dict[str, Any], pick: dict[str, Any]) -> str | None:
-    if pick["picked_team_id"] == game["home_id"]:
-        return "home"
-    if pick["picked_team_id"] == game["away_id"]:
-        return "away"
-    return None
 
 
 def _kickoff_slot(game: dict[str, Any]) -> str:
@@ -475,9 +446,9 @@ def _spread_mattered_counts(
     covered = flipped = pushes = winner_lost_picks = 0
     flipped_games = []
     for game in games:
-        winner = _winner_side(game)
+        winner = winner_side(game)
         side = ats_side(game)
-        if winner is None or side is None or _favorite_side(game) is None:
+        if winner is None or side is None or favorite_side(game) is None:
             continue
         if side == "push":
             pushes += 1
@@ -488,7 +459,7 @@ def _spread_mattered_counts(
             burned = [
                 p["name"]
                 for p in picks_by_game.get(game["game_id"], [])
-                if _pick_side(game, p) == winner
+                if pick_side(game, p["picked_team_id"]) == winner
             ]
             winner_lost_picks += len(burned)
             flipped_games.append(
@@ -585,8 +556,8 @@ def _crowd_results(
         if side_covered is None:
             continue
         picks = picks_by_game.get(game["game_id"], [])
-        home = sum(1 for p in picks if _pick_side(game, p) == "home")
-        away = sum(1 for p in picks if _pick_side(game, p) == "away")
+        home = sum(1 for p in picks if pick_side(game, p["picked_team_id"]) == "home")
+        away = sum(1 for p in picks if pick_side(game, p["picked_team_id"]) == "away")
         if home == away:
             continue
         crowd_side = "home" if home > away else "away"
@@ -780,14 +751,14 @@ def _week_chaos(
         return None
     dog_covers = decided = upsets = su_decided = big_favs = big_fav_losses = 0
     for game in final_games:
-        favorite = _favorite_side(game)
+        favorite = favorite_side(game)
         if favorite is None:
             continue
         side = ats_side(game)
         if side in ("home", "away"):
             decided += 1
             dog_covers += side != favorite
-        winner = _winner_side(game)
+        winner = winner_side(game)
         if winner is not None:
             su_decided += 1
             upsets += winner != favorite
@@ -914,7 +885,10 @@ def _twins_and_oppos_items(season: _Season) -> list[dict[str, Any]]:
         return [
             {
                 "game_id": p["game_id"],
-                "team": _team(games[p["game_id"]], _pick_side(games[p["game_id"]], p)),
+                "team": _team(
+                    games[p["game_id"]],
+                    pick_side(games[p["game_id"]], p["picked_team_id"]),
+                ),
             }
             for p in sorted(picks, key=lambda p: games[p["game_id"]]["game_time"])
         ]
@@ -1171,16 +1145,18 @@ def _upset_items(season: _Season) -> list[dict[str, Any]]:
     """Biggest-spread underdog to win outright this week, and who had it."""
     upsets = []
     for game in season.week_games(season.week):
-        favorite, winner = _favorite_side(game), _winner_side(game)
+        favorite, winner = favorite_side(game), winner_side(game)
         if favorite is None or winner is None or winner == favorite:
             continue
         upsets.append((abs(game["cbs_spread"]), game, winner))
     if not upsets:
         return []
     points, game, winner = max(upsets, key=lambda u: u[0])
-    dog, favorite = _team(game, winner), _team(game, _other(winner))
+    dog, favorite = _team(game, winner), _team(game, other_side(winner))
     picks = season.picks_by_game.get(game["game_id"], [])
-    believers = _people([p for p in picks if _pick_side(game, p) == winner])
+    believers = _people(
+        [p for p in picks if pick_side(game, p["picked_team_id"]) == winner]
+    )
     believer_names = [b["name"] for b in believers]
     headline = f"Upset of the week: {dog['abbr']} (+{points:g}) beat {favorite['abbr']} outright."
     if picks:
@@ -1260,7 +1236,7 @@ def _game_split_items(season: _Season) -> list[dict[str, Any]]:
         if not game["neutral_site"]:
             home_n += 1
             home_covers += side == "home"
-        favorite = _favorite_side(game)
+        favorite = favorite_side(game)
         if favorite is None:
             continue
         fav_n += 1
@@ -1346,18 +1322,18 @@ def _pool_split_items(season: _Season) -> list[dict[str, Any]]:
         side = ats_side(game)
         if side not in ("home", "away"):
             continue
-        favorite = _favorite_side(game)
+        favorite = favorite_side(game)
         slot = _kickoff_slot(game)
         for pick in season.picks_by_game.get(game["game_id"], []):
-            pick_side = _pick_side(game, pick)
-            if pick_side is None:
+            picked = pick_side(game, pick["picked_team_id"])
+            if picked is None:
                 continue
-            correct = pick_side == side
+            correct = picked == side
             buckets = [f"slot:{slot}"]
             if not game["neutral_site"]:
-                buckets.append(f"side:{pick_side}")
+                buckets.append(f"side:{picked}")
             if favorite is not None:
-                is_fav = pick_side == favorite
+                is_fav = picked == favorite
                 buckets.append("fav:favorite" if is_fav else "fav:underdog")
                 fav_lean[0] += is_fav
                 fav_lean[1] += 1

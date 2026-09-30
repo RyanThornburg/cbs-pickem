@@ -15,7 +15,8 @@ from config.config import (
 )
 from db.clients import get_d1, get_kv
 from db.d1_client import D1Client
-from src.kv_writer.shared import PAID_PLACES, for_current_week, standard_rank
+from src.game_rules import standard_rank
+from src.kv_writer.shared import PAID_PLACES, for_current_week
 
 logger = logging.getLogger(__name__)
 

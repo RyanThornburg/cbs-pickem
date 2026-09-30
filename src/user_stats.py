@@ -10,6 +10,7 @@ from typing import Any
 
 from config.config import SEASON, SECOND_HALF_START_WEEK
 from db.d1_client import D1Client
+from src.game_rules import favorite_side, standard_rank
 
 _HOT_STREAK_THRESHOLD_PCT = 0.8  # "80% or better" - the user's own bar
 _MIN_TEAM_PICKS_FOR_RECORD = 2  # floor so a single 0-1/1-0 doesn't qualify as a team record
@@ -44,23 +45,6 @@ ORDER BY wp.user_id, w.week_number
 _ACTIVE_USERS_SQL = "SELECT user_id, name FROM users WHERE is_active = TRUE"
 
 _FINAL_WEEK_SQL = "SELECT MAX(week_number) AS final_week FROM weeks WHERE season_id = ?"
-
-
-def _rank_by_score(score_by_user: dict[int, int]) -> dict[int, int]:
-    """highest first, ties share a place and the next place skips - same
-    shape as src/kv_writer/leaderboard.py's _standard_rank(), duplicated here
-    (rather than imported) since kv_writer is what imports this module, not
-    the other way around."""
-    ranked = sorted(score_by_user.items(), key=lambda item: -item[1])
-    rank_by_user: dict[int, int] = {}
-    prev_score: int | None = None
-    prev_rank = 0
-    for i, (user_id, score) in enumerate(ranked, start=1):
-        if score != prev_score:
-            prev_rank = i
-            prev_score = score
-        rank_by_user[user_id] = prev_rank
-    return rank_by_user
 
 
 def _season_trend(season_history: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -120,10 +104,8 @@ def _game_team_dict(team_id: int, row: dict[str, Any]) -> dict[str, Any]:
 def _is_favorite(row: dict[str, Any], is_home: bool) -> bool | None:
     """None for a pick'em (cbs_spread == 0) or a missing spread - no
     favorite/underdog to speak of."""
-    spread = row["cbs_spread"]
-    if spread is None or spread == 0:
-        return None
-    return (is_home and spread < 0) or (not is_home and spread > 0)
+    favorite = favorite_side(row)
+    return None if favorite is None else favorite == ("home" if is_home else "away")
 
 
 def _bias_block(matches: list[bool]) -> dict[str, Any] | None:
@@ -491,7 +473,7 @@ def compute_user_profiles(
         user_id: sum(row["picks_correct"] or 0 for row in rows)
         for user_id, rows in weekly_by_user.items()
     }
-    current_rank_by_user = _rank_by_score(cumulative_score_by_user)
+    current_rank_by_user = standard_rank(cumulative_score_by_user)
 
     final_week_row = d1.query(_FINAL_WEEK_SQL, [SEASON]).results
     final_week = final_week_row[0]["final_week"] if final_week_row else None

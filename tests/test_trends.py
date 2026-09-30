@@ -7,8 +7,8 @@ from typing import Any
 import pytest
 
 from config.config import SEASON
+from src.game_rules import ats_side
 from src.kv_writer import trends
-from src.kv_writer.shared import ats_side
 from tests.conftest import Clients, FakeD1, Seed
 
 KICKOFF = datetime(2026, 9, 13, 17, 0, tzinfo=UTC)

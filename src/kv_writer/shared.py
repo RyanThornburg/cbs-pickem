@@ -96,41 +96,6 @@ def for_current_week(write_week: Callable[[int], None], label: str) -> None:
     write_week(current_week)
 
 
-def ats_side(game: dict[str, Any]) -> str | None:
-    """Which side covered game['cbs_spread'] - None if the game isn't
-    FINAL yet or is missing a spread/score. cbs_spread is the home team's
-    line (negative = home favored); home covers when its actual margin
-    beats that line."""
-    if game["status"] != "FINAL":
-        return None
-    if (
-        game["cbs_spread"] is None
-        or game["home_score"] is None
-        or game["away_score"] is None
-    ):
-        return None
-    adjusted = game["home_score"] - game["away_score"] + game["cbs_spread"]
-    if adjusted > 0:
-        return "home"
-    if adjusted < 0:
-        return "away"
-    return "push"
-
-
-def standard_rank(score_by_user: dict[int, int]) -> dict[int, int]:
-    """highest first, ties cause next number to be skipped"""
-    ranked = sorted(score_by_user.items(), key=lambda item: -item[1])
-    rank_by_user: dict[int, int] = {}
-    prev_score: int | None = None
-    prev_rank = 0
-    for i, (user_id, score) in enumerate(ranked, start=1):
-        if score != prev_score:
-            prev_rank = i
-            prev_score = score
-        rank_by_user[user_id] = prev_rank
-    return rank_by_user
-
-
 def game_team_dicts(game: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     return (
         {"id": game["home_id"], "abbr": game["home_abbr"], "name": game["home_name"]},

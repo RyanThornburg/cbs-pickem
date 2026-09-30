@@ -689,11 +689,14 @@ warns and skips if there isn't one, then delegates).
 of those (`GAMES_SQL`/`PICKS_SQL` — the literal same query used by both
 `games.py` and `trends.py`, not duplicated; `resolve_current_week()` and
 `for_current_week()`;
-`game_team_dicts()`/`split_home_away()`; `ats_side()` and
-`standard_rank()`, moved from `trends.py`/`leaderboard.py` 2026-09-28 when
-`recap.py` needed both; `write_meta_current()` itself, since `meta:current` is
+`game_team_dicts()`/`split_home_away()`; `write_meta_current()` itself, since `meta:current` is
 just `resolve_current_week()` plus two pool-rule constants and the CBS
-pool link, not worth its own file). Two further cross-module dependencies were kept as direct
+pool link, not worth its own file). The pick'em rules for one game -
+`favorite_side()`, `winner_side()`, `ats_side()`, `pick_side()`,
+`other_side()` - and `standard_rank()` live outside kv_writer in
+`src/game_rules.py` (2026-09-29), which imports nothing from the project,
+so `src/user_stats.py` (imported by kv_writer) uses the same rules
+instead of keeping its own copies. Two further cross-module dependencies were kept as direct
 imports rather than folded into `shared.py`, since each is really owned by
 one domain that the other legitimately depends on: `trends.py` imports
 `odds.py`'s `open_close_consensus_by_game()` for its spread/total movers
@@ -815,7 +818,7 @@ src.kv_writer.__main__`).
   key from the same day was superseded and deleted).
 - `write_week_leaderboard()` → `week:{season}:{weekNN}:leaderboard` —
   cumulative/first-half/second-half scores and tie-aware `place`
-  (`shared.standard_rank()`, standard competition ranking: ties share a place,
+  (`game_rules.standard_rank()`, standard competition ranking: ties share a place,
   the next place skips) computed here rather than by the web app.
   **No custom live-grading** — `is_correct`/`trending_status`/
   `trending_score` are CBS's own fields, passed through as-is; deriving

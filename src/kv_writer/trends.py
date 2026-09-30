@@ -7,15 +7,16 @@ from typing import Any
 
 from config.config import SEASON
 from db.clients import get_d1, get_kv
+from src.game_rules import ats_side, winner_side
 from src.kv_writer.odds import open_close_consensus_by_game
 from src.kv_writer.shared import (
     GAMES_SQL,
     PICKS_SQL,
-    ats_side,
     for_current_week,
     game_team_dicts,
     split_home_away,
 )
+from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,6 @@ logger = logging.getLogger(__name__)
 _ALL_ALONE_MIN_OPPOSING = (
     3  # how big the other side must be for a solo pick to mean anything
 )
-from src.timestamps import utc_iso
 
 _ONE_SIDED_MIN_PICKS = (
     3  # floor so an early, barely-revealed game can't look "lopsided"
@@ -294,28 +294,14 @@ def _pick_outcomes(
     """(straight_up_correct, ats_correct) for one pick on a FINAL game -
     None for either half if that outcome isn't decided (not FINAL, missing
     scores, or an actual tie/push), rather than counting it as wrong."""
-    if (
-        game["status"] != "FINAL"
-        or game["home_score"] is None
-        or game["away_score"] is None
-    ):
-        return None, None
-
-    if game["home_score"] == game["away_score"]:
-        straight_up_correct = None  # an actual tie - nobody "won"
-    else:
-        winner_id = (
-            game["home_id"] if game["home_score"] > game["away_score"] else game["away_id"]
-        )
-        straight_up_correct = picked_team_id == winner_id
-
-    side = ats_side(game)
-    if side is None or side == "push":
-        ats_correct = None
-    else:
-        covering_team_id = game["home_id"] if side == "home" else game["away_id"]
-        ats_correct = picked_team_id == covering_team_id
-
+    winner = winner_side(game)
+    straight_up_correct = (
+        None if winner is None else picked_team_id == game[f"{winner}_id"]
+    )
+    covered = ats_side(game)
+    ats_correct = (
+        None if covered in (None, "push") else picked_team_id == game[f"{covered}_id"]
+    )
     return straight_up_correct, ats_correct
 
 
