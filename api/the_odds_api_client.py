@@ -1,6 +1,7 @@
 """Client for reading odds data from The Odds API"""
 
 import logging
+from functools import cache
 
 import requests
 import stamina
@@ -61,7 +62,9 @@ class TheOddsApiClient:
         return response
 
 
+@cache
 def _new_client() -> TheOddsApiClient:
+    """one client per process - reads the key once"""
     return TheOddsApiClient(get_the_odds_api())
 
 

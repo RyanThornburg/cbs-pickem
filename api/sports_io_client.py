@@ -3,6 +3,7 @@
 import logging
 import time
 from enum import Enum
+from functools import cache
 from typing import Any
 
 import requests
@@ -202,7 +203,10 @@ class SportsIOClient:
             page += 1
 
 
+@cache
 def _new_client() -> SportsIOClient:
+    """one client per process, so the per-minute quota it tracks carries
+    across calls (and the key is read once)"""
     return SportsIOClient(get_sports_io_api())
 
 

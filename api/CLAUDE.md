@@ -246,7 +246,13 @@ against the live services rather than assumed from docs:
   (`x-ratelimit-remaining` per-minute, `x-ratelimit-requests-remaining`
   daily); `SportsIOClient._throttle_if_needed` reads the per-minute one
   and sleeps proactively before the next call instead of only reacting
-  to a 429. None of its endpoints paginate today (confirmed live — a
+  to a 429. That only works because the module functions share one
+  client: `_new_client()` is `functools.cache`d (2026-09-29 - before
+  that every call built a fresh client, so the throttle never saw the
+  previous response, and `get_sports_io_api()` re-read `.env.local` each
+  time). The Odds API and Pirate Weather `_new_client()`s are cached the
+  same way; CBS's isn't (it logs in per fetch). Tests clear these caches
+  around every test (`tests/conftest.py`'s `_fresh_clients`). None of its endpoints paginate today (confirmed live — a
   `page` param errors with "The Page field do not exist."), but
   `_request()`'s pagination loop still checks `paging` on every response
   so a future change wouldn't silently truncate to page 1.

@@ -4,6 +4,7 @@ API-compatible replacement.
 """
 
 import logging
+from functools import cache
 from typing import Any
 
 import requests
@@ -68,7 +69,9 @@ class WeatherApiClient:
         return response
 
 
+@cache
 def _new_client() -> WeatherApiClient:
+    """one client per process - reads the key once"""
     return WeatherApiClient(get_weather_api())
 
 

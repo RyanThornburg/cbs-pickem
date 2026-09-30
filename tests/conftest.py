@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from api import sports_io_client, the_odds_api_client, weather_api
 from config.config import SCHEMA_PATH, SEASON
 from db import clients as db_clients
 from db.d1_client import D1QueryResult, _bind_params
@@ -222,13 +223,20 @@ def seed(d1: FakeD1) -> Seed:
 
 @pytest.fixture(autouse=True)
 def _fresh_clients() -> Iterator[None]:
-    """get_d1()/get_kv() are cached per process - drop them around every
-    test so one test's fakes never leak into the next"""
-    db_clients.get_d1.cache_clear()
-    db_clients.get_kv.cache_clear()
+    """get_d1()/get_kv() and the API clients are cached per process - drop
+    them around every test so one test's fakes never leak into the next"""
+    caches = (
+        db_clients.get_d1,
+        db_clients.get_kv,
+        sports_io_client._new_client,
+        the_odds_api_client._new_client,
+        weather_api._new_client,
+    )
+    for cached in caches:
+        cached.cache_clear()
     yield
-    db_clients.get_d1.cache_clear()
-    db_clients.get_kv.cache_clear()
+    for cached in caches:
+        cached.cache_clear()
 
 
 @pytest.fixture

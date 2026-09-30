@@ -216,6 +216,26 @@ class TestSportsIOHttp:
 
         assert sleeps == [sports_io_client.MINUTE_QUOTA_BACKOFF_SECONDS]
 
+    def test_quota_carries_across_module_calls(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # the loaders call the module functions, so those must share one
+        # client for the per-minute backoff to ever see the last response
+        monkeypatch.setattr(sports_io_client, "get_sports_io_api", lambda: "key")
+        sleeps: list[float] = []
+        monkeypatch.setattr(sports_io_client.time, "sleep", sleeps.append)
+        low = {"x-ratelimit-remaining": "2", "x-ratelimit-requests-remaining": "50"}
+        FakeHttp(
+            monkeypatch,
+            FakeResponse(body=_envelope([]), headers=low),
+            FakeResponse(body=_envelope([])),
+        )
+
+        sports_io_client.get_teams()
+        sports_io_client.get_teams()
+
+        assert sleeps == [sports_io_client.MINUTE_QUOTA_BACKOFF_SECONDS]
+
 
 class TestOtherClientsHttp:
     def test_espn_week_params(self, monkeypatch: pytest.MonkeyPatch) -> None:
