@@ -303,7 +303,14 @@ def load_games_data(live: bool = False) -> None:
             )
 
     team_ids = id_map(client, "teams", "sports_io_team_id", "team_id")
-    week_ids = id_map(client, "weeks", "name", "week_id")
+    # by name ("Week 1"), so this season's only - every season has one
+    week_ids = {
+        row["name"]: row["week_id"]
+        for row in client.query(
+            "SELECT week_id, name FROM weeks WHERE season_id = ? AND name IS NOT NULL",
+            [SEASON],
+        ).results
+    }
     stadiums = {
         row["name"]: (row["stadium_id"], row["country"] != "USA")
         for row in client.query(

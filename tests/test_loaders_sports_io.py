@@ -11,7 +11,7 @@ from api.sports_io_client import Endpoint
 from config.config import SEASON
 from src.loaders import season_loader, sports_io_loader, stadiums_loader, teams_loader
 from tests.api_fixtures import FakeApis, capture_info, fixture
-from tests.conftest import Clients, FakeD1, freeze
+from tests.conftest import Clients, FakeD1, Seed, freeze
 
 
 def _rows(
@@ -181,6 +181,20 @@ class TestLoadGamesData:
             [reliant[0]],
         )
         assert stadium == [{"name": "NRG Stadium"}]
+
+    def test_weeks_come_from_this_season_only(self, season: FakeD1, seed: Seed) -> None:
+        # last season's weeks have the same names - and, added later here,
+        # would win an unfiltered name lookup
+        for week_number in range(1, 19):
+            seed.week(week_number, season_id=SEASON - 1)
+
+        sports_io_loader.load_games_data()
+
+        seasons = _rows(
+            season,
+            "SELECT DISTINCT w.season_id FROM games g JOIN weeks w ON w.week_id = g.week_id",
+        )
+        assert seasons == [{"season_id": SEASON}]
 
     def test_reload_changes_nothing(self, season: FakeD1) -> None:
         before = _rows(season, "SELECT * FROM games ORDER BY game_id")
