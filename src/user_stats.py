@@ -130,14 +130,10 @@ def _bias_block(matches: list[bool]) -> dict[str, Any] | None:
     """Season-wide pct + pick count for one pick classification (home/away/
     favorite/underdog). None if the user has no decided picks for it yet.
 
-    Deliberately no streak here (removed 2026-09-23, previously computed by
-    _current_and_longest_streak) - these picks are only orderable by each
+    Deliberately no streak here - these picks are only orderable by each
     game's kickoff time, not the user's actual decision order (CBS exposes
-    no per-pick timestamp at all, since a pick can be changed anytime
-    before its game locks), and the old streak calc didn't even reset at
-    week boundaries the way team_pick_streak/hot_streak deliberately do -
-    it could silently chain the last pick of one week into the next as if
-    back to back. A streak claim we can't stand behind is worse than none;
+    no per-pick timestamp, since a pick can be changed anytime before its
+    game locks). A streak claim we can't stand behind is worse than none;
     pct alone is the part of this that's actually reliable."""
     if not matches:
         return None

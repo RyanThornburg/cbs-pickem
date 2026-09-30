@@ -10,6 +10,7 @@ import pytest
 from config.config import SEASON
 from src.game_rules import ats_side
 from src.kv_writer import recap
+from src.kv_writer.recap import common, splits
 from tests.conftest import Clients, FakeD1, Seed, iso
 
 # Sunday 1pm ET of week 1; week N is 7 days later per week
@@ -110,10 +111,10 @@ def _item(payload: dict[str, Any], item_id: str) -> dict[str, Any]:
 
 class TestHelpers:
     def test_z_score(self) -> None:
-        assert recap._z(0, 0) == 0.0
-        assert recap._z(10, 20) == 0.0
-        assert recap._z(15, 20) == pytest.approx(2.236, abs=0.001)
-        assert recap._z(5, 20) == pytest.approx(-2.236, abs=0.001)
+        assert common.z_score(0, 0) == 0.0
+        assert common.z_score(10, 20) == 0.0
+        assert common.z_score(15, 20) == pytest.approx(2.236, abs=0.001)
+        assert common.z_score(5, 20) == pytest.approx(-2.236, abs=0.001)
 
     @pytest.mark.parametrize(
         ("successes", "n", "min_n", "expected"),
@@ -127,7 +128,7 @@ class TestHelpers:
     def test_stands_out(
         self, successes: int, n: int, min_n: int, expected: bool
     ) -> None:
-        assert recap._stands_out(successes, n, min_n) is expected
+        assert splits._stands_out(successes, n, min_n) is expected
 
     @pytest.mark.parametrize(
         ("n", "text"),
@@ -146,21 +147,21 @@ class TestHelpers:
         ],
     )
     def test_ordinal(self, n: int, text: str) -> None:
-        assert recap._ordinal(n) == text
+        assert common.ordinal(n) == text
 
     def test_names_text(self) -> None:
-        assert recap._names_text(["a", "b"]) == "a, b"
-        assert recap._names_text(["a", "b", "c", "d", "e"]) == "a, b, c and 2 more"
-        assert recap._names_text(["a", "b", "c"], limit=2) == "a, b and 1 more"
+        assert common.names_text(["a", "b"]) == "a, b"
+        assert common.names_text(["a", "b", "c", "d", "e"]) == "a, b, c and 2 more"
+        assert common.names_text(["a", "b", "c"], limit=2) == "a, b and 1 more"
 
     def test_fit_trims_at_a_word(self) -> None:
         text = "5-0: " + ", ".join(f"Somebody Longname{i}" for i in range(8))
-        short = recap._fit(text)
-        assert len(short) <= recap._SHORT_MAX
+        short = common.fit(text)
+        assert len(short) <= common.SHORT_MAX
         assert short.endswith("…")
         assert text.startswith(short[:-1])
         assert not short[:-1].endswith((" ", ","))
-        assert recap._fit("short") == "short"
+        assert common.fit("short") == "short"
 
     @pytest.mark.parametrize(
         ("kickoff", "slot"),
@@ -178,7 +179,7 @@ class TestHelpers:
         ],
     )
     def test_kickoff_slot(self, kickoff: str, slot: str) -> None:
-        assert recap._kickoff_slot({"game_time": kickoff}) == slot
+        assert common.kickoff_slot({"game_time": kickoff}) == slot
 
 
 class TestPayload:
@@ -200,7 +201,7 @@ class TestPayload:
         ids = [i["id"] for i in payload["items"]]
         assert len(ids) == len(set(ids))
         for item in payload["items"]:
-            assert len(item["short"]) <= recap._SHORT_MAX
+            assert len(item["short"]) <= common.SHORT_MAX
 
     def test_later_weeks_are_left_out(self, d1: FakeD1, seed: Seed) -> None:
         slate = Slate(seed)

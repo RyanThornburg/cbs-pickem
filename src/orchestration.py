@@ -371,19 +371,15 @@ def _run_finished_game_stats(client: D1Client) -> None:
     """Games that went FINAL but haven't had their final box score
     reloaded yet - catches both the normal live->FINAL transition and
     anything missed if the process wasn't running at the time. Can't
-    check "does game_team_stats have a row for this game" (an earlier
-    version did, confirmed live 2026-09-10 to never fire) - live polling
+    check "does game_team_stats have a row for this game" - live polling
     already writes game_team_stats rows well before a game goes FINAL, so
     a row always exists by the time this runs. `games.has_final_stats`
     tracks it explicitly instead.
 
-    Also marks weeks.is_complete once every game in that week is FINAL -
-    added 2026-09-15, this was a plain always-FALSE column with nothing
-    anywhere ever writing to it until now. Piggybacks on this same loop
-    rather than its own separate sweep, since this is already exactly
-    "a week whose games just changed FINAL-ness" - the NOT EXISTS check
-    only needs to run for weeks touched this tick, not every week every
-    tick."""
+    Also marks weeks.is_complete once every game in that week is FINAL.
+    Piggybacks on this loop rather than its own sweep, since this is
+    already exactly "a week whose games just changed FINAL-ness" - the NOT
+    EXISTS check only needs to run for weeks touched this tick."""
     # a failed week is retried, but not every tick - see FAILURE_RETRY_SECONDS
     if not should_run(
         client, "finished_game_stats_last_failure_at", FAILURE_RETRY_SECONDS

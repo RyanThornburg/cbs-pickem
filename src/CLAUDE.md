@@ -697,7 +697,7 @@ warns and skips if there isn't one, then delegates).
 
 **Split into one module per key, 2026-09-23** (was a single 1400+ line
 `src/kv_writer.py`): `games.py`, `leaderboard.py`, `odds.py`, `trends.py`,
-`recap.py`, `historical.py`, `user_profiles.py`, `admin.py`, plus
+`recap/` (a package, see below), `historical.py`, `user_profiles.py`, `admin.py`, plus
 `shared.py` for the handful of things genuinely used across more than one
 of those (`GAMES_SQL`/`PICKS_SQL` — the literal same query used by both
 `games.py` and `trends.py`, not duplicated; `resolve_current_week()` and
@@ -965,7 +965,7 @@ src.kv_writer.__main__`).
   `cover_pct`. Sorted by how far apart the two groups' accuracy is, so the
   most divergent (and most interesting) teams sort first.
 - `write_week_recap()` → `week:{season}:{weekNN}:recap` (added
-  2026-09-28, `recap.py`) - short rotating "did you know" items for the
+  2026-09-28, `src/kv_writer/recap/`) - short rotating "did you know" items for the
   UI's weekly infographic: `{version, season, week, updated_at,
   week_complete, games_final, games_total, items: [...], series:
   {pool_accuracy, chaos}, movers, cover_streaks}`. Each item is `{id,
@@ -1019,7 +1019,18 @@ src.kv_writer.__main__`).
   3+, a push ends one), `biggest_mover` (cumulative rank change vs last
   week, ranked like the leaderboard, 3+ spots), `upset_of_week`
   (biggest-spread underdog to win outright, and who had them).
-  Split kinds only appear when they clear `_stands_out()`: a floor on
+  **Layout** (split from one 1,500-line `recap.py` 2026-09-29, output
+  confirmed identical on prod's weeks 1-4): `__init__.py` holds the SQL,
+  `compute_week_recap()` and the writers; `common.py` the `Season` data
+  every builder reads plus the shared helpers (`make_item()` - the one
+  item shape - `side_team()`, `z_score()`, the text formatters);
+  `accuracy.py` (pool accuracy, spread mattered), `chaos.py`, `crowd.py`
+  (crowd record, fade the crowd, popular picks, twins/oppos),
+  `streaks.py` (cover streaks, movers, upset of the week) and `splits.py`
+  hold the item builders, each with its own thresholds. A new recap kind
+  goes in whichever of those it fits (or a new module) and gets added to
+  `compute_week_recap()`'s `items` list.
+  Split kinds only appear when they clear `splits._stands_out()`: a floor on
   sample size (`_STANDOUT_MIN_*`) and a binomial z-score of at least
   `_STANDOUT_MIN_Z` (1.5) against a coin flip. Their score is that z,
   capped at `_STANDOUT_MAX_SCORE` (3) since z grows with sample size and
