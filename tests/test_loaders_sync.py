@@ -19,7 +19,7 @@ from src.loaders import (
     sports_io_loader,
 )
 from tests.api_fixtures import FakeApis, FakeCBS, capture_info
-from tests.conftest import FakeD1, freeze
+from tests.conftest import FakeD1, Seed, freeze
 
 
 def _rows(
@@ -103,6 +103,19 @@ class TestCbsAndSportsIoMerge:
                 event["startsAt"]
             )
         assert _count(merged, "mapping_gaps") == 0
+
+    def test_new_season_clears_last_seasons_current_week(
+        self, merged: FakeD1, seed: Seed
+    ) -> None:
+        last_final_week = seed.week(18, season_id=SEASON - 1)
+        merged.query(
+            "UPDATE weeks SET is_current = 1 WHERE week_id = ?", [last_final_week]
+        )
+
+        cbs_loader.load_cbs_weeks()
+
+        current = _rows(merged, "SELECT season_id FROM weeks WHERE is_current = 1")
+        assert current == [{"season_id": SEASON}]
 
     def test_cbs_lagging_never_undoes_a_final(
         self, merged: FakeD1, cbs: FakeCBS

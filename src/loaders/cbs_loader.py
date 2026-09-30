@@ -112,6 +112,12 @@ WHERE abbreviation = ?
 # CBS's pool home page is the only source for the real name
 _UPDATE_SEASON_NAME_SQL = "UPDATE seasons SET name = ? WHERE season_id = ?"
 
+# CBS only lists this season's periods, so nothing else would ever clear
+# last season's final week once a new season starts
+_CLEAR_OTHER_SEASONS_CURRENT_SQL = (
+    "UPDATE weeks SET is_current = 0 WHERE season_id != ? AND is_current = 1"
+)
+
 _UPSERT_WEEK_SQL = """
 INSERT INTO weeks (season_id, week_number, name, cbs_pool_period_id, is_current)
 VALUES (?, ?, ?, ?, ?)
@@ -217,6 +223,7 @@ def load_cbs_weeks() -> None:
 
     week_count = len(statements)
     statements.append((_UPDATE_SEASON_NAME_SQL, [data.name, SEASON]))
+    statements.append((_CLEAR_OTHER_SEASONS_CURRENT_SQL, [SEASON]))
     sql_batch_call(statements)
     logger.info("Upserted %d weeks into D1", week_count)
 
