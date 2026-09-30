@@ -8,7 +8,13 @@ from typing import Any
 from config.config import SEASON
 from db.clients import get_d1, get_kv
 from src.kv_writer.game_details import player_line
-from src.kv_writer.shared import GAMES_SQL, PICKS_SQL, for_current_week
+from src.kv_writer.shared import (
+    GAMES_SQL,
+    PICKS_SQL,
+    for_current_week,
+    game_team_dicts,
+    split_home_away,
+)
 from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
@@ -292,21 +298,14 @@ def write_week_games(week_number: int) -> None:
 
     games_json: list[dict[str, Any]] = []
     for game in games:
-        game_picks = picks_by_game.get(game["game_id"], [])
+        home_team, away_team = game_team_dicts(game)
+        home_picks, away_picks = split_home_away(
+            game, picks_by_game.get(game["game_id"], [])
+        )
         game_json: dict[str, Any] = {
             "game_id": game["game_id"],
-            "home_team": {
-                "id": game["home_id"],
-                "abbr": game["home_abbr"],
-                "name": game["home_name"],
-                "record": _team_record(game, "home"),
-            },
-            "away_team": {
-                "id": game["away_id"],
-                "abbr": game["away_abbr"],
-                "name": game["away_name"],
-                "record": _team_record(game, "away"),
-            },
+            "home_team": {**home_team, "record": _team_record(game, "home")},
+            "away_team": {**away_team, "record": _team_record(game, "away")},
             "status": game["status"],
             "status_desc": game["status_desc"],
             "home_score": game["home_score"],
@@ -324,14 +323,10 @@ def write_week_games(week_number: int) -> None:
             "forecast": _game_forecast(game),
             "picks": {
                 "home": [
-                    {"user_id": p["user_id"], "name": p["name"]}
-                    for p in game_picks
-                    if p["picked_team_id"] == game["home_id"]
+                    {"user_id": p["user_id"], "name": p["name"]} for p in home_picks
                 ],
                 "away": [
-                    {"user_id": p["user_id"], "name": p["name"]}
-                    for p in game_picks
-                    if p["picked_team_id"] == game["away_id"]
+                    {"user_id": p["user_id"], "name": p["name"]} for p in away_picks
                 ],
             },
         }
