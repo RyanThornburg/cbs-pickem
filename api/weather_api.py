@@ -10,11 +10,10 @@ import requests
 import stamina
 
 from api.api_helper import (
-    RETRYABLE_STATUS,
     TIMEOUT_LIMIT,
-    ApiDataError,
     ApiRateLimitError,
     ApiServerError,
+    check_response,
     fetch_and_validate_one,
 )
 from api.weather_api_models import Forecast
@@ -64,19 +63,8 @@ class WeatherApiClient:
         """fetch a forecast, retry transient/rate-limit/network errors with backoff"""
         response = requests.get(url, params=EXTRA_PARAMS, timeout=TIMEOUT_LIMIT)
         self._record_quota(response)
-
-        if response.status_code == 429:
-            raise ApiRateLimitError(SOURCE, f"Rate limited fetching {API_URL}")
-        if response.status_code in RETRYABLE_STATUS:
-            raise ApiServerError(
-                SOURCE, f"Pirate Weather returned {response.status_code} for {API_URL}"
-            )
-        if response.status_code != 200:
-            raise ApiDataError(
-                SOURCE,
-                f"Pirate Weather returned {response.status_code} for {API_URL}: "
-                f"{response.text}",
-            )
+        # API_URL, not `url` - the key is in the path
+        check_response(SOURCE, "Pirate Weather", API_URL, response)
         return response
 
 

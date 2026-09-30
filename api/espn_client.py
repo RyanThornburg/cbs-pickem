@@ -10,11 +10,10 @@ import requests
 import stamina
 
 from api.api_helper import (
-    RETRYABLE_STATUS,
     TIMEOUT_LIMIT,
-    ApiDataError,
     ApiRateLimitError,
     ApiServerError,
+    check_response,
     fetch_and_validate_one,
 )
 from api.espn_models import Scoreboard, Summary
@@ -61,18 +60,7 @@ class EspnClient:
         self, url: str, params: dict[str, Any] | None = None
     ) -> requests.Response:
         response = requests.get(url, params=params, timeout=TIMEOUT_LIMIT)
-
-        if response.status_code == 429:
-            raise ApiRateLimitError(SOURCE, f"Rate limited fetching {url}")
-        if response.status_code in RETRYABLE_STATUS:
-            raise ApiServerError(
-                SOURCE, f"ESPN returned {response.status_code} for {url}"
-            )
-        if response.status_code != 200:
-            raise ApiDataError(
-                SOURCE,
-                f"ESPN returned {response.status_code} for {url}: {response.text}",
-            )
+        check_response(SOURCE, "ESPN", url, response)
         return response
 
 

@@ -1,9 +1,10 @@
-"""Shared JSON REST clients (api-sports.io, The Odds API)."""
+"""Shared JSON REST clients (api-sports.io, The Odds API, ESPN, Pirate Weather)."""
 
 import logging
 from collections.abc import Callable
 from typing import Any
 
+import requests
 from pydantic import BaseModel
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -34,6 +35,25 @@ class ApiServerError(ApiError):
 class ApiDataError(ApiError):
     """Non-retryable: bad request, malformed payload, or an error the API
     itself reported despite a success-looking status."""
+
+
+def check_response(
+    source: str, name: str, url: str, response: requests.Response
+) -> None:
+    """Raise the ApiError matching a failed response - 429 and 5xx are the
+    retryable ones (see each client's stamina.retry). `url` only labels the
+    message, so a client with its key in the path (Pirate Weather) passes
+    its base URL instead."""
+    if response.status_code == 429:
+        raise ApiRateLimitError(source, f"Rate limited fetching {url}")
+    if response.status_code in RETRYABLE_STATUS:
+        raise ApiServerError(
+            source, f"{name} returned {response.status_code} for {url}"
+        )
+    if response.status_code != 200:
+        raise ApiDataError(
+            source, f"{name} returned {response.status_code} for {url}: {response.text}"
+        )
 
 
 def fetch_and_validate(

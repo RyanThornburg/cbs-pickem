@@ -6,11 +6,10 @@ import requests
 import stamina
 
 from api.api_helper import (
-    RETRYABLE_STATUS,
     TIMEOUT_LIMIT,
-    ApiDataError,
     ApiRateLimitError,
     ApiServerError,
+    check_response,
     fetch_and_validate,
 )
 from api.the_odds_api_models import Event
@@ -58,18 +57,7 @@ class TheOddsApiClient:
         """fetch odds, retry transient/rate-limit/network errors with backoff"""
         response = requests.get(API_URL, params=params, timeout=TIMEOUT_LIMIT)
         self._record_quota(response)
-
-        if response.status_code == 429:
-            raise ApiRateLimitError(SOURCE, f"Rate limited fetching {API_URL}")
-        if response.status_code in RETRYABLE_STATUS:
-            raise ApiServerError(
-                SOURCE, f"The Odds API returned {response.status_code} for {API_URL}"
-            )
-        if response.status_code != 200:
-            raise ApiDataError(
-                SOURCE,
-                f"The Odds API returned {response.status_code} for {API_URL}: {response.text}",
-            )
+        check_response(SOURCE, "The Odds API", API_URL, response)
         return response
 
 

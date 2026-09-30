@@ -10,11 +10,11 @@ import stamina
 from pydantic import BaseModel
 
 from api.api_helper import (
-    RETRYABLE_STATUS,
     TIMEOUT_LIMIT,
     ApiDataError,
     ApiRateLimitError,
     ApiServerError,
+    check_response,
     fetch_and_validate,
 )
 from api.sports_io_models import (
@@ -157,18 +157,7 @@ class SportsIOClient:
             url, headers=self.headers, params=params, timeout=TIMEOUT_LIMIT
         )
         self._record_quota(response)
-
-        if response.status_code == 429:
-            raise ApiRateLimitError(SOURCE, f"Rate limited fetching {url}")
-        if response.status_code in RETRYABLE_STATUS:
-            raise ApiServerError(
-                SOURCE, f"Sports IO returned {response.status_code} for {url}"
-            )
-        if response.status_code != 200:
-            raise ApiDataError(
-                SOURCE,
-                f"Sports IO returned {response.status_code} for {url}: {response.text}",
-            )
+        check_response(SOURCE, "Sports IO", url, response)
         return response
 
     def _fetch_page(self, url: str, params: dict[str, Any]) -> dict[str, Any]:
