@@ -1077,8 +1077,8 @@ src.kv_writer.__main__`).
   `records` (home/away/favorite/underdog, plus `teams`: every team the
   user's picks touched, with `picked` and `against` records - no minimum,
   nothing ranked; `picks` counts every pick, `wins`/`losses` only graded
-  ones, since a push is `is_correct` None like an unplayed game; added
-  2026-09-30),
+  ones, so a game not played yet counts in `picks` only; CBS lines always
+  have the hook, so there are no pushes; added 2026-09-30),
   contrarian-vs-chalk accuracy, best/worst week, consistency (score
   stddev), clutch (accuracy in each period's deciding week), and four
   team-callout fields forming a 2×2 (picks-for-this-team-only vs

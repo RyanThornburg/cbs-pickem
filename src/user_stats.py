@@ -207,8 +207,9 @@ def _pick_bias(user_rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _record(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """picks counts every pick, wins/losses only graded ones - a push or a
-    game not played yet has is_correct None."""
+    """picks counts every pick, wins/losses only graded ones - a game not
+    played yet has is_correct None (CBS lines are always on the hook, so
+    no pushes)."""
     graded = [bool(row["is_correct"]) for row in rows if row["is_correct"] is not None]
     wins = sum(graded)
     return {

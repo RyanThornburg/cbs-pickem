@@ -122,7 +122,7 @@ class TestPickRecords:
             _pick_row(1, True, spread=-3.0),  # home favorite
             _pick_row(1, False, spread=-3.0),  # home favorite
             _pick_row(2, True, spread=-3.0),  # away underdog
-            _pick_row(2, None, spread=0.0),  # away, pick'em, push/not played
+            _pick_row(2, None, spread=0.0),  # away, pick'em, not played yet
         ]
         records = us._pick_records(rows)
         assert records["home"] == {"picks": 2, "wins": 1, "losses": 1, "win_pct": 0.5}
