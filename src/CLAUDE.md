@@ -466,8 +466,15 @@ Cadences, and why each one is what it is:
 - **Housekeeping, 24 hr, quiet periods only** — full Sports IO schedule
   refresh + `teams_loader.main()` (win/loss/tie records, added
   2026-09-15) + `load_cbs_weeks()`/`load_cbs_games()` + `load_espn_games()`
-  + `write_meta_current()` + the future weeks' games KV keys
-  (`write_incomplete_weeks_games(include_future=True)`, see "KV writer"). The CBS half of
+  + `write_meta_current()` + the current week's odds key
+  (`write_current_week_odds()`, added 2026-09-29) + the future weeks' games KV keys
+  (`write_incomplete_weeks_games(include_future=True)`, see "KV writer").
+  The odds step is there because `load_cbs_weeks()` is what moves
+  `is_current` to a new week, and the odds key is otherwise only written
+  right after an odds capture, which runs earlier in the same tick - found
+  2026-09-29 when week 4 flipped at 01:46 UTC straight after that tick's
+  capture had rewritten week 3's key, leaving `week:2026:04:odds` missing
+  until the next 6-hour capture. The CBS half of
   this exists specifically so `cbs_event_id`/`cbs_spread` are established
   for a new week *before* its first game goes live, since the CBS
   live-poll branch no longer does that itself (see below) — without it, a

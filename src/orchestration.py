@@ -262,6 +262,10 @@ def _housekeeping() -> None:
         ("load_cbs_games", load_cbs_games),
         ("load_espn_games", load_espn_games),  # neutral_site, incomplete weeks
         ("write_meta_current", write_meta_current),
+        # load_cbs_weeks() is what moves is_current to a new week, and the
+        # odds key is otherwise only written after an odds capture - which
+        # runs earlier in the tick, so it can't see the new week yet
+        ("write_current_week_odds", write_current_week_odds),
         # future weeks' games keys - the per-tick write in main() only
         # covers weeks that have started
         ("write_future_weeks_games", lambda: write_incomplete_weeks_games(True)),

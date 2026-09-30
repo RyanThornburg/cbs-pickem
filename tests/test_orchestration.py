@@ -382,6 +382,9 @@ class TestEndToEnd:
             *(f"week:{SEASON}:{n:02d}:games" for n in (week, week + 1, week + 2)),
             f"week:{SEASON}:{week:02d}:trends",
             f"week:{SEASON}:{week:02d}:recap",
+            # the odds capture ran before housekeeping loaded the weeks -
+            # housekeeping writes it once the current week is known
+            f"week:{SEASON}:{week:02d}:odds",
         ):
             assert key in keys, key
         assert any(k.startswith("game:") and k.endswith(":details") for k in keys)
