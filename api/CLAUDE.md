@@ -425,7 +425,10 @@ one — scoped out as a deliberate v1 decision, not an oversight.
 abbreviation differs from `teams.abbreviation` (Sports IO's convention):
 `LAR`→`LA` (Rams), `WSH`→`WAS` (Washington) — confirmed live by diffing
 the full 32-team abbreviation sets, same method used for CBS's
-corrections. `game_snapshots_loader.py`'s
+corrections. Loaders don't apply it themselves: `espn_client.team_pair(
+competition)` returns a game's corrected `(home, away)`, used by both
+`espn_loader` and `game_snapshots_loader` (each had its own copy until
+2026-09-29). `game_snapshots_loader.py`'s
 `VENUE_NAME_CORRECTIONS`-equivalent for stadium names lives in
 `sports_io_loader.py` instead (`"Reliant Stadium"`→`"NRG Stadium"`,
 `"FC Bayern Munich Stadium"`→`"Allianz Arena"`) — Sports IO's `venue.name`

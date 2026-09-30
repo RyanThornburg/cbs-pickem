@@ -20,8 +20,7 @@ import logging
 import sys
 from typing import Any
 
-from api.espn_client import ABBREV_CORRECTIONS as ESPN_ABBREV_CORRECTIONS
-from api.espn_client import get_scoreboard
+from api.espn_client import get_scoreboard, team_pair
 from config.config import SEASON, configure_logging, load_env
 from db.clients import get_d1
 from src.loaders.loader_helper import mapping_gap_statement, sql_batch_call
@@ -68,9 +67,7 @@ def load_espn_games(include_complete: bool = False) -> None:
 
         for event in scoreboard.events:
             competition = event.competitions[0]
-            by_side = {c.home_away: c.team.abbreviation for c in competition.competitors}
-            home = ESPN_ABBREV_CORRECTIONS.get(by_side.get("home", ""), by_side.get("home"))
-            away = ESPN_ABBREV_CORRECTIONS.get(by_side.get("away", ""), by_side.get("away"))
+            home, away = team_pair(competition)
             game_id = game_ids.get((home, away))
             if game_id is None:
                 logger.warning(

@@ -16,7 +16,7 @@ from api.api_helper import (
     check_response,
     fetch_and_validate_one,
 )
-from api.espn_models import Scoreboard, Summary
+from api.espn_models import Competition, Scoreboard, Summary
 from config.config import SEASON, configure_logging
 
 SOURCE = "espn"
@@ -36,6 +36,17 @@ ABBREV_CORRECTIONS = {
     "LAR": "LA",
     "WSH": "WAS",
 }
+
+
+def team_pair(competition: Competition) -> tuple[str | None, str | None]:
+    """(home, away) abbreviations in teams.abbreviation's convention - how
+    loaders match an ESPN game to a games row. None for a missing side."""
+    by_side = {c.home_away: c.team.abbreviation for c in competition.competitors}
+    home, away = by_side.get("home"), by_side.get("away")
+    return (
+        ABBREV_CORRECTIONS.get(home, home) if home else None,
+        ABBREV_CORRECTIONS.get(away, away) if away else None,
+    )
 
 logger: logging.Logger = logging.getLogger(__name__)
 

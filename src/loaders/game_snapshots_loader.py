@@ -16,8 +16,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from api.espn_client import ABBREV_CORRECTIONS as ESPN_ABBREV_CORRECTIONS
-from api.espn_client import get_scoreboard
+from api.espn_client import get_scoreboard, team_pair
 from api.espn_models import Competition, Situation
 from config.config import configure_logging, load_env
 from db.clients import get_d1
@@ -181,9 +180,7 @@ def _fetch_espn_lookup() -> tuple[
         competition = event.competitions[0]
         by_espn_id[event.id] = competition
 
-        by_side = {c.home_away: c.team.abbreviation for c in competition.competitors}
-        home = ESPN_ABBREV_CORRECTIONS.get(by_side.get("home", ""), by_side.get("home"))
-        away = ESPN_ABBREV_CORRECTIONS.get(by_side.get("away", ""), by_side.get("away"))
+        home, away = team_pair(competition)
         if home and away:
             by_teams[(home, away)] = (event.id, competition)
     return by_espn_id, by_teams
