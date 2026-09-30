@@ -26,13 +26,14 @@ from api.sports_io_models import PlayerStat
 from config.config import SEASON, configure_logging, load_env
 from db.clients import get_d1
 from db.d1_client import D1Client
+from src.game_rules import LIVE_STATUSES, sql_list
 from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
 
 logger = logging.getLogger(__name__)
 
-_LIVE_GAMES_SQL = """
+_LIVE_GAMES_SQL = f"""
 SELECT game_id, sports_io_game_id FROM games
-WHERE status IN ('IN_PROGRESS', 'HALFTIME') AND sports_io_game_id IS NOT NULL
+WHERE status IN {sql_list(LIVE_STATUSES)} AND sports_io_game_id IS NOT NULL
 """
 
 _WEEK_GAMES_SQL = """

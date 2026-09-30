@@ -528,12 +528,16 @@ class TestPlayerStats:
 
         assert _count(season, "game_player_stats") == before
 
-    def test_live_games_only(self, season: FakeD1, apis: FakeApis, week: int) -> None:
+    # DELAYED too, so stats keep polling through a weather delay
+    @pytest.mark.parametrize("status", ["IN_PROGRESS", "DELAYED"])
+    def test_live_games_only(
+        self, season: FakeD1, apis: FakeApis, week: int, status: str
+    ) -> None:
         assert player_stats_loader.load_live_player_stats() == set()
         game = _captured_game(season)
         season.query(
-            "UPDATE games SET status = 'IN_PROGRESS' WHERE game_id = ?",
-            [game["game_id"]],
+            "UPDATE games SET status = ? WHERE game_id = ?",
+            [status, game["game_id"]],
         )
 
         assert player_stats_loader.load_live_player_stats() == {game["game_id"]}

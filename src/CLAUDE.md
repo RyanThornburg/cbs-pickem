@@ -116,7 +116,7 @@ already never took `env` (see `config/CLAUDE.md`).
   that day, Sports IO's clock sat still for 2+ minutes while ESPN's ran
   and CBS's clock lags ESPN too - and dropping CBS also removed a
   Playwright scrape from every capture. Candidate games are any not-FINAL
-  game that kicked off in the last `CANDIDATE_WINDOW_HOURS` (6), so a
+  game that kicked off in the last `game_rules.LIVE_WINDOW_HOURS` (6), so a
   kickoff is picked up as soon as ESPN shows it, not when Sports IO's
   `games.status` catches up. Skips writing a new row if quarter/clock/
   score **and** ESPN's `last_play_id` are all identical to the last
@@ -386,13 +386,20 @@ connection used to hang a tick indefinitely.
 
 `_is_live_window_active()` decides live-vs-quiet branch from `games.game_time`
 alone (`game_time <= now <= game_time + LIVE_WINDOW_HOURS AND status NOT IN
-('FINAL', 'CANCELLED', 'POSTPONED')`) — deliberately not from `games.status`, since
+DONE_STATUSES`) — deliberately not from `games.status`, since
 status might just be stale (that's exactly what the live poll exists to
 fix). This is a pure local query, no external call, so checking it every
 minute costs nothing even during a multi-month off-season.
-`LIVE_WINDOW_HOURS` is 5 (was 4 until 2026-09-28): week 3's SNF ran about
-3h40m and Sports IO took another ~6 minutes to mark it FINAL, about 14
-minutes short of the old cutoff. A game still not FINAL past the window
+`LIVE_WINDOW_HOURS` is 6 (4 until 2026-09-28, then 5; 6 since 2026-09-29,
+matching the snapshot loader's candidate window, which had been a separate
+6): week 3's SNF ran about 3h40m and Sports IO took another ~6 minutes to
+mark it FINAL, and 6 leaves room for overtime plus a long weather delay.
+It lives in `src/game_rules.py` with `LIVE_STATUSES` (`IN_PROGRESS`/
+`HALFTIME`/`DELAYED`) and `DONE_STATUSES` (`FINAL`/`CANCELLED`/
+`POSTPONED`), which every live query uses - `sql_list()` renders one for
+an `IN` clause. DELAYED counts as live everywhere since 2026-09-29; before
+that the live team/player stats polls skipped it, so stats went stale
+through a weather delay. A game still not FINAL past the window
 stops being polled and sits `IN_PROGRESS` until the next daily
 housekeeping run fixes it - deliberately not polled indefinitely. The
 longer window costs nothing on a normal day, since a game leaves it as

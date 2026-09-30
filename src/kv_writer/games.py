@@ -7,6 +7,7 @@ from typing import Any
 
 from config.config import SEASON
 from db.clients import get_d1, get_kv
+from src.game_rules import LIVE_STATUSES
 from src.kv_writer.game_details import player_line
 from src.kv_writer.shared import (
     GAMES_SQL,
@@ -20,7 +21,6 @@ from src.timestamps import utc_iso
 logger = logging.getLogger(__name__)
 
 # A game.status thats "live"
-_LIVE_STATUSES = ("IN_PROGRESS", "HALFTIME", "DELAYED")
 
 # latest snapshot per game only - snapshots are written up to every minute
 # per live game, so reading the whole week's history each tick adds up fast
@@ -332,7 +332,7 @@ def write_week_games(week_number: int) -> None:
         }
 
         snapshot = latest_snapshot_by_game.get(game["game_id"])
-        if snapshot and game["status"] in _LIVE_STATUSES:
+        if snapshot and game["status"] in LIVE_STATUSES:
             game_json["live"] = _snapshot_live_block(snapshot)
             _prefer_snapshot_score(game_json, snapshot)
 

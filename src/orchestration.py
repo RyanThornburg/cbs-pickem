@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from config.config import configure_logging, load_env
 from db.clients import get_d1
 from db.d1_client import D1Client
+from src.game_rules import DONE_STATUSES, LIVE_WINDOW_HOURS, sql_list
 from src.kv_writer import (
     write_admin_status,
     write_current_week_games,
@@ -58,15 +59,6 @@ from src.timestamps import utc_iso
 logger = logging.getLogger(__name__)
 
 EASTERN = ZoneInfo("America/New_York")
-
-# A game is "live" from its scheduled kickoff until this many hours later,
-# regardless of what our last-known status says (status might just be
-# stale - that's exactly what the live poll is for). 5, not 4: week 3's
-# SNF ran ~3h40m and Sports IO took another ~6 min to mark it FINAL, within
-# ~14 min of the old cutoff - past it, the game would sit IN_PROGRESS until
-# the next daily housekeeping run. Costs nothing on a normal day, since a
-# game drops out of the window as soon as it's FINAL.
-LIVE_WINDOW_HOURS = 5
 
 SPORTS_IO_LIVE_INTERVAL_SECONDS = 60
 CBS_LIVE_INTERVAL_SECONDS = 120
@@ -130,7 +122,7 @@ def _is_live_window_active(client: D1Client) -> bool:
     cutoff = utc_iso(datetime.now(UTC) - timedelta(hours=LIVE_WINDOW_HOURS))
     result = client.query(
         "SELECT 1 FROM games WHERE game_time <= ? AND game_time >= ? "
-        "AND (status IS NULL OR status NOT IN ('FINAL', 'CANCELLED', 'POSTPONED')) LIMIT 1",
+        f"AND (status IS NULL OR status NOT IN {sql_list(DONE_STATUSES)}) LIMIT 1",
         [now, cutoff],
     )
     return bool(result.results)
@@ -304,7 +296,7 @@ def _run_pre_kickoff_odds_capture(client: D1Client, now: datetime) -> None:
     lead_cutoff = utc_iso(now + timedelta(minutes=ODDS_PREKICKOFF_LEAD_MINUTES))
     result = client.query(
         "SELECT 1 FROM games WHERE game_time > ? AND game_time <= ? "
-        "AND (status IS NULL OR status NOT IN ('FINAL', 'CANCELLED', 'POSTPONED')) LIMIT 1",
+        f"AND (status IS NULL OR status NOT IN {sql_list(DONE_STATUSES)}) LIMIT 1",
         [now_str, lead_cutoff],
     )
     if not result.results:

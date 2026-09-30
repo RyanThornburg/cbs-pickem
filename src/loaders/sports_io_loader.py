@@ -15,6 +15,7 @@ from api.sports_io_models import Game, TeamStatistics
 from config.config import SEASON, configure_logging, load_env
 from db.clients import get_d1
 from db.d1_client import D1Client
+from src.game_rules import LIVE_STATUSES
 from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
 from src.timestamps import utc_iso
 
@@ -557,7 +558,7 @@ def load_live_game_statistics() -> set[int]:
     IO's stats endpoint returns real partial stats mid-game (confirmed live
     2026-09-09), not just final box scores. Returns the game_ids loaded."""
     client = get_d1()
-    game_ids = _game_ids_by_status(client, ("IN_PROGRESS", "HALFTIME"))
+    game_ids = _game_ids_by_status(client, LIVE_STATUSES)
     if not game_ids:
         logger.info("No live games to load stats for")
         return set()

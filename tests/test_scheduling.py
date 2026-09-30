@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from src import orchestration, scheduling
+from src import game_rules, orchestration, scheduling
 from src.orchestration import EASTERN, _current_week_deadline_utc
 from tests.conftest import FakeD1, Seed
 
@@ -199,8 +199,8 @@ class TestLiveWindow:
             (1, "IN_PROGRESS", True),
             (1, "SCHEDULED", True),  # stale status - the live poll fixes it
             (1, None, True),
-            (orchestration.LIVE_WINDOW_HOURS - 0.1, "IN_PROGRESS", True),
-            (orchestration.LIVE_WINDOW_HOURS + 0.1, "IN_PROGRESS", False),
+            (game_rules.LIVE_WINDOW_HOURS - 0.1, "IN_PROGRESS", True),
+            (game_rules.LIVE_WINDOW_HOURS + 0.1, "IN_PROGRESS", False),
             (1, "FINAL", False),
             (1, "POSTPONED", False),
             (1, "CANCELLED", False),

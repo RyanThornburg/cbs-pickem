@@ -21,6 +21,7 @@ from api.sports_io_client import get_game_events
 from config.config import SEASON, configure_logging, load_env
 from db.clients import get_d1
 from db.d1_client import D1Client
+from src.game_rules import LIVE_STATUSES, sql_list
 from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
 from src.timestamps import utc_iso
 
@@ -35,12 +36,12 @@ _QUARTERS = {"First": 1, "Second": 2, "Third": 3, "Fourth": 4, "Overtime": 5}
 # games that need a fetch: live (or recently FINAL) with points on the board,
 # and whose latest stored play isn't at the current score. `IS NOT` so a game
 # with no plays stored yet (NULL) counts as behind too.
-_GAMES_BEHIND_SQL = """
+_GAMES_BEHIND_SQL = f"""
 SELECT g.game_id, g.sports_io_game_id, g.home_score, g.away_score
 FROM games g
 WHERE g.sports_io_game_id IS NOT NULL
   AND (
-    g.status IN ('IN_PROGRESS', 'HALFTIME', 'DELAYED')
+    g.status IN {sql_list(LIVE_STATUSES)}
     OR (g.status = 'FINAL' AND g.game_time >= ?)
   )
   AND COALESCE(g.home_score, 0) + COALESCE(g.away_score, 0) > 0

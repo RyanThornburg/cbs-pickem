@@ -342,11 +342,15 @@ class TestTeamStats:
         assert sports_io_loader.load_game_statistics(17) == set()
         assert not any(e == Endpoint.TEAM_STATISTICS for e, _ in apis.calls)
 
-    def test_live_games_only(self, season: FakeD1, apis: FakeApis) -> None:
+    # DELAYED too, so stats keep polling through a weather delay
+    @pytest.mark.parametrize("status", ["HALFTIME", "DELAYED"])
+    def test_live_games_only(
+        self, season: FakeD1, apis: FakeApis, status: str
+    ) -> None:
         game_id = capture_info()["sports_io_game_id"]
         season.query(
-            "UPDATE games SET status = 'HALFTIME' WHERE sports_io_game_id = ?",
-            [game_id],
+            "UPDATE games SET status = ? WHERE sports_io_game_id = ?",
+            [status, game_id],
         )
 
         loaded = sports_io_loader.load_live_game_statistics()

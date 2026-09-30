@@ -22,6 +22,7 @@ from api.espn_models import Competition, Situation
 from config.config import configure_logging, load_env
 from db.clients import get_d1
 from db.d1_client import D1Client
+from src.game_rules import DONE_STATUSES, LIVE_WINDOW_HOURS, sql_list
 from src.loaders.loader_helper import (
     capture_weather,
     mapping_gap_statement,
@@ -149,7 +150,7 @@ _UPDATE_GAME_ESPN_ID_SQL = "UPDATE games SET espn_event_id = ? WHERE game_id = ?
 # games that could be live right now - ESPN's own status decides which of
 # these actually are (kickoff shows up there before our Sports IO-sourced
 # games.status catches up)
-_CANDIDATE_GAMES_SQL = """
+_CANDIDATE_GAMES_SQL = f"""
 SELECT g.game_id, g.espn_event_id,
     s.latitude, s.longitude, s.roof_type,
     ht.abbreviation AS home_abbrev, at.abbreviation AS away_abbrev
@@ -158,12 +159,8 @@ LEFT JOIN stadiums s ON s.stadium_id = g.stadium_id
 JOIN teams ht ON ht.team_id = g.home_team_id
 JOIN teams at ON at.team_id = g.away_team_id
 WHERE g.game_time <= ? AND g.game_time >= ?
-  AND (g.status IS NULL OR g.status NOT IN ('FINAL', 'CANCELLED', 'POSTPONED'))
+  AND (g.status IS NULL OR g.status NOT IN {sql_list(DONE_STATUSES)})
 """
-
-# how far back a kickoff can be and still be a candidate - a game with long
-# delays can run well past the usual ~3.5 hours
-CANDIDATE_WINDOW_HOURS = 6
 
 
 def _fetch_espn_lookup() -> tuple[
@@ -222,7 +219,7 @@ def _candidate_games(client: D1Client) -> list[dict[str, Any]]:
         _CANDIDATE_GAMES_SQL,
         [
             utc_iso(now),
-            utc_iso(now - timedelta(hours=CANDIDATE_WINDOW_HOURS)),
+            utc_iso(now - timedelta(hours=LIVE_WINDOW_HOURS)),
         ],
     ).results
 
