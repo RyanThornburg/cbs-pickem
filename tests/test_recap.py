@@ -358,11 +358,6 @@ class TestCrowd:
         assert item["headline"].endswith("- fading it would be 3-0.")
         assert (item["data"]["fade_wins"], item["data"]["fade_losses"]) == (3, 0)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="known bug, CLAUDE.local.md recap backlog: season headline uses the "
-        "current week's min_picks, None before that week has weekly_performance",
-    )
     def test_season_headline_before_the_week_has_a_pool(
         self, d1: FakeD1, seed: Seed
     ) -> None:
@@ -376,7 +371,8 @@ class TestCrowd:
 
         item = _item(_recap(d1, 4), "popular_picks:season")
 
-        assert "None" not in item["headline"]
+        # weeks 1-3 all had a pool of 10, so 3+ (30%) of them is "popular"
+        assert item["headline"].startswith("Teams 3+ of you picked are 3-0")
 
 
 class TestChaos:

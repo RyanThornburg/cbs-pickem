@@ -187,10 +187,13 @@ def crowd_items(season: Season) -> list[dict[str, Any]]:
 
     wins, losses, pushes = _wlp(popular_season)
     if wins + losses >= _POPULAR_MIN_GAMES:
-        # the count only reads right when every week had the same pool size
+        # the count only reads right when every week had the same pool size -
+        # that shared count, not this week's, which is unknown until this
+        # week's weekly_performance rows exist
+        counts = set(min_picks_by_week.values())
         who = (
-            f"{min_picks}+ of you"
-            if len(set(min_picks_by_week.values())) == 1
+            f"{counts.pop()}+ of you"
+            if len(counts) == 1
             else f"{round(_POPULAR_POOL_SHARE * 100)}%+ of the pool"
         )
         items.append(
