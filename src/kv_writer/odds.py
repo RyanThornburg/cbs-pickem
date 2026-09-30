@@ -11,7 +11,7 @@ from typing import Any
 from config.config import SEASON
 from db.clients import get_d1, get_kv
 from db.d1_client import D1Client
-from src.kv_writer.shared import resolve_current_week
+from src.kv_writer.shared import for_current_week
 from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
@@ -200,13 +200,4 @@ def write_week_odds(week_number: int) -> None:
 
 def write_current_week_odds() -> None:
     """Resolve weeks.is_current and write that week's odds key."""
-    d1 = get_d1()
-    current_week = resolve_current_week(d1)
-    if current_week is None:
-        logger.warning(
-            "No current week found for season %s - not writing odds key",
-            SEASON,
-        )
-        return
-
-    write_week_odds(current_week)
+    for_current_week(write_week_odds, "odds key")

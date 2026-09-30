@@ -10,6 +10,7 @@ is just resolve_current_week() plus a couple of pool-rule constants and the
 CBS pool link, not worth a dedicated file."""
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from api.cbs_client import cbs_pool_url
@@ -81,6 +82,18 @@ def resolve_current_week(d1: D1Client) -> int | None:
         [SEASON],
     )
     return result.results[0]["week_number"] if result.results else None
+
+
+def for_current_week(write_week: Callable[[int], None], label: str) -> None:
+    """Resolve weeks.is_current and run write_week() for it - the body of
+    every write_current_week_*(). `label` names the key in the warning."""
+    current_week = resolve_current_week(get_d1())
+    if current_week is None:
+        logger.warning(
+            "No current week found for season %s - not writing %s", SEASON, label
+        )
+        return
+    write_week(current_week)
 
 
 def ats_side(game: dict[str, Any]) -> str | None:

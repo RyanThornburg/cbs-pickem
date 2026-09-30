@@ -15,7 +15,7 @@ from config.config import (
 )
 from db.clients import get_d1, get_kv
 from db.d1_client import D1Client
-from src.kv_writer.shared import PAID_PLACES, resolve_current_week, standard_rank
+from src.kv_writer.shared import PAID_PLACES, for_current_week, standard_rank
 
 logger = logging.getLogger(__name__)
 
@@ -182,12 +182,4 @@ def write_week_leaderboard(week_number: int) -> None:
 
 def write_current_week_leaderboard() -> None:
     """Resolve weeks.is_current and write that week's leaderboard key."""
-    current_week = resolve_current_week(get_d1())
-    if current_week is None:
-        logger.warning(
-            "No current week found for season %s - not writing leaderboard key",
-            SEASON,
-        )
-        return
-
-    write_week_leaderboard(current_week)
+    for_current_week(write_week_leaderboard, "leaderboard key")

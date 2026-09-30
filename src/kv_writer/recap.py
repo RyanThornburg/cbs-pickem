@@ -28,8 +28,8 @@ from db.clients import get_d1, get_kv
 from db.d1_client import D1Client
 from src.kv_writer.shared import (
     ats_side,
+    for_current_week,
     game_team_dicts,
-    resolve_current_week,
     standard_rank,
 )
 from src.timestamps import utc_iso
@@ -1533,16 +1533,7 @@ def write_week_recap(week_number: int) -> None:
 
 def write_current_week_recap() -> None:
     """Resolve weeks.is_current and write that week's recap key."""
-    d1 = get_d1()
-    current_week = resolve_current_week(d1)
-    if current_week is None:
-        logger.warning(
-            "No current week found for season %s - not writing recap key",
-            SEASON,
-        )
-        return
-
-    write_week_recap(current_week)
+    for_current_week(write_week_recap, "recap key")
 
 
 def write_recent_weeks_recap() -> None:

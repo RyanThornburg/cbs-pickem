@@ -12,8 +12,8 @@ from src.kv_writer.shared import (
     GAMES_SQL,
     PICKS_SQL,
     ats_side,
+    for_current_week,
     game_team_dicts,
-    resolve_current_week,
     split_home_away,
 )
 
@@ -278,16 +278,7 @@ def write_week_trends(week_number: int) -> None:
 
 def write_current_week_trends() -> None:
     """Resolve weeks.is_current and write that week's trends key."""
-    d1 = get_d1()
-    current_week = resolve_current_week(d1)
-    if current_week is None:
-        logger.warning(
-            "No current week found for season %s - not writing trends key",
-            SEASON,
-        )
-        return
-
-    write_week_trends(current_week)
+    for_current_week(write_week_trends, "trends key")
 
 
 def _spread_bucket(abs_spread: float) -> str:

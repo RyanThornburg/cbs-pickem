@@ -8,7 +8,7 @@ from typing import Any
 from config.config import SEASON
 from db.clients import get_d1, get_kv
 from src.kv_writer.game_details import player_line
-from src.kv_writer.shared import GAMES_SQL, PICKS_SQL, resolve_current_week
+from src.kv_writer.shared import GAMES_SQL, PICKS_SQL, for_current_week
 from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
@@ -361,16 +361,7 @@ def write_week_games(week_number: int) -> None:
 
 def write_current_week_games() -> None:
     """Resolve weeks.is_current and write that week's games key."""
-    d1 = get_d1()
-    current_week = resolve_current_week(d1)
-    if current_week is None:
-        logger.warning(
-            "No current week found for season %s - not writing games key",
-            SEASON,
-        )
-        return
-
-    write_week_games(current_week)
+    for_current_week(write_week_games, "games key")
 
 
 _WEEKS_FOR_GAMES_SQL = """

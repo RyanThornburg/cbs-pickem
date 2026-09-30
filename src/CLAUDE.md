@@ -672,15 +672,17 @@ of record, KV is a serving cache (see root `CLAUDE.md`'s Commands list
 and `CLAUDE.local.md`'s "Web UI" section for the overall architecture
 decision). Eleven key types; six (games, game details, leaderboard, odds,
 week trends, recap) have a `write_week_*`/`write_current_week_*` pair (the
-latter resolves `weeks.is_current` via `resolve_current_week()` then
-delegates).
+latter is a one-line call to `shared.for_current_week(write_week_*,
+label)`, which resolves `weeks.is_current` via `resolve_current_week()`,
+warns and skips if there isn't one, then delegates).
 
 **Split into one module per key, 2026-09-23** (was a single 1400+ line
 `src/kv_writer.py`): `games.py`, `leaderboard.py`, `odds.py`, `trends.py`,
 `recap.py`, `historical.py`, `user_profiles.py`, `admin.py`, plus
 `shared.py` for the handful of things genuinely used across more than one
 of those (`GAMES_SQL`/`PICKS_SQL` — the literal same query used by both
-`games.py` and `trends.py`, not duplicated; `resolve_current_week()`;
+`games.py` and `trends.py`, not duplicated; `resolve_current_week()` and
+`for_current_week()`;
 `game_team_dicts()`/`split_home_away()`; `ats_side()` and
 `standard_rank()`, moved from `trends.py`/`leaderboard.py` 2026-09-28 when
 `recap.py` needed both; `write_meta_current()` itself, since `meta:current` is
