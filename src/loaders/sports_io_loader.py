@@ -16,6 +16,7 @@ from config.config import SEASON, configure_logging, load_env
 from db.clients import get_d1
 from db.d1_client import D1Client
 from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
+from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +207,7 @@ def _regular_season_week_number(week_name: str) -> int | None:
 
 def _epoch_seconds_to_iso(timestamp: int) -> str:
     """game.game.date.timestamp is epoch seconds. Convert to ISO8601 UTC string"""
-    return datetime.fromtimestamp(timestamp, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return utc_iso(datetime.fromtimestamp(timestamp, tz=UTC))
 
 
 def _parse_made_attempted(value: str, sep: str = "-") -> tuple[int, int]:

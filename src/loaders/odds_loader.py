@@ -5,7 +5,6 @@ Usage: uv run python -m src.loaders.odds_loader [local|prod]
 
 import logging
 import sys
-from datetime import UTC, datetime
 from typing import Any
 
 from api.the_odds_api_client import get_odds
@@ -13,6 +12,7 @@ from api.the_odds_api_models import Event
 from config.config import configure_logging, load_env
 from db.clients import get_d1
 from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
+from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
 
@@ -156,10 +156,10 @@ def load_the_odds_api_odds() -> None:
     gap_statements: list[tuple[str, list[Any] | None]] = []
     snapshot_statements: list[tuple[str, list[Any] | None]] = []
 
-    now_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = utc_iso()
 
     for event in events:
-        if event.commence_time <= now_iso:
+        if event.commence_time <= now:
             # skip games that start so odds_snapshots only ever holds pre-kickoff lines.
             continue
 

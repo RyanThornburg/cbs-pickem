@@ -23,7 +23,8 @@ from db.clients import get_d1
 from db.d1_client import D1Client
 from src.kv_writer import write_games_weeks
 from src.loaders.game_snapshots_loader import has_candidate_games, load_game_snapshots
-from src.scheduling import acquire_lock, now_iso, set_state, soft
+from src.scheduling import acquire_lock, set_state, soft
+from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +44,8 @@ def _round(client: D1Client) -> None:
         "game_snapshot_capture",
         lambda: changed.update(load_game_snapshots()),
     ):
-        set_state(client, "game_snapshot_last_success_at", now_iso())
-    set_state(client, "game_snapshot_last_capture_at", now_iso())
+        set_state(client, "game_snapshot_last_success_at", utc_iso())
+    set_state(client, "game_snapshot_last_capture_at", utc_iso())
 
     if changed:
         soft(client, "live_games_kv_write", lambda: write_games_weeks(changed))

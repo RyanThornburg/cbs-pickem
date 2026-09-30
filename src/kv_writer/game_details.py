@@ -9,7 +9,8 @@ from typing import Any
 
 from config.config import SEASON
 from db.clients import get_d1, get_kv
-from src.kv_writer.shared import now_iso, resolve_current_week
+from src.kv_writer.shared import resolve_current_week
+from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +198,7 @@ def write_game_details(game_ids: Iterable[int]) -> None:
             continue
         kv.write(
             f"game:{SEASON}:{game_id}:details",
-            {"game_id": game_id, "updated_at": now_iso(), **details},
+            {"game_id": game_id, "updated_at": utc_iso(), **details},
         )
         written += 1
     logger.info("Wrote game details KV for %d game(s)", written)

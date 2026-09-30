@@ -16,11 +16,12 @@ from config.config import SCHEMA_PATH, SEASON
 from db import clients as db_clients
 from db.d1_client import D1QueryResult, _bind_params
 from db.setup import _split_statements
+from src import timestamps
 
 
 def iso(dt: datetime) -> str:
     """games.game_time's format - ISO8601 UTC text"""
-    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return timestamps.utc_iso(dt.astimezone(UTC))
 
 
 class FakeD1:
@@ -237,7 +238,8 @@ def clients(monkeypatch: pytest.MonkeyPatch, d1: FakeD1) -> Clients:
 
 def freeze(monkeypatch: pytest.MonkeyPatch, module: ModuleType, when: datetime) -> None:
     """Make `module`'s datetime.now() return `when` - for loaders that
-    compare saved API data (kickoff times) against the current time."""
+    compare saved API data (kickoff times) against the current time. Also
+    freezes src.timestamps, where utc_iso() reads the clock."""
 
     class Frozen(datetime):
         @classmethod
@@ -245,6 +247,7 @@ def freeze(monkeypatch: pytest.MonkeyPatch, module: ModuleType, when: datetime) 
             return when if tz is None else when.astimezone(tz)
 
     monkeypatch.setattr(module, "datetime", Frozen)
+    monkeypatch.setattr(timestamps, "datetime", Frozen)
 
 
 @pytest.fixture

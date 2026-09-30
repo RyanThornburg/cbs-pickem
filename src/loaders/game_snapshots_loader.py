@@ -27,6 +27,7 @@ from src.loaders.loader_helper import (
     mapping_gap_statement,
     sql_batch_call,
 )
+from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
 
@@ -220,10 +221,8 @@ def _candidate_games(client: D1Client) -> list[dict[str, Any]]:
     return client.query(
         _CANDIDATE_GAMES_SQL,
         [
-            now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            (now - timedelta(hours=CANDIDATE_WINDOW_HOURS)).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            ),
+            utc_iso(now),
+            utc_iso(now - timedelta(hours=CANDIDATE_WINDOW_HOURS)),
         ],
     ).results
 

@@ -1,11 +1,11 @@
 """user:{user_id}:season:{season} - see src/CLAUDE.md's KV writer section."""
 
 import logging
-from datetime import UTC, datetime
 
 from config.config import SEASON
 from db.clients import get_d1, get_kv
 from src.kv_writer.historical import career_record_by_user
+from src.timestamps import utc_iso
 from src.user_stats import compute_user_profiles
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ def write_user_profiles() -> None:
         return
 
     kv = get_kv()
-    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = utc_iso()
     for user_id, profile in profiles.items():
         kv.write(f"user:{user_id}:season:{SEASON}", {**profile, "updated_at": now})
 

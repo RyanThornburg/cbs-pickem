@@ -28,6 +28,7 @@ from api.cbs_models import (
 from config.config import SEASON, configure_logging, load_env
 from db.clients import get_d1
 from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
+from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
 
@@ -138,9 +139,7 @@ def _cbs_status_to_common(status_desc: str) -> str:
 def _cbs_starts_at_to_iso(starts_at_millis: int) -> str:
     """CBS's game.starts_at is epoch millis - convert to an ISO8601 UTC
     string for a consistent format"""
-    return datetime.fromtimestamp(starts_at_millis / 1000, tz=UTC).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    return utc_iso(datetime.fromtimestamp(starts_at_millis / 1000, tz=UTC))
 
 
 def load_cbs_users() -> None:

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from db.clients import get_d1, get_kv
+from src.timestamps import parse_utc_iso, utc_iso
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ def _seconds_since(iso_value: str | None, now: datetime) -> float | None:
     if iso_value is None:
         return None
     try:
-        last_at = datetime.strptime(iso_value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+        last_at = parse_utc_iso(iso_value)
     except ValueError:
         return None
     return (now - last_at).total_seconds()
@@ -189,7 +190,7 @@ def write_admin_status() -> None:
     get_kv().write(
         "meta:admin",
         {
-            "updated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "updated_at": utc_iso(now),
             "last_run": last_run,
             "mapping_gaps": {
                 "distinct_count": mapping_gaps_totals["distinct_count"],

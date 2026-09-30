@@ -47,12 +47,12 @@ from src.loaders.win_probability_loader import load_final_win_probability
 from src.scheduling import (
     acquire_lock,
     get_state,
-    now_iso,
     run_on_interval,
     set_state,
     should_run,
     soft,
 )
+from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
 
@@ -125,10 +125,8 @@ def _current_week_deadline_utc(now_utc: datetime) -> datetime:
 
 
 def _is_live_window_active(client: D1Client) -> bool:
-    now = now_iso()
-    cutoff = (datetime.now(UTC) - timedelta(hours=LIVE_WINDOW_HOURS)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    now = utc_iso()
+    cutoff = utc_iso(datetime.now(UTC) - timedelta(hours=LIVE_WINDOW_HOURS))
     result = client.query(
         "SELECT 1 FROM games WHERE game_time <= ? AND game_time >= ? "
         "AND (status IS NULL OR status NOT IN ('FINAL', 'CANCELLED', 'POSTPONED')) LIMIT 1",
@@ -199,8 +197,8 @@ def _run_win_probability_capture(client: D1Client) -> None:
         "win_probability_capture",
         lambda: _write_game_details(client, load_final_win_probability()),
     ):
-        set_state(client, "win_probability_last_success_at", now_iso())
-    set_state(client, "win_probability_last_run_at", now_iso())
+        set_state(client, "win_probability_last_success_at", utc_iso())
+    set_state(client, "win_probability_last_run_at", utc_iso())
 
 
 def _capture_odds(client: D1Client, state_key: str, success_key: str) -> None:
@@ -214,8 +212,8 @@ def _capture_odds(client: D1Client, state_key: str, success_key: str) -> None:
         write_current_week_odds()
 
     if soft(client, "odds_capture", capture):
-        set_state(client, success_key, now_iso())
-    set_state(client, state_key, now_iso())
+        set_state(client, success_key, utc_iso())
+    set_state(client, state_key, utc_iso())
 
 
 def _run_scoring_plays_refresh(client: D1Client) -> None:
@@ -224,8 +222,8 @@ def _run_scoring_plays_refresh(client: D1Client) -> None:
     query otherwise), and a game's last score can land after the live
     window closes. Enrichment, so a failure is recorded, never raised."""
     if soft(client, "scoring_plays_refresh", load_scoring_plays):
-        set_state(client, "scoring_plays_last_success_at", now_iso())
-    set_state(client, "scoring_plays_last_run_at", now_iso())
+        set_state(client, "scoring_plays_last_success_at", utc_iso())
+    set_state(client, "scoring_plays_last_run_at", utc_iso())
 
 
 def _run_quiet_period_tasks(client: D1Client) -> None:
@@ -296,10 +294,8 @@ def _run_pre_kickoff_odds_capture(client: D1Client, now: datetime) -> None:
     ):
         return
 
-    now_str = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    lead_cutoff = (now + timedelta(minutes=ODDS_PREKICKOFF_LEAD_MINUTES)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    now_str = utc_iso(now)
+    lead_cutoff = utc_iso(now + timedelta(minutes=ODDS_PREKICKOFF_LEAD_MINUTES))
     result = client.query(
         "SELECT 1 FROM games WHERE game_time > ? AND game_time <= ? "
         "AND (status IS NULL OR status NOT IN ('FINAL', 'CANCELLED', 'POSTPONED')) LIMIT 1",
@@ -322,10 +318,8 @@ def _run_pregame_weather_capture(client: D1Client, now: datetime) -> None:
     every tick, live or quiet, so an already-live early game can't
     suppress the refresh for an approaching later one.
     """
-    now_str = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    near_cutoff = (now + timedelta(hours=WEATHER_PREGAME_NEAR_WINDOW_HOURS)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    now_str = utc_iso(now)
+    near_cutoff = utc_iso(now + timedelta(hours=WEATHER_PREGAME_NEAR_WINDOW_HOURS))
     has_near_kickoff = bool(
         client.query(
             "SELECT 1 FROM games WHERE game_time > ? AND game_time <= ? "
@@ -342,8 +336,8 @@ def _run_pregame_weather_capture(client: D1Client, now: datetime) -> None:
         return
 
     if soft(client, "pregame_weather_capture", load_pregame_weather):
-        set_state(client, "weather_pregame_last_success_at", now_iso())
-    set_state(client, "weather_pregame_last_capture_at", now_iso())
+        set_state(client, "weather_pregame_last_success_at", utc_iso())
+    set_state(client, "weather_pregame_last_capture_at", utc_iso())
 
 
 def _run_deadline_sweep(client: D1Client, now: datetime) -> None:
@@ -356,7 +350,7 @@ def _run_deadline_sweep(client: D1Client, now: datetime) -> None:
     # a failed sweep is retried, but not every tick - see FAILURE_RETRY_SECONDS
     if not should_run(client, "deadline_sweep_last_attempt_at", FAILURE_RETRY_SECONDS):
         return
-    set_state(client, "deadline_sweep_last_attempt_at", now_iso())
+    set_state(client, "deadline_sweep_last_attempt_at", utc_iso())
 
     def sweep() -> None:
         load_cbs_weeks()
@@ -401,7 +395,7 @@ def _run_finished_game_stats(client: D1Client) -> None:
     )
     for row in result.results:
         if not _finish_week_stats(client, row["week_id"], row["week_number"]):
-            set_state(client, "finished_game_stats_last_failure_at", now_iso())
+            set_state(client, "finished_game_stats_last_failure_at", utc_iso())
 
 
 def _finish_week_stats(client: D1Client, week_id: int, week_number: int) -> bool:

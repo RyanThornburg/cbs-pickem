@@ -10,7 +10,6 @@ is just resolve_current_week() plus a couple of pool-rule constants and the
 CBS pool link, not worth a dedicated file."""
 
 import logging
-from datetime import UTC, datetime
 from typing import Any
 
 from api.cbs_client import cbs_pool_url
@@ -73,10 +72,6 @@ JOIN games g ON g.game_id = up.game_id
 JOIN weeks w ON w.week_id = g.week_id
 WHERE w.season_id = ? AND w.week_number = ?
 """
-
-
-def now_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def resolve_current_week(d1: D1Client) -> int | None:

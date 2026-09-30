@@ -23,12 +23,12 @@ Usage: uv run python -m src.loaders.pregame_weather_loader [local|prod]
 
 import logging
 import sys
-from datetime import UTC, datetime
 from typing import Any
 
 from config.config import configure_logging, load_env
 from db.clients import get_d1
 from src.loaders.loader_helper import capture_pregame_forecast, sql_batch_call
+from src.timestamps import parse_utc_iso, utc_iso
 
 logger = logging.getLogger(__name__)
 
@@ -73,13 +73,11 @@ def load_pregame_weather() -> None:
         logger.info("No upcoming games this week to capture a forecast for")
         return
 
-    captured_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    captured_at = utc_iso()
     statements: list[tuple[str, list[Any] | None]] = []
     skipped = 0
     for row in upcoming_games:
-        game_time = datetime.strptime(row["game_time"], "%Y-%m-%dT%H:%M:%SZ").replace(
-            tzinfo=UTC
-        )
+        game_time = parse_utc_iso(row["game_time"])
         source, kickoff, window = capture_pregame_forecast(
             row["latitude"],
             row["longitude"],

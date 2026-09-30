@@ -27,6 +27,7 @@ from config.config import SEASON, configure_logging, load_env
 from db.clients import get_d1
 from db.d1_client import D1Client
 from src.loaders.loader_helper import sql_batch_call
+from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
 
@@ -126,9 +127,7 @@ def load_final_win_probability() -> set[int]:
     """recently FINAL games without a curve yet - one D1 query and no ESPN
     calls when there's nothing to do, so it's fine to call every tick"""
     client = get_d1()
-    cutoff = (datetime.now(UTC) - timedelta(days=RETRY_WINDOW_DAYS)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    cutoff = utc_iso(datetime.now(UTC) - timedelta(days=RETRY_WINDOW_DAYS))
     return _load_for_games(client.query(_GAMES_MISSING_SQL, [cutoff]).results, client)
 
 

@@ -13,7 +13,6 @@ from src.kv_writer.shared import (
     PICKS_SQL,
     ats_side,
     game_team_dicts,
-    now_iso,
     resolve_current_week,
     split_home_away,
 )
@@ -24,6 +23,8 @@ logger = logging.getLogger(__name__)
 _ALL_ALONE_MIN_OPPOSING = (
     3  # how big the other side must be for a solo pick to mean anything
 )
+from src.timestamps import utc_iso
+
 _ONE_SIDED_MIN_PICKS = (
     3  # floor so an early, barely-revealed game can't look "lopsided"
 )
@@ -248,7 +249,7 @@ def write_week_trends(week_number: int) -> None:
         f"week:{SEASON}:{week_number:02d}:trends",
         {
             "week": week_number,
-            "updated_at": now_iso(),
+            "updated_at": utc_iso(),
             "pick_popularity": pick_popularity,
             "cold_teams": cold_teams,
             "one_sided_games": one_sided_games,
@@ -613,7 +614,7 @@ def write_season_trends() -> None:
         f"season:{SEASON}:trends",
         {
             "season": SEASON,
-            "updated_at": now_iso(),
+            "updated_at": utc_iso(),
             "team_pick_totals": team_pick_totals,
             "cold_teams_season": cold_teams_season,
             "team_ats_record": team_ats_record,

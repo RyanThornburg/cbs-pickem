@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from config.config import SEASON
+from src import timestamps
 from src.loaders import (
     cbs_loader,
     espn_loader,
@@ -416,7 +417,7 @@ class TestOdds:
         now = datetime.strptime(first, "%Y-%m-%dT%H:%M:%SZ").replace(
             tzinfo=UTC
         ) - timedelta(hours=1)
-        freeze(monkeypatch, odds_loader, now)
+        freeze(monkeypatch, timestamps, now)
         return events
 
     def _expected_rows(self, events: list[dict[str, Any]]) -> int:
@@ -535,7 +536,7 @@ class TestOdds:
         after_first = datetime.strptime(
             first["commence_time"], "%Y-%m-%dT%H:%M:%SZ"
         ).replace(tzinfo=UTC) + timedelta(minutes=1)
-        freeze(monkeypatch, odds_loader, after_first)
+        freeze(monkeypatch, timestamps, after_first)
 
         odds_loader.load_the_odds_api_odds()
 

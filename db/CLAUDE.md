@@ -83,7 +83,11 @@ loader normalizes at write time (`cbs_loader._cbs_starts_at_to_iso()`,
 apples-to-apples and plain string comparison/sorting works correctly
 regardless of source. If you add a new time-bearing field from a new
 source, convert to this same format before it touches the DB rather than
-storing whatever the source natively gives you.
+storing whatever the source natively gives you. `src/timestamps.py`'s
+`utc_iso(dt=None)`/`parse_utc_iso()` are the only place the format
+string lives - use them rather than writing `strftime(...)` by hand.
+(`game_snapshots.weather_captured_at` is the one exception, still
+`%Y-%m-%d %H:%M:%S` - a separate TODO in `CLAUDE.local.md`.)
 
 `weeks.start_time`/`end_time` are themselves *derived* from `game_time`
 (min/max across that week's games) — the reason they need to be full

@@ -9,6 +9,7 @@ from api.weather_api import get_forecast
 from api.weather_api_models import Alert, DailyDataPoint, DataPoint, Forecast
 from db.clients import get_d1
 from db.d1_client import D1Client, D1Error
+from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ def _datapoint_to_weather(
 
 def _iso(epoch: int | None) -> str | None:
     return (
-        datetime.fromtimestamp(epoch, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        utc_iso(datetime.fromtimestamp(epoch, UTC))
         if epoch is not None
         else None
     )
@@ -381,7 +382,7 @@ def mapping_gap_statement(
     """(sql, params) for one mapping_gaps upsert - append to whatever
     statements list a loader is already building right next to its
     logger.warning() on a lookup miss"""
-    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = utc_iso()
     return (
         _UPSERT_MAPPING_GAP_SQL,
         [source, entity_type, str(raw_value), context, now, now],

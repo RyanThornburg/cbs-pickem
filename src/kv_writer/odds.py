@@ -11,7 +11,8 @@ from typing import Any
 from config.config import SEASON
 from db.clients import get_d1, get_kv
 from db.d1_client import D1Client
-from src.kv_writer.shared import now_iso, resolve_current_week
+from src.kv_writer.shared import resolve_current_week
+from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,7 @@ def write_week_odds(week_number: int) -> None:
         f"week:{SEASON}:{week_number:02d}:odds",
         {
             "week": week_number,
-            "updated_at": now_iso(),
+            "updated_at": utc_iso(),
             "games": games_json,
         },
     )

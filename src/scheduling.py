@@ -12,6 +12,7 @@ from typing import TextIO
 
 from config.config import LOCK_DIR
 from db.d1_client import D1Client
+from src.timestamps import parse_utc_iso, utc_iso
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +38,6 @@ ON CONFLICT(source, message) DO UPDATE SET
 """
 
 
-def now_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def get_state(client: D1Client, key: str) -> str | None:
     result = client.query("SELECT value FROM orchestration_state WHERE key = ?", [key])
     return result.results[0]["value"] if result.results else None
@@ -54,13 +51,13 @@ def should_run(client: D1Client, key: str, min_interval_seconds: int) -> bool:
     last = get_state(client, key)
     if last is None:
         return True
-    last_dt = datetime.strptime(last, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    last_dt = parse_utc_iso(last)
     elapsed = (datetime.now(UTC) - last_dt).total_seconds()
     return elapsed >= min_interval_seconds - _SHOULD_RUN_SLACK_SECONDS
 
 
 def record_system_event(client: D1Client, source: str, message: str) -> None:
-    now = now_iso()
+    now = utc_iso()
     client.batch([(_UPSERT_SYSTEM_EVENT_SQL, [source, message[:500], now, now])])
 
 
@@ -94,8 +91,8 @@ def run_on_interval(
     if not should_run(client, cursor_key, interval_seconds):
         return
     if soft(client, source, task):
-        set_state(client, success_key, now_iso())
-    set_state(client, cursor_key, now_iso())
+        set_state(client, success_key, utc_iso())
+    set_state(client, cursor_key, utc_iso())
 
 
 def acquire_lock(name: str) -> TextIO | None:

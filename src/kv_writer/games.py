@@ -8,7 +8,8 @@ from typing import Any
 from config.config import SEASON
 from db.clients import get_d1, get_kv
 from src.kv_writer.game_details import player_line
-from src.kv_writer.shared import GAMES_SQL, PICKS_SQL, now_iso, resolve_current_week
+from src.kv_writer.shared import GAMES_SQL, PICKS_SQL, resolve_current_week
+from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
 
@@ -346,7 +347,7 @@ def write_week_games(week_number: int) -> None:
         f"week:{SEASON}:{week_number:02d}:games",
         {
             "week": week_number,
-            "updated_at": now_iso(),
+            "updated_at": utc_iso(),
             "games": games_json,
         },
     )
@@ -410,7 +411,7 @@ def write_incomplete_weeks_games(include_future: bool = False) -> None:
     if include_future:
         rows = d1.query(_INCOMPLETE_WEEKS_SQL, [SEASON]).results
     else:
-        rows = d1.query(_ACTIVE_INCOMPLETE_WEEKS_SQL, [SEASON, now_iso()]).results
+        rows = d1.query(_ACTIVE_INCOMPLETE_WEEKS_SQL, [SEASON, utc_iso()]).results
     week_numbers = [row["week_number"] for row in rows]
     if not week_numbers:
         logger.info("No incomplete weeks for season %s - nothing to refresh", SEASON)

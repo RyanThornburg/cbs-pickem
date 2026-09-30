@@ -29,10 +29,10 @@ from db.d1_client import D1Client
 from src.kv_writer.shared import (
     ats_side,
     game_team_dicts,
-    now_iso,
     resolve_current_week,
     standard_rank,
 )
+from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
 
@@ -1493,7 +1493,7 @@ def compute_week_recap(d1: D1Client, week_number: int) -> dict[str, Any] | None:
         "version": SCHEMA_VERSION,
         "season": SEASON,
         "week": week_number,
-        "updated_at": now_iso(),
+        "updated_at": utc_iso(),
         "week_complete": week_complete,
         "games_final": games_final,
         "games_total": len(week_games),
@@ -1559,8 +1559,8 @@ def write_recent_weeks_recap() -> None:
         _RECENT_WEEKS_SQL,
         [
             SEASON,
-            now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            (now - timedelta(hours=_RECENT_WEEK_HOURS)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            utc_iso(now),
+            utc_iso(now - timedelta(hours=_RECENT_WEEK_HOURS)),
         ],
     ).results
     if not rows:
