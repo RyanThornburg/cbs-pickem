@@ -1,5 +1,6 @@
 """src/kv_writer/trends.py (week and season trends keys) plus the shared
-ats_side() every ATS grade in the KV writer goes through."""
+ats_side() every ATS grade in the KV writer goes through, and odds.py's
+week odds key (same odds_snapshots helpers)."""
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -8,7 +9,7 @@ import pytest
 
 from config.config import SEASON
 from src.game_rules import ats_side
-from src.kv_writer import trends
+from src.kv_writer import odds, trends
 from tests.conftest import Clients, FakeD1, Seed
 
 KICKOFF = datetime(2026, 9, 13, 17, 0, tzinfo=UTC)
@@ -380,3 +381,27 @@ class TestWriteSeasonTrends:
         seed.week(1)
         trends.write_season_trends()
         assert clients.kv.values == {}
+
+
+class TestWriteWeekOdds:
+    @pytest.fixture(autouse=True)
+    def _fakes(self, clients: Clients) -> None:
+        """every test here writes through the fake D1/KV"""
+
+    def test_updated_at_is_newest_capture(self, clients: Clients, seed: Seed) -> None:
+        week = Week(seed)
+        game = week.game("KC", "BUF")
+        _odds(clients.d1, game, "draftkings", -3.0, "2026-09-08T12:00:00Z")
+        _odds(clients.d1, game, "fanduel", -3.5, "2026-09-13T12:00:00Z")
+        # an offshore book's later line isn't in the key, so it isn't "as of"
+        _odds(clients.d1, game, "someoffshorebook", -4.0, "2026-09-13T13:00:00Z")
+
+        odds.write_week_odds(1)
+
+        key = clients.kv.values[f"week:{SEASON}:01:odds"]
+        assert key["updated_at"] == "2026-09-13T12:00:00Z"
+
+    def test_no_odds_yet(self, clients: Clients, seed: Seed) -> None:
+        Week(seed).game("KC", "BUF")
+        odds.write_week_odds(1)
+        assert clients.kv.values[f"week:{SEASON}:01:odds"]["updated_at"] is None

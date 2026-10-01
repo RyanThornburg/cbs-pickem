@@ -917,6 +917,12 @@ src.kv_writer.__main__`).
   historical." Confirmed live: over/under line-movement trends
   (`total_movers` in `write_week_trends()`, see below) already existed
   before this and needed no changes.
+  `updated_at` is the newest `captured_at` among `books` ("odds as of"),
+  `null` before any odds exist - not the write time (changed 2026-09-30).
+  The key is still rewritten by every 6-hour capture until housekeeping
+  moves `is_current` on Tuesday evening ET, long after the loader stopped
+  adding rows at kickoff, so the write time made every week's odds look
+  updated the Tuesday after.
 - `write_week_trends()` → `week:{season}:{weekNN}:trends` (added
   2026-09-13, `d05309d` — never actually folded into this doc until a
   2026-09-17 full-codebase review caught it; `CLAUDE.local.md`'s "Web UI"

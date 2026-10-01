@@ -12,7 +12,6 @@ from config.config import SEASON
 from db.clients import get_d1, get_kv
 from db.d1_client import D1Client
 from src.kv_writer.shared import for_current_week
-from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +156,11 @@ def _latest_book_odds_by_game(
 def write_week_odds(week_number: int) -> None:
     """Write week:{season}:{weekNN}:odds - each game's cbs_spread (what the
     pool is graded against) alongside an opening/closing consensus line and
-    each _ODDS_BOOKMAKERS book's own latest spread/total/moneyline line."""
+    each _ODDS_BOOKMAKERS book's own latest spread/total/moneyline line.
+
+    updated_at is the newest captured_at among those lines, not the write
+    time - the key keeps getting rewritten after the week's games have
+    kicked off (no new rows), and the UI shows updated_at as "odds as of"."""
     d1 = get_d1()
 
     games = d1.query(_WEEK_CBS_SPREADS_SQL, [SEASON, week_number]).results
@@ -182,11 +185,19 @@ def write_week_odds(week_number: int) -> None:
         for game in games
     ]
 
+    captured_ats = [
+        market["captured_at"]
+        for books in books_by_game.values()
+        for book in books
+        for market in book.values()
+        if isinstance(market, dict)
+    ]
+
     get_kv().write(
         f"week:{SEASON}:{week_number:02d}:odds",
         {
             "week": week_number,
-            "updated_at": utc_iso(),
+            "updated_at": max(captured_ats, default=None),
             "games": games_json,
         },
     )
