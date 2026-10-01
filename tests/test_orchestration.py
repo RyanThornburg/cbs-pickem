@@ -26,6 +26,7 @@ from tests.conftest import Clients, FakeD1, Seed, freeze_all, iso
 TASKS = (
     "load_games_data",
     "load_teams",
+    "load_standings",
     "load_cbs_weeks",
     "load_cbs_games",
     "load_cbs_user_picks",
@@ -45,6 +46,7 @@ TASKS = (
     "write_current_week_odds",
     "write_current_week_trends",
     "write_season_trends",
+    "write_season_standings",
     "write_recent_weeks_recap",
     "write_user_profiles",
     "write_game_details",
@@ -255,6 +257,54 @@ class TestDeadlineSweep:
         assert get_state(d1, "deadline_last_synced_sunday") == "2026-10-04"
 
 
+class TestStandingsRefresh:
+    def _refreshes(self, tasks: Recorder) -> int:
+        return tasks.count("load_standings")
+
+    def test_after_a_game_finishes_then_for_an_hour(
+        self,
+        tasks: Recorder,
+        seed: Seed,
+        d1: FakeD1,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        orchestration.main()  # first tick: no FINAL count seen yet
+        assert self._refreshes(tasks) == 1
+
+        orchestration.main()  # nothing new, and no game has finished
+        assert self._refreshes(tasks) == 1
+
+        _game_at(seed, QUIET - timedelta(hours=3), status="FINAL")
+        freeze_all(monkeypatch, QUIET + timedelta(minutes=2))
+        orchestration.main()  # straight away
+        assert self._refreshes(tasks) == 2
+
+        for minutes, expected in ((10, 2), (17, 3), (33, 4), (62, 4)):
+            freeze_all(monkeypatch, QUIET + timedelta(minutes=minutes))
+            orchestration.main()
+            assert self._refreshes(tasks) == expected, minutes
+
+    def test_writes_the_key_when_sports_io_fails(
+        self, tasks: Recorder, d1: FakeD1
+    ) -> None:
+        tasks.fail["load_standings"] = RuntimeError("Sports IO down")
+
+        orchestration.main()
+
+        # written after the failed Sports IO call (housekeeping wrote it earlier)
+        last_write = len(tasks.calls) - tasks.calls[::-1].index(
+            "write_season_standings"
+        )
+        assert tasks.calls.index("load_standings") < last_write
+        assert get_state(d1, "standings_last_success_at") is not None
+        assert "sports_io_standings" in _events(d1)
+
+    def test_housekeeping_writes_it_too(self, tasks: Recorder) -> None:
+        orchestration.main()
+        # once from housekeeping, once from the first FINAL count
+        assert tasks.count("write_season_standings") == 2
+
+
 class TestFinishedGameStats:
     def _week(self, seed: Seed, statuses: list[str]) -> int:
         week_id = seed.week(3)
@@ -379,6 +429,7 @@ class TestEndToEnd:
             "meta:current",
             "meta:admin",
             f"season:{SEASON}:trends",
+            f"season:{SEASON}:standings",
             *(f"week:{SEASON}:{n:02d}:games" for n in (week, week + 1, week + 2)),
             f"week:{SEASON}:{week:02d}:trends",
             f"week:{SEASON}:{week:02d}:recap",

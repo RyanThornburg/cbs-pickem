@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS teams (
     color_secondary_hex VARCHAR(6),
     wins INT,
     losses INT,
-    ties INT
+    ties INT,
+    division_rank INT -- Sports IO /standings position (1-4), with the NFL tiebreakers applied - only used to order teams on equal records
 );
 
 -- Stadiums and venues (including international)

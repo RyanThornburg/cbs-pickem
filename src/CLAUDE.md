@@ -469,6 +469,17 @@ Cadences, and why each one is what it is:
 - **Recap KV keys, 5 min, live or quiet** (added 2026-09-28) -
   `_run_recap_refresh()`: the current week plus any week in progress
   or finished in the last 12 hours, see "KV writer" below.
+- **NFL standings, when a game goes FINAL, then every 15 min for an
+  hour** (added 2026-09-30) - `_run_standings_refresh()`. `games` has no
+  "finished at", so it watches the season's FINAL count
+  (`standings_final_games` in `orchestration_state`): a new count refreshes
+  straight away and stamps `standings_last_final_at`, and for
+  `STANDINGS_FOLLOW_UP_SECONDS` after that it refreshes every
+  `STANDINGS_FOLLOW_UP_INTERVAL_SECONDS`, so Sports IO's `division_rank`
+  catches up once its own standings do. Each refresh is
+  `teams_loader.load_standings()` (one Sports IO call, soft-fail on its
+  own since the key doesn't need it) then `write_season_standings()`.
+  `standings_refresh` in `meta:admin`. Housekeeping writes the key too.
 - **Housekeeping, 24 hr, quiet periods only** — full Sports IO schedule
   refresh + `teams_loader.load_teams()` (win/loss/tie records, added
   2026-09-15) + `load_cbs_weeks()`/`load_cbs_games()` + `load_espn_games()`
@@ -1063,6 +1074,20 @@ src.kv_writer.__main__`).
   by hand 2026-09-28, and weeks 1-4 rewritten under the new key name
   2026-09-29 (`write_week_recap(n)`). UI reference Artifact
   linked from `CLAUDE.local.md`'s recap TODO entry.
+- `write_season_standings()` → `season:{season}:standings` (added
+  2026-09-30, `standings.py`) - NFL standings: `conferences` (name plus
+  `abbr`, e.g. AFC) → `divisions` (name, e.g. "AFC East") → `teams` in
+  order, each with `rank`, W-L-T, `win_pct` (a tie counts half),
+  points for/against/diff, `home`/`road`/`division_record`/
+  `conference_record`, `streak` ("W3"), and `ats` (covers/losses against
+  the CBS line). Records are computed from our own FINAL games, so they
+  match the scoreboard the moment a game ends (checked 2026-09-30 against
+  prod: every team's record, points and streak matched Sports IO's).
+  Order is `win_pct`, then `teams.division_rank` (Sports IO's position,
+  which applies the NFL tiebreakers we don't) - so on equal records the
+  order is only as fresh as the last `load_standings()`. No playoff
+  seeding. Written by `_run_standings_refresh()` (see Orchestration) and
+  daily housekeeping.
 - `write_historical()` → `meta:historical` — see `db/CLAUDE.md`'s
   `historical_standings` section for what feeds this.
 - `write_user_profiles()` → `user:{user_id}:season:{season}`, one key per

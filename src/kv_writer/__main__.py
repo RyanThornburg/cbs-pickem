@@ -12,6 +12,7 @@ from src.kv_writer import (
     write_current_week_trends,
     write_historical,
     write_meta_current,
+    write_season_standings,
     write_season_trends,
     write_user_profiles,
 )
@@ -26,6 +27,7 @@ def main() -> None:
     write_current_week_odds()
     write_current_week_trends()
     write_season_trends()
+    write_season_standings()
     write_current_week_recap()
     write_historical()
     write_user_profiles()

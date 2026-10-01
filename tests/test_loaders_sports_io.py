@@ -408,7 +408,25 @@ class TestTeams:
                 standing["lost"],
                 standing["ties"],
             )
+            assert row["division_rank"] == standing["position"]
             assert row["season"] == SEASON
+
+    def test_standings_only_refresh(self, season: FakeD1, apis: FakeApis) -> None:
+        standing = apis.responses[Endpoint.STANDINGS][0]
+        standing["won"] += 1
+        standing["position"] = 4
+        teams_before = len([c for c in apis.calls if c[0] == Endpoint.TEAMS])
+
+        teams_loader.load_standings()
+
+        row = _rows(
+            season,
+            "SELECT wins, division_rank FROM teams WHERE sports_io_team_id = ?",
+            [standing["team"]["id"]],
+        )
+        assert row == [{"wins": standing["won"], "division_rank": 4}]
+        # one /standings call, no /teams
+        assert len([c for c in apis.calls if c[0] == Endpoint.TEAMS]) == teams_before
 
     def test_daily_rerun_updates_records(self, season: FakeD1, apis: FakeApis) -> None:
         standing = apis.responses[Endpoint.STANDINGS][0]

@@ -36,6 +36,7 @@ from src.kv_writer.recap import (
     write_week_recap,
 )
 from src.kv_writer.shared import write_meta_current
+from src.kv_writer.standings import write_season_standings
 from src.kv_writer.trends import (
     write_current_week_trends,
     write_season_trends,
@@ -59,6 +60,7 @@ __all__ = [
     "write_incomplete_weeks_games",
     "write_meta_current",
     "write_recent_weeks_recap",
+    "write_season_standings",
     "write_season_trends",
     "write_user_profiles",
     "write_week_game_details",

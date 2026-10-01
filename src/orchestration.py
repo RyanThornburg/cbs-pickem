@@ -12,7 +12,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from config.config import cli_env, configure_logging, load_env
+from config.config import SEASON, cli_env, configure_logging, load_env
 from db.clients import get_d1
 from db.d1_client import D1Client
 from src.game_rules import DONE_STATUSES, LIVE_WINDOW_HOURS, sql_list
@@ -26,6 +26,7 @@ from src.kv_writer import (
     write_incomplete_weeks_games,
     write_meta_current,
     write_recent_weeks_recap,
+    write_season_standings,
     write_season_trends,
     write_user_profiles,
 )
@@ -43,7 +44,7 @@ from src.loaders.sports_io_loader import (
     load_games_data,
     load_live_game_statistics,
 )
-from src.loaders.teams_loader import load_teams
+from src.loaders.teams_loader import load_standings, load_teams
 from src.loaders.win_probability_loader import load_final_win_probability
 from src.scheduling import (
     acquire_lock,
@@ -54,7 +55,7 @@ from src.scheduling import (
     should_run,
     soft,
 )
-from src.timestamps import utc_iso
+from src.timestamps import parse_utc_iso, utc_iso
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,12 @@ USER_PROFILES_INTERVAL_SECONDS = 30 * 60
 # not a live number, so a few minutes behind a final score is fine and it
 # saves a KV write on most ticks
 RECAP_INTERVAL_SECONDS = 5 * 60
+# NFL standings (season:{season}:standings): rewritten as soon as another
+# game goes FINAL, then every STANDINGS_FOLLOW_UP_INTERVAL_SECONDS for
+# STANDINGS_FOLLOW_UP_SECONDS after it, to pick up Sports IO's
+# division_rank once its own standings catch up. One Sports IO call each.
+STANDINGS_FOLLOW_UP_SECONDS = 60 * 60
+STANDINGS_FOLLOW_UP_INTERVAL_SECONDS = 15 * 60
 # After a failure, the deadline sweep and the finished-game stats catch-up
 # wait this long before trying again - both are otherwise retried every
 # tick until they succeed, and each attempt is a burst of CBS/Sports IO
@@ -250,6 +257,7 @@ def _housekeeping() -> None:
     steps: list[tuple[str, Callable[[], object]]] = [
         ("load_games_data", load_games_data),  # full schedule/weeks refresh
         ("load_teams", load_teams),  # team win/loss/tie records
+        ("write_season_standings", write_season_standings),
         ("load_cbs_weeks", load_cbs_weeks),
         ("load_cbs_games", load_cbs_games),
         ("load_espn_games", load_espn_games),  # neutral_site, incomplete weeks
@@ -439,6 +447,51 @@ def _finish_week_stats(client: D1Client, week_id: int, week_number: int) -> bool
     return True
 
 
+def _refresh_standings(client: D1Client) -> None:
+    # Sports IO only supplies the tiebreak order - the records come from
+    # our own games, so the key is still worth writing without it
+    soft(client, "sports_io_standings", load_standings)
+    write_season_standings()
+
+
+def _run_standings_refresh(client: D1Client, now: datetime) -> None:
+    """There's no "finished at" on games, so this watches the season's
+    FINAL count: a change means a game just finished."""
+    finals = str(
+        client.query(
+            "SELECT COUNT(*) AS n FROM games g JOIN weeks w ON w.week_id = g.week_id "
+            "WHERE w.season_id = ? AND g.status = 'FINAL'",
+            [SEASON],
+        ).results[0]["n"]
+    )
+    if finals != get_state(client, "standings_final_games"):
+        set_state(client, "standings_final_games", finals)
+        set_state(client, "standings_last_final_at", utc_iso(now))
+        run_and_record(
+            client,
+            "standings_refresh",
+            lambda: _refresh_standings(client),
+            "standings_last_run_at",
+            "standings_last_success_at",
+        )
+        return
+
+    last_final = get_state(client, "standings_last_final_at")
+    if (
+        last_final is not None
+        and (now - parse_utc_iso(last_final)).total_seconds()
+        < STANDINGS_FOLLOW_UP_SECONDS
+    ):
+        run_on_interval(
+            client,
+            "standings_refresh",
+            lambda: _refresh_standings(client),
+            "standings_last_run_at",
+            "standings_last_success_at",
+            STANDINGS_FOLLOW_UP_INTERVAL_SECONDS,
+        )
+
+
 def _run_user_profiles_refresh(client: D1Client) -> None:
     """Recompute + rewrite every active user's user:{user_id}:season:{season}
     KV key on its own cadence (USER_PROFILES_INTERVAL_SECONDS), unconditional
@@ -490,6 +543,7 @@ def main() -> None:
     # is_complete's flip timing matters for this ordering).
     soft(client, "games_kv_write", write_incomplete_weeks_games)
     _run_finished_game_stats(client)
+    _run_standings_refresh(client, now)
     _run_win_probability_capture(client)
     # Unconditional, not just from inside the CBS live branch - is_current
     # can flip to a new week (housekeeping runs daily, independent of

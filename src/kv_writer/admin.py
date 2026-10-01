@@ -183,6 +183,10 @@ def write_admin_status() -> None:
             "last_at": state.get("win_probability_last_run_at"),
             "last_success_at": state.get("win_probability_last_success_at"),
         },
+        "standings_refresh": {
+            "last_at": state.get("standings_last_run_at"),
+            "last_success_at": state.get("standings_last_success_at"),
+        },
         "scoring_plays_refresh": {
             "last_at": state.get("scoring_plays_last_run_at"),
             "last_success_at": state.get("scoring_plays_last_success_at"),

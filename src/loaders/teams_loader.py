@@ -2,6 +2,9 @@
 
 Usage: uv run python -m src.loaders.teams_loader [local|prod]
 
+load_standings() refreshes only the standings columns (one Sports IO call),
+for after games finish - see orchestration's _run_standings_refresh().
+
 - sports io team model does not have conference/division, read from standings
 - No CBS id is set during load, that needs to happen when CBS data is loaded
 - using sports_io_team_id for upserts since most data is linked there
@@ -23,9 +26,9 @@ logger = logging.getLogger(__name__)
 _UPSERT_SQL = """
 INSERT INTO teams (
     name, season, city, abbreviation, established, logo,
-    conference, division, wins, losses, ties, sports_io_team_id
+    conference, division, wins, losses, ties, division_rank, sports_io_team_id
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(sports_io_team_id) DO UPDATE SET
     name = excluded.name,
     season = excluded.season,
@@ -37,7 +40,14 @@ ON CONFLICT(sports_io_team_id) DO UPDATE SET
     division = excluded.division,
     wins = excluded.wins,
     losses = excluded.losses,
-    ties = excluded.ties
+    ties = excluded.ties,
+    division_rank = excluded.division_rank
+"""
+
+_UPDATE_STANDINGS_SQL = """
+UPDATE teams SET conference = ?, division = ?, wins = ?, losses = ?, ties = ?,
+    division_rank = ?
+WHERE sports_io_team_id = ?
 """
 
 
@@ -66,6 +76,7 @@ def load_teams() -> None:
         wins = standing.won if standing else None
         losses = standing.lost if standing else None
         ties = standing.ties if standing else None
+        division_rank = standing.position if standing else None
         statements.append(
             (
                 _UPSERT_SQL,
@@ -81,6 +92,7 @@ def load_teams() -> None:
                     wins,
                     losses,
                     ties,
+                    division_rank,
                     team.id,
                 ],
             )
@@ -94,6 +106,30 @@ def load_teams() -> None:
     sql_batch_call(statements, client)
 
     logger.info("Teams load complete")
+
+
+def load_standings() -> None:
+    """Standings columns only - teams already exist from load_teams()"""
+    statements: list[Statement] = [
+        (
+            _UPDATE_STANDINGS_SQL,
+            [
+                standing.conference,
+                standing.division,
+                standing.won,
+                standing.lost,
+                standing.ties,
+                standing.position,
+                standing.team.id,
+            ],
+        )
+        for standing in get_standings()
+    ]
+    if not statements:
+        logger.warning("No standings to load")
+        return
+    sql_batch_call(statements, get_d1())
+    logger.info("Standings updated for %d teams", len(statements))
 
 
 def main() -> None:
