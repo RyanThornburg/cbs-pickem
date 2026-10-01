@@ -1088,6 +1088,24 @@ src.kv_writer.__main__`).
   order is only as fresh as the last `load_standings()`. No playoff
   seeding. Written by `_run_standings_refresh()` (see Orchestration) and
   daily housekeeping.
+- `write_team_profiles(team_ids=None)` → `team:{season}:{team_id}` (added
+  2026-09-30, `team_profiles.py`) - one key per team: `team` (with
+  conference/division), straight-up `record`, `ats` against the CBS line
+  split overall/home/away/favorite/underdog, `pool` (the pool's record
+  `picked` and `against` them, same shape as a user profile's `records`,
+  plus `believers`/`faders`: every user who picked them/against them with
+  their record, most picks first), and `games`, the whole schedule
+  (`line` is this team's side of `cbs_spread`, `covered`/`result` null
+  until FINAL, `pool_picked`/`pool_against` counts). Uses every user's
+  picks (like the season trends), not just active users. Written by
+  `orchestration._run_team_profiles_refresh()` every tick, but only for
+  the two teams of a game whose fingerprint (`game_fingerprints()`:
+  status, line, score once FINAL, pick count, graded count, correct
+  count) differs from the last successful write, saved as JSON in
+  `orchestration_state.team_profiles_games` - so a pick reveal or CBS
+  grading rewrites two keys, a live score change doesn't. Daily
+  housekeeping rewrites all 32 as a backstop. `team_profiles_write` in
+  `meta:admin`.
 - `write_historical()` → `meta:historical` — see `db/CLAUDE.md`'s
   `historical_standings` section for what feeds this.
 - `write_user_profiles()` → `user:{user_id}:season:{season}`, one key per

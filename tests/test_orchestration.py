@@ -49,6 +49,7 @@ TASKS = (
     "write_season_standings",
     "write_recent_weeks_recap",
     "write_user_profiles",
+    "write_team_profiles",
     "write_game_details",
     "write_admin_status",
 )
@@ -305,6 +306,71 @@ class TestStandingsRefresh:
         assert tasks.count("write_season_standings") == 2
 
 
+class TestTeamProfilesRefresh:
+    def _written(self, tasks: Recorder) -> list[set[int] | None]:
+        # housekeeping's backstop passes no argument
+        return [args[0] for args in tasks.args.get("write_team_profiles", []) if args]
+
+    def test_only_the_teams_of_changed_games(
+        self,
+        tasks: Recorder,
+        seed: Seed,
+        d1: FakeD1,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        week = seed.week(1)
+        home, away, other_home, other_away = (seed.team() for _ in range(4))
+        game = seed.game(week, home_team_id=home, away_team_id=away, status="SCHEDULED")
+        seed.game(
+            week, home_team_id=other_home, away_team_id=other_away, status="SCHEDULED"
+        )
+        user = seed.user("a")
+
+        orchestration.main()  # nothing saved yet - every team
+        assert self._written(tasks) == [{home, away, other_home, other_away}]
+
+        freeze_all(monkeypatch, QUIET + timedelta(minutes=1))
+        orchestration.main()  # nothing changed
+        assert len(self._written(tasks)) == 1
+
+        seed.pick(user, game, home)  # a pick revealed
+        orchestration.main()
+        d1.query(
+            "UPDATE user_picks SET is_correct = 1 WHERE game_id = ?", [game]
+        )  # then graded
+        orchestration.main()
+        assert self._written(tasks)[1:] == [{home, away}, {home, away}]
+
+    def test_a_live_score_doesnt_rewrite(
+        self, tasks: Recorder, seed: Seed, d1: FakeD1
+    ) -> None:
+        game = _game_at(seed, QUIET + timedelta(days=3))
+        orchestration.main()
+        d1.query(
+            "UPDATE games SET status = 'IN_PROGRESS', home_score = 7, away_score = 0 "
+            "WHERE game_id = ?",
+            [game],
+        )
+        orchestration.main()
+        d1.query("UPDATE games SET home_score = 14 WHERE game_id = ?", [game])
+        orchestration.main()
+        # the first write, then the status change - not the score
+        assert len(self._written(tasks)) == 2
+
+    def test_failure_retries_next_tick(
+        self, tasks: Recorder, seed: Seed, d1: FakeD1
+    ) -> None:
+        _game_at(seed, QUIET + timedelta(days=3))
+        tasks.fail["write_team_profiles"] = RuntimeError("KV down")
+        orchestration.main()
+        assert get_state(d1, "team_profiles_games") is None
+
+        del tasks.fail["write_team_profiles"]
+        orchestration.main()
+        assert get_state(d1, "team_profiles_games") is not None
+        assert get_state(d1, "team_profiles_last_success_at") is not None
+
+
 class TestFinishedGameStats:
     def _week(self, seed: Seed, statuses: list[str]) -> int:
         week_id = seed.week(3)
@@ -440,6 +506,7 @@ class TestEndToEnd:
             assert key in keys, key
         assert any(k.startswith("game:") and k.endswith(":details") for k in keys)
         assert any(k.startswith("user:") for k in keys)
+        assert sum(k.startswith(f"team:{SEASON}:") for k in keys) == 32
 
         # the finished week's final stats landed and it's marked complete
         (week_row,) = d1.query(

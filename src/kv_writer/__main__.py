@@ -14,6 +14,7 @@ from src.kv_writer import (
     write_meta_current,
     write_season_standings,
     write_season_trends,
+    write_team_profiles,
     write_user_profiles,
 )
 
@@ -31,6 +32,7 @@ def main() -> None:
     write_current_week_recap()
     write_historical()
     write_user_profiles()
+    write_team_profiles()
     write_admin_status()
 
 

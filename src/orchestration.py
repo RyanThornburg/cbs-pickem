@@ -6,6 +6,7 @@ nothing (a couple of cheap local D1 checks)
 Usage: uv run python -m src.orchestration [local|prod]
 """
 
+import json
 import logging
 import sys
 from collections.abc import Callable
@@ -17,6 +18,7 @@ from db.clients import get_d1
 from db.d1_client import D1Client
 from src.game_rules import DONE_STATUSES, LIVE_WINDOW_HOURS, sql_list
 from src.kv_writer import (
+    game_fingerprints,
     write_admin_status,
     write_current_week_games,
     write_current_week_leaderboard,
@@ -28,6 +30,7 @@ from src.kv_writer import (
     write_recent_weeks_recap,
     write_season_standings,
     write_season_trends,
+    write_team_profiles,
     write_user_profiles,
 )
 from src.loaders.cbs_loader import load_cbs_games, load_cbs_user_picks, load_cbs_weeks
@@ -258,6 +261,7 @@ def _housekeeping() -> None:
         ("load_games_data", load_games_data),  # full schedule/weeks refresh
         ("load_teams", load_teams),  # team win/loss/tie records
         ("write_season_standings", write_season_standings),
+        ("write_team_profiles", write_team_profiles),  # every team, backstop
         ("load_cbs_weeks", load_cbs_weeks),
         ("load_cbs_games", load_cbs_games),
         ("load_espn_games", load_espn_games),  # neutral_site, incomplete weeks
@@ -492,6 +496,36 @@ def _run_standings_refresh(client: D1Client, now: datetime) -> None:
         )
 
 
+def _run_team_profiles_refresh(client: D1Client) -> None:
+    """Rewrite team:{season}:{team_id} for both teams of every game whose
+    fingerprint (status, line, final score, pick and grade counts - see
+    team_profiles.py) changed since the last write. The first run has
+    nothing saved, so it writes every team. The fingerprints are only
+    saved once the write worked, so a failure retries next tick."""
+    fingerprints = game_fingerprints(client)
+    saved = json.loads(get_state(client, "team_profiles_games") or "{}")
+    team_ids = {
+        team_id
+        for game_id, (fingerprint, home_id, away_id) in fingerprints.items()
+        if saved.get(game_id) != fingerprint
+        for team_id in (home_id, away_id)
+    }
+    if not team_ids:
+        return
+    if run_and_record(
+        client,
+        "team_profiles_write",
+        lambda: write_team_profiles(team_ids),
+        "team_profiles_last_run_at",
+        "team_profiles_last_success_at",
+    ):
+        set_state(
+            client,
+            "team_profiles_games",
+            json.dumps({gid: fp for gid, (fp, _, _) in fingerprints.items()}),
+        )
+
+
 def _run_user_profiles_refresh(client: D1Client) -> None:
     """Recompute + rewrite every active user's user:{user_id}:season:{season}
     KV key on its own cadence (USER_PROFILES_INTERVAL_SECONDS), unconditional
@@ -555,6 +589,7 @@ def main() -> None:
     soft(client, "season_trends_kv_write", write_season_trends)
     _run_recap_refresh(client)
     _run_user_profiles_refresh(client)
+    _run_team_profiles_refresh(client)
     # last, so it reflects every failure recorded above
     soft(client, "admin_kv_write", write_admin_status)
 

@@ -37,6 +37,7 @@ from src.kv_writer.recap import (
 )
 from src.kv_writer.shared import write_meta_current
 from src.kv_writer.standings import write_season_standings
+from src.kv_writer.team_profiles import game_fingerprints, write_team_profiles
 from src.kv_writer.trends import (
     write_current_week_trends,
     write_season_trends,
@@ -47,6 +48,7 @@ from src.kv_writer.user_profiles import write_user_profiles
 __all__ = [
     "compute_week_leaderboard",
     "compute_week_recap",
+    "game_fingerprints",
     "write_admin_status",
     "write_current_week_game_details",
     "write_current_week_games",
@@ -62,6 +64,7 @@ __all__ = [
     "write_recent_weeks_recap",
     "write_season_standings",
     "write_season_trends",
+    "write_team_profiles",
     "write_user_profiles",
     "write_week_game_details",
     "write_week_games",
