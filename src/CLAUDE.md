@@ -193,7 +193,11 @@ already never took `env` (see `config/CLAUDE.md`).
   over the first `FORECAST_WINDOW_HOURS` (3) after kickoff. That's
   deliberately shorter than `GAME_DURATION_HOURS` (4, alert filtering
   only), since weather in the last hour barely matters. A kickoff off the
-  hour (e.g. 8:15) touches one extra hourly entry. A kickoff past the hourly horizon (168h) but within
+  hour (e.g. 8:15) touches one extra hourly entry. `forecast_hours_json`
+  is separate: always `FORECAST_HOURS_SHOWN` (4) entries from kickoff's
+  own hour, so the UI can show four forecast icons for every game (1:00
+  -> 1-4PM, 8:15 -> 8-11PM; added 2026-09-30, before that it was the
+  window's own entries, three for an on-the-hour game). A kickoff past the hourly horizon (168h) but within
   daily's (8 days) falls back to that day's `daily` entry
   (`games.forecast_source = 'daily'`, whole-day values: no kickoff
   temp/feels-like, window temps are the day's min/max) and is replaced
@@ -763,10 +767,11 @@ src.kv_writer.__main__`).
   when the kickoff hour itself looks fine. `forecast.source` is `"hourly"` or
   `"daily"` (see `pregame_weather_loader.py` above) so the UI can label a
   coarser day-level forecast. `during_game.hours` (added 2026-09-27,
-  `games.forecast_hours_json`) is every hourly entry in that window
-  (time/temp/condition/icon/precip/wind, chronological) so the UI can
-  show which way it's trending - the aggregates beside it are computed
-  from exactly these entries, kept for at-a-glance use. Empty for a
+  `games.forecast_hours_json`) is always four hourly entries from
+  kickoff's own hour (time/temp/condition/icon/precip/wind,
+  chronological) so the UI can show four icons and which way it's
+  trending. The aggregates beside it cover only the 3-hour window, so on
+  an on-the-hour game the fourth entry isn't in them. Empty for a
   daily-source forecast. Stored as one JSON text column rather than a
   child table since it's only ever read whole and replaced every capture. Each of `home_team`/`away_team` also
   carries a `record` (`{wins, losses, ties}`, added 2026-09-15 from

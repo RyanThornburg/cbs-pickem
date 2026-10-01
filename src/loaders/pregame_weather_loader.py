@@ -43,6 +43,11 @@ GAME_DURATION_HOURS = 4
 # the game, while the last hour barely matters since the game is ending.
 FORECAST_WINDOW_HOURS = 3
 
+# forecast_hours_json is always this many hourly entries, starting with
+# kickoff's own hour - the UI shows four forecast icons for every game, so
+# a 1:00 kickoff gets 1-4PM and an 8:15 kickoff gets 8-11PM.
+FORECAST_HOURS_SHOWN = 4
+
 _UPDATE_FORECAST_SQL = """
 UPDATE games SET
     forecast_temp_f = ?, forecast_feels_like_f = ?, forecast_condition = ?, forecast_icon = ?,
@@ -84,6 +89,7 @@ def load_pregame_weather() -> None:
             f"game_id={row['game_id']}",
             kickoff=game_time,
             window_hours=FORECAST_WINDOW_HOURS,
+            hours_shown=FORECAST_HOURS_SHOWN,
             alert_window_hours=GAME_DURATION_HOURS,
         )
         if source is None:

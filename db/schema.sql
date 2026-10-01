@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS games (
     forecast_window_temp_f_low INT,
     forecast_window_temp_f_high INT,
     forecast_window_snow_accum_in DECIMAL(4,1),
-    forecast_hours_json TEXT, -- JSON array, one object per hourly entry in the window ('[]' for a daily-source forecast)
+    forecast_hours_json TEXT, -- JSON array, always FORECAST_HOURS_SHOWN (4) hourly entries from kickoff's hour ('[]' for a daily-source forecast)
     forecast_source VARCHAR(10), -- 'hourly', or 'daily' when kickoff was past the hourly horizon (whole-day values, no kickoff temp)
     forecast_captured_at TIMESTAMP,
     FOREIGN KEY (week_id) REFERENCES weeks(week_id),

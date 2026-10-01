@@ -217,12 +217,16 @@ def _hour_entry(point: DataPoint) -> dict[str, Any]:
     }
 
 
-def _window_summary(points: list[DataPoint]) -> WeatherWindow:
+def _window_summary(
+    points: list[DataPoint], shown_points: list[DataPoint]
+) -> WeatherWindow:
     """WeatherWindow across a run of hourly entries. precip_type is whatever's forecast at the wettest hour, not
     just the first non-null one - that's the hour that actually matters.
-    hours_json is every entry itself (chronological, JSON text), so a UI
-    can see which way it's trending - the aggregates alone can't say
-    whether rain is rolling in or clearing out."""
+    hours_json is shown_points themselves (chronological, JSON text), so a
+    UI can see which way it's trending - the aggregates alone can't say
+    whether rain is rolling in or clearing out. A separate list from
+    points, since the UI always shows a fixed number of hours while the
+    aggregates cover the game window."""
     if not points:
         return _NO_WINDOW
 
@@ -246,7 +250,7 @@ def _window_summary(points: list[DataPoint]) -> WeatherWindow:
         temp_f_high=round(max(temps)) if temps else None,
         snow_accumulation_in=round(sum(snow), 1) if snow else None,
         hours_json=json.dumps(
-            [_hour_entry(p) for p in sorted(points, key=lambda p: p.time)]
+            [_hour_entry(p) for p in sorted(shown_points, key=lambda p: p.time)]
         ),
     )
 
@@ -304,6 +308,7 @@ def capture_pregame_forecast(
     context: str,
     kickoff: datetime,
     window_hours: float,
+    hours_shown: int,
     alert_window_hours: float,
 ) -> tuple[str | None, Weather, WeatherWindow]:
     """(source, kickoff, window) forecast for a game that hasn't started yet.
@@ -313,9 +318,12 @@ def capture_pregame_forecast(
       whose hour contains kickoff - not `currently`, which would just be
       conditions whenever this capture happened to run (e.g. Tuesday's
       weather for a Sunday game).
-    - window: see _window_summary(), across the hourly entries overlapping
-      [kickoff, kickoff + window_hours) - catches rain/wind forecast to roll
-      in after kickoff but while the game's still being played.
+    - window: see _window_summary(). The aggregates cover the hourly entries
+      overlapping [kickoff, kickoff + window_hours) - catches rain/wind
+      forecast to roll in after kickoff but while the game's still being
+      played. hours_json is always hours_shown entries starting with
+      kickoff's own hour, on the hour or not (hours_shown=4: a 1:00 kickoff
+      gets 1-4PM, an 8:15 kickoff 8-11PM).
 
     source "daily": kickoff is past the hourly horizon (168h, confirmed live
     2026-09-27) but within daily's (8 days) - the kickoff day's entry, see
@@ -346,10 +354,14 @@ def capture_pregame_forecast(
         window_points = [
             p for p in hourly if p.time < window_end_ts and p.time + 3600 > kickoff_ts
         ]
+        shown_end_ts = kickoff_point.time + hours_shown * 3600
+        shown_points = [
+            p for p in hourly if kickoff_point.time <= p.time < shown_end_ts
+        ]
         return (
             "hourly",
             _datapoint_to_weather(kickoff_point, alerts),
-            _window_summary(window_points),
+            _window_summary(window_points, shown_points),
         )
 
     # daily entries start at local midnight, so the next entry's time (not

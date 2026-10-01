@@ -378,20 +378,29 @@ class TestPregameWeather:
             assert row["forecast_temp_f"] == round(hour["temperature"])
             assert row["forecast_icon"] == hour["icon"]
             hours = json.loads(row["forecast_hours_json"])
-            # every hourly entry overlapping [kickoff, kickoff + window) -
-            # a 00:15 kickoff touches one more hour than the window's length
+            # always FORECAST_HOURS_SHOWN entries from kickoff's own hour,
+            # whether kickoff is on the hour or not
+            kickoff_hour = int(kickoff.timestamp()) // 3600 * 3600
+            shown = [
+                kickoff_hour + i * 3600
+                for i in range(pregame_weather_loader.FORECAST_HOURS_SHOWN)
+            ]
+            assert [h["time"] for h in hours] == [
+                datetime.fromtimestamp(t, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+                for t in shown
+            ]
+            # the aggregates only cover entries overlapping
+            # [kickoff, kickoff + FORECAST_WINDOW_HOURS)
             window_end = (
                 kickoff.timestamp()
                 + pregame_weather_loader.FORECAST_WINDOW_HOURS * 3600
             )
-            expected = [
+            window = [
                 t for t in hourly if t < window_end and t + 3600 > kickoff.timestamp()
             ]
-            assert [h["time"] for h in hours] == [
-                datetime.fromtimestamp(t, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-                for t in expected
-            ]
-            assert row["forecast_window_temp_f_low"] == min(h["temp_f"] for h in hours)
+            assert row["forecast_window_temp_f_low"] == round(
+                min(hourly[t]["temperature"] for t in window)
+            )
             assert json.loads(row["forecast_alerts_json"]) == []
 
     def test_only_the_current_weeks_scheduled_games(
