@@ -1,6 +1,6 @@
 """Fast live refresh - a game_snapshots capture from ESPN every 15 seconds
 during games, and a rewrite of the games KV key for any week whose
-snapshot changed.
+snapshot changed, plus that game's details key (live win probability).
 
 src/orchestration.py only ticks once a minute, and that tick can take 40+
 seconds, so the scoreboard was routinely a minute or more behind ESPN's
@@ -21,7 +21,7 @@ import time
 from config.config import cli_env, configure_logging, load_env
 from db.clients import get_d1
 from db.d1_client import D1Client
-from src.kv_writer import write_games_weeks
+from src.kv_writer import write_game_details, write_games_weeks
 from src.loaders.game_snapshots_loader import has_candidate_games, load_game_snapshots
 from src.scheduling import acquire_lock, run_and_record, soft
 
@@ -48,6 +48,8 @@ def _round(client: D1Client) -> None:
 
     if changed:
         soft(client, "live_games_kv_write", lambda: write_games_weeks(changed))
+        # the live win probability curve in each changed game's details key
+        soft(client, "live_game_details_write", lambda: write_game_details(changed))
 
 
 def main() -> None:

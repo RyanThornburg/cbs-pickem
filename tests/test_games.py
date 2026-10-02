@@ -701,6 +701,7 @@ class TestGameDetails:
             "box_score",
             "players",
             "win_probability",
+            "win_probability_source",
         }
         home_box = details["box_score"]["home"]
         assert {"stat_id", "game_id", "team_id"}.isdisjoint(home_box)
@@ -713,6 +714,7 @@ class TestGameDetails:
         } <= set(home_box)
         assert set(details["players"]["home"]["passing"][0]) == PLAYER_LINE_FIELDS
         assert details["win_probability"] == [{"period": 0, "home_win_pct": 55.0}]
+        assert details["win_probability_source"] == "final"
 
     def test_game_with_no_data_is_skipped(self, clients: Clients, board: Board) -> None:
         game = board.game()
@@ -722,6 +724,89 @@ class TestGameDetails:
     def test_nothing_to_write(self, clients: Clients) -> None:
         game_details.write_game_details([])
         assert clients.kv.values == {}
+
+    def test_live_win_probability_from_snapshots(
+        self, clients: Clients, board: Board
+    ) -> None:
+        game = board.game(status="IN_PROGRESS")
+        snap = {"quarter": 1, "time_remaining": "15:00", "home_score": 0}
+        board.snapshot(game, **snap, home_win_pct=55.0, away_score=0)
+        # a timeout: snapshot changed, the point didn't
+        board.snapshot(game, **snap, home_win_pct=55.0, away_score=0)
+        # no win probability (e.g. halftime) - skipped
+        board.snapshot(game, **snap, home_win_pct=None, away_score=0)
+        board.snapshot(
+            game,
+            quarter=1,
+            time_remaining="9:12",
+            home_win_pct=41.3,
+            home_score=0,
+            away_score=7,
+        )
+        board.snapshot(
+            game,
+            quarter=1,
+            time_remaining="8:40",
+            home_win_pct=39.0,
+            home_score=0,
+            away_score=7,
+        )
+
+        details = _details(clients, game)
+
+        assert details["win_probability_source"] == "live"
+        assert details["win_probability"] == [
+            {
+                "period": 1,
+                "clock": "15:00",
+                "home_win_pct": 55.0,
+                "home_score": 0,
+                "away_score": 0,
+                "scoring_play": False,
+            },
+            {
+                "period": 1,
+                "clock": "9:12",
+                "home_win_pct": 41.3,
+                "home_score": 0,
+                "away_score": 7,
+                "scoring_play": True,
+            },
+            {
+                "period": 1,
+                "clock": "8:40",
+                "home_win_pct": 39.0,
+                "home_score": 0,
+                "away_score": 7,
+                "scoring_play": False,
+            },
+        ]
+
+    def test_final_curve_replaces_snapshots(
+        self, clients: Clients, board: Board, d1: FakeD1
+    ) -> None:
+        game = board.game(status="FINAL")
+        board.snapshot(game, quarter=4, home_win_pct=99.0, home_score=7, away_score=0)
+        curve = [{"period": 0, "home_win_pct": 55.0}]
+        d1.query(
+            "INSERT INTO game_win_probability (game_id, points_json) VALUES (?, ?)",
+            [game["game_id"], json.dumps(curve)],
+        )
+
+        details = _details(clients, game)
+
+        assert details["win_probability"] == curve
+        assert details["win_probability_source"] == "final"
+
+    def test_no_win_probability_yet(self, clients: Clients, board: Board) -> None:
+        game = board.game(status="IN_PROGRESS")
+        board.player(game, "home", "Passing", "QB", yards=40)
+        board.snapshot(game, quarter=1, home_win_pct=None)
+
+        details = _details(clients, game)
+
+        assert details["win_probability"] is None
+        assert details["win_probability_source"] is None
 
     def test_box_score_needs_both_teams(self, clients: Clients, board: Board) -> None:
         game = board.game(status="IN_PROGRESS")

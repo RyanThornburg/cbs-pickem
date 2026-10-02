@@ -32,6 +32,16 @@ _WIN_PROBABILITY_SQL = """
 SELECT game_id, points_json FROM game_win_probability WHERE game_id IN ({})
 """
 
+# games with no ESPN curve yet only - a FINAL game's curve replaces this
+_SNAPSHOT_POINTS_SQL = """
+SELECT game_id, quarter, time_remaining, home_win_pct, home_score, away_score
+FROM game_snapshots
+WHERE game_id IN ({})
+    AND home_win_pct IS NOT NULL
+    AND game_id NOT IN (SELECT game_id FROM game_win_probability)
+ORDER BY game_id, snapshot_id
+"""
+
 _WEEK_GAME_IDS_SQL = """
 SELECT g.game_id
 FROM games g
@@ -152,10 +162,38 @@ def _players(game: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]
     }
 
 
+def _snapshot_points(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """one game's snapshots as win probability points, the same shape as
+    ESPN's FINAL curve. A snapshot is taken every 15 seconds at most, so a
+    play followed by another inside one poll is missing. A snapshot can
+    change without the point changing (a timeout, a new down), so repeats
+    are dropped; scoring_play is a score change from the last point."""
+    points: list[dict[str, Any]] = []
+    for row in rows:
+        point = {
+            "period": row["quarter"],
+            "clock": row["time_remaining"],
+            "home_win_pct": row["home_win_pct"],
+            "home_score": row["home_score"],
+            "away_score": row["away_score"],
+            "scoring_play": False,
+        }
+        if points:
+            last = points[-1]
+            if {**last, "scoring_play": False} == point:
+                continue
+            point["scoring_play"] = (point["home_score"], point["away_score"]) != (
+                last["home_score"],
+                last["away_score"],
+            )
+        points.append(point)
+    return points
+
+
 def write_game_details(game_ids: Iterable[int]) -> None:
     """Write game:{season}:{game_id}:details for each game - everything
     about one game that the scoreboard itself doesn't need: team box
-    score, player box score and ESPN's full win probability curve. Each
+    score, player box score and the win probability curve. Each
     part is None until its data exists; a game with none of them yet is
     skipped rather than written empty."""
     game_ids = sorted(set(game_ids))
@@ -178,20 +216,30 @@ def write_game_details(game_ids: Iterable[int]) -> None:
         row["game_id"]: json.loads(row["points_json"])
         for row in rows(_WIN_PROBABILITY_SQL)
     }
+    snapshot_rows: defaultdict[int, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows(_SNAPSHOT_POINTS_SQL):
+        snapshot_rows[row["game_id"]].append(row)
 
     kv = get_kv()
     written = 0
     for game in rows(_GAMES_SQL):
         game_id = game["game_id"]
+        # ESPN's curve once the game is FINAL (one point per play plus a
+        # pre-kickoff point, period 0), the live snapshots until then
+        if game_id in win_probability:
+            curve, source = win_probability[game_id], "final"
+        elif snapshot_rows[game_id]:
+            curve, source = _snapshot_points(snapshot_rows[game_id]), "live"
+        else:
+            curve, source = None, None
         details = {
             "box_score": _box_score(game, team_stats[game_id], player_rows[game_id]),
             "players": _players(game, player_rows[game_id]),
-            # ESPN, chronological, one point per play plus a pre-kickoff
-            # point (period 0) - only once the game is FINAL
-            "win_probability": win_probability.get(game_id),
+            "win_probability": curve,
         }
         if all(value is None for value in details.values()):
             continue
+        details["win_probability_source"] = source
         kv.write(
             f"game:{SEASON}:{game_id}:details",
             {"game_id": game_id, "updated_at": utc_iso(), **details},

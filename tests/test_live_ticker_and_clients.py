@@ -41,6 +41,7 @@ class TestLiveTicker:
             "candidates": True,
             "rounds": [],  # what each snapshot round returns (changed game ids)
             "writes": [],
+            "details": [],
         }
 
         def snapshots() -> set[int]:
@@ -59,6 +60,11 @@ class TestLiveTicker:
             "write_games_weeks",
             lambda ids: state["writes"].append(set(ids)),
         )
+        monkeypatch.setattr(
+            live_ticker,
+            "write_game_details",
+            lambda ids: state["details"].append(set(ids)),
+        )
         return state
 
     def test_four_rounds_on_the_quarter_minute(
@@ -74,6 +80,8 @@ class TestLiveTicker:
         assert clock.slept == [13, 13, 13]  # 15s apart, less each round's 2s
         # the games key is rewritten only when a snapshot changed
         assert ticker["writes"] == [{1}, {1, 2}]
+        # and the changed games' details keys (live win probability)
+        assert ticker["details"] == [{1}, {1, 2}]
         assert get_state(d1, "game_snapshot_last_success_at") is not None
 
     def test_outside_game_time(self, ticker: dict[str, Any], d1: FakeD1) -> None:
@@ -111,6 +119,8 @@ class TestLiveTicker:
             r["source"] for r in d1.query("SELECT source FROM system_events").results
         ]
         assert sources == ["live_games_kv_write"]
+        # the details write still ran
+        assert ticker["details"] == [{1}]
 
 
 class FakeResponse:

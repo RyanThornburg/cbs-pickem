@@ -678,12 +678,17 @@ seconds on a game day, so looping inside it wasn't an option. ESPN has no
 quota and one call covers every game, so 4 calls a minute costs nothing
 against any API budget; Sports IO, CBS and The Odds API aren't touched.
 KV cost is about 3 extra games-key writes a minute during games.
+Since 2026-10-02 each round also rewrites the changed games'
+`game:{season}:{game_id}:details` keys, for the live win probability
+curve (up to 4 writes a minute per live game, more KV writes than the
+games key since it's one key per game, not per week).
 
 It sets the same `game_snapshot_last_capture_at`/`game_snapshot_last_success_at`
 cursors orchestration used to, so `meta:admin`'s `game_snapshot_capture`
 still reports it - if that goes quiet during a game, the ticker's cron
 line isn't running. Failures are `soft()` like everything else
-(`game_snapshot_capture`, `live_games_kv_write` in `system_events`). Both
+(`game_snapshot_capture`, `live_games_kv_write`,
+`live_game_details_write` in `system_events`). Both
 processes can write the same week's games key in the same second, over
 KV's one-write-per-second-per-key limit, so `KVClient.write()` retries a
 429 once after `RATE_LIMIT_RETRY_SECONDS`.
@@ -822,8 +827,8 @@ src.kv_writer.__main__`).
   (added 2026-09-27, `src/kv_writer/game_details.py`) — everything about
   one game the scoreboard itself doesn't need, ~50KB a game, only fetched
   when someone opens a game: `{game_id, updated_at, box_score, players,
-  win_probability}`, each part `None` until its data exists (a game with
-  none of them is skipped, not written empty).
+  win_probability, win_probability_source}`, each part `None` until its
+  data exists (a game with none of them is skipped, not written empty).
   `box_score` is `{home, away}`, every `game_team_stats` column minus its
   ids, plus `punts`/`punt_yards`/`punt_average` (added 2026-09-27) summed
   from that team's `Punting` player lines, since Sports IO's team stats
@@ -834,10 +839,21 @@ src.kv_writer.__main__`).
   (group keys lowercased: `passing`, `kick_returns`, ...), each line
   `{name, sports_io_player_id, image, stats}`, ranked by that group's
   main stat (yards, tackles for `defensive`, points for `kicking`).
-  `win_probability` is ESPN's full per-play curve from
-  `game_win_probability`, only once the game is FINAL: chronological
+  `win_probability` is chronological
   `{period, clock, home_win_pct, home_score, away_score, scoring_play}`,
-  starting with a pre-kickoff point (period 0, no clock, 0-0).
+  and `win_probability_source` says where it came from. `"final"`: ESPN's
+  full per-play curve from `game_win_probability`, once the game is FINAL,
+  starting with a pre-kickoff point (period 0, no clock, 0-0). `"live"`
+  (added 2026-10-02): built from `game_snapshots` until then, one point
+  per snapshot with a win probability, repeats dropped, `scoring_play` =
+  the score changed since the last point. Snapshots are 15s apart at
+  most, so a play followed by another inside one poll is missing, there's
+  no pre-kickoff point, and a touchdown and its extra point usually show
+  as two scoring points at the same clock (ESPN folds them into one). It
+  also has points where only the clock moved. Checked read-only against
+  prod's week 4 TNF game: 232 live points vs ESPN's 195, same scores and
+  ending, ~23KB. `None` (source too) before the first snapshot with a win
+  probability. The live ticker rewrites it for changed games every round.
   Written write-through for changed games only, via orchestration's
   `_write_game_details()` (soft-fail) from the live team stats, live
   player stats, finished-game and win-probability steps;
