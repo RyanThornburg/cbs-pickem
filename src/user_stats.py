@@ -220,11 +220,43 @@ def _record(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+_SIDE_ROLES = (
+    ("home", "favorite"),
+    ("home", "underdog"),
+    ("away", "favorite"),
+    ("away", "underdog"),
+)
+
+# by the picked team's own line, edges on 3 and 7 (the key numbers)
+_SPREAD_BUCKETS = (
+    "big_favorite",
+    "mid_favorite",
+    "small_favorite",
+    "pickem",
+    "small_underdog",
+    "mid_underdog",
+    "big_underdog",
+)
+
+
+def _spread_bucket(line: float) -> str:
+    """big = 7+, mid = 3.5 to 6.5, small = 0.5 to 3 (lines are half points)"""
+    if line == 0:
+        return "pickem"
+    size = abs(line)
+    tier = "big" if size >= 7 else "mid" if size > 3 else "small"
+    return f"{tier}_{'favorite' if line < 0 else 'underdog'}"
+
+
 def _pick_records(user_rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Plain W-L records, nothing filtered or ranked: by side of the pick
-    (home/away/favorite/underdog, pick'ems in neither of the last two) and
-    per team, picking that team and picking against it."""
+    (home/away/favorite/underdog, pick'ems in neither of the last two), by
+    side and role together (pick'ems left out), by the picked team's line,
+    and per team, picking that team and picking against it. The side/role
+    and spread lists always carry every bucket, in a fixed order."""
     by_side: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_side_role: defaultdict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    by_bucket: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
     for_team: defaultdict[int, list[dict[str, Any]]] = defaultdict(list)
     against_team: defaultdict[int, list[dict[str, Any]]] = defaultdict(list)
     team_dict_by_id: dict[int, dict[str, Any]] = {}
@@ -232,10 +264,16 @@ def _pick_records(user_rows: list[dict[str, Any]]) -> dict[str, Any]:
         picked = row["picked_team_id"]
         is_home = picked == row["home_team_id"]
         opponent = row["away_team_id"] if is_home else row["home_team_id"]
-        by_side["home" if is_home else "away"].append(row)
+        side = "home" if is_home else "away"
+        by_side[side].append(row)
         favorite = _is_favorite(row, is_home)
         if favorite is not None:
-            by_side["favorite" if favorite else "underdog"].append(row)
+            role = "favorite" if favorite else "underdog"
+            by_side[role].append(row)
+            by_side_role[(side, role)].append(row)
+        if row["cbs_spread"] is not None:
+            line = row["cbs_spread"] if is_home else -row["cbs_spread"]
+            by_bucket[_spread_bucket(line)].append(row)
         for_team[picked].append(row)
         against_team[opponent].append(row)
         team_dict_by_id[picked] = _game_team_dict(picked, row)
@@ -256,6 +294,14 @@ def _pick_records(user_rows: list[dict[str, Any]]) -> dict[str, Any]:
             side: _record(by_side[side])
             for side in ("home", "away", "favorite", "underdog")
         },
+        "side_roles": [
+            {"side": side, "role": role, **_record(by_side_role[(side, role)])}
+            for side, role in _SIDE_ROLES
+        ],
+        "spread_buckets": [
+            {"bucket": bucket, **_record(by_bucket[bucket])}
+            for bucket in _SPREAD_BUCKETS
+        ],
         "teams": teams,
     }
 

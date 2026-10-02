@@ -149,6 +149,64 @@ class TestPickRecords:
             "win_pct": None,
         }
 
+    def test_side_roles(self) -> None:
+        rows = [
+            _pick_row(1, True, spread=-3.0),  # home favorite
+            _pick_row(1, False, spread=3.0),  # home underdog
+            _pick_row(2, True, spread=3.0),  # away favorite
+            _pick_row(2, None, spread=0.0),  # away, pick'em - in none of them
+        ]
+        side_roles = us._pick_records(rows)["side_roles"]
+        assert [(r["side"], r["role"], r["picks"], r["wins"]) for r in side_roles] == [
+            ("home", "favorite", 1, 1),
+            ("home", "underdog", 1, 0),
+            ("away", "favorite", 1, 1),
+            ("away", "underdog", 0, 0),
+        ]
+
+    @pytest.mark.parametrize(
+        ("line", "bucket"),
+        [
+            (-10.0, "big_favorite"),
+            (-7.0, "big_favorite"),
+            (-6.5, "mid_favorite"),
+            (-3.5, "mid_favorite"),
+            (-3.0, "small_favorite"),
+            (-0.5, "small_favorite"),
+            (0.0, "pickem"),
+            (0.5, "small_underdog"),
+            (3.0, "small_underdog"),
+            (3.5, "mid_underdog"),
+            (6.5, "mid_underdog"),
+            (7.0, "big_underdog"),
+        ],
+    )
+    def test_spread_bucket(self, line: float, bucket: str) -> None:
+        assert us._spread_bucket(line) == bucket
+
+    def test_spread_buckets_use_the_picked_teams_line(self) -> None:
+        rows = [
+            _pick_row(1, True, spread=-7.5),  # home -7.5
+            _pick_row(2, False, spread=-7.5),  # away +7.5
+            _pick_row(2, True, spread=4.0),  # away -4
+            _pick_row(1, None, spread=None),  # no line - in none of them
+        ]
+        buckets = {b["bucket"]: b for b in us._pick_records(rows)["spread_buckets"]}
+        assert list(buckets) == list(us._SPREAD_BUCKETS)
+        assert (buckets["big_favorite"]["picks"], buckets["big_favorite"]["wins"]) == (
+            1,
+            1,
+        )
+        assert buckets["big_underdog"]["losses"] == 1
+        assert buckets["mid_favorite"]["wins"] == 1
+        assert buckets["pickem"] == {
+            "bucket": "pickem",
+            "picks": 0,
+            "wins": 0,
+            "losses": 0,
+            "win_pct": None,
+        }
+
     def test_every_team_picked_and_against(self) -> None:
         rows = [
             _pick_row(1, True, home=1, away=2),  # took 1 over 2

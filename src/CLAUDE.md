@@ -1148,7 +1148,11 @@ src.kv_writer.__main__`).
   user's picks touched, with `picked` and `against` records - no minimum,
   nothing ranked; `picks` counts every pick, `wins`/`losses` only graded
   ones, so a game not played yet counts in `picks` only; CBS lines always
-  have the hook, so there are no pushes; added 2026-09-30),
+  have the hook, so there are no pushes; added 2026-09-30; plus
+  `side_roles` - home/away × favorite/underdog, pick'ems left out - and
+  `spread_buckets` by the picked team's own line, big/mid/small favorite,
+  pick'em, small/mid/big underdog, edges on 3 and 7: both fixed-order
+  lists with every bucket present, added 2026-10-02),
   contrarian-vs-chalk accuracy, best/worst week, consistency (score
   stddev), clutch (accuracy in each period's deciding week), and four
   team-callout fields forming a 2×2 (picks-for-this-team-only vs
