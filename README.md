@@ -1,6 +1,6 @@
 # cbs-pickem
 
-A little pipeline for my CBS Sports Pick'em pool. Every week each player picks five NFL teams against the spread, and CBS keeps score. We run the contest with first and second half winners in addition to overall. CBS's own site is fine for checking the current/overall standings but to capture second half and other trends I use this to pull everything into a real database and write data to a web UI for displaying: [morlocked.rattsnest.com](https://morlocked.rattsnest.com).
+A little pipeline for my CBS Sports Pick'em pool. Every week each player picks five NFL teams against the spread, and CBS keeps score. We pay out on overall standings plus segments of the season (first and second half right now), and the payout structure is a setting, so it can change to thirds, quarters, a last place payout, etc. without touching the standings code. CBS's own site is fine for checking the current/overall standings but to capture the segments and other trends I use this to pull everything into a real database and write data to a web UI for displaying: [morlocked.rattsnest.com](https://morlocked.rattsnest.com).
 
 - Logs into CBS and pulls weekly standings + everyone's picks
 - Pulls team/schedule/live score data from api-sports.io, odds from The Odds API, and stadium weather from Pirate Weather
@@ -84,3 +84,19 @@ Ok, since the 2026 season started, I've gone a little more AI heavy. You can tel
 ## Season boundaries
 
 `config.SEASON` gets bumped by hand once a year, there's no auto-detection of "a new season started." Before bumping it, run `src.season_close_out` to lock in the final standings for the season that just ended. See `CLAUDE.md` for the details on why the ordering here matters.
+
+## Payouts
+
+The pool's payout structure lives in `config.PERIODS`, one entry per standings period:
+
+```python
+PERIODS = (
+    Period("overall", "Overall", 1, None, paid_places=5),
+    Period("first_half", "First Half", 1, 9, paid_places=3),
+    Period("second_half", "Second Half", 10, None, paid_places=3),
+)
+```
+
+`overall` is the season-long standings and always stays. Everything else is up to the pool: two halves today, thirds or quarters later, just a different list. Each period sets how many places get paid (ties at the cutoff all get paid) and whether it also pays last place (`pay_last_place=True`). Last place only counts players who made all five picks every week of that period, so you can't skip a week and coast to the bottom.
+
+Change it at the season bump, alongside `config.SEASON`, never mid-season. Closing out a season saves that season's structure with its results, so the history page still knows a past season was halves even after we switch.
