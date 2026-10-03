@@ -88,7 +88,7 @@ def _ats(results: list[bool]) -> dict[str, Any]:
     }
 
 
-def _record(picks: list[dict[str, Any]]) -> dict[str, Any]:
+def pick_record(picks: list[dict[str, Any]]) -> dict[str, Any]:
     """same shape as a user profile's records - picks counts every pick,
     wins/losses only graded ones"""
     graded = [bool(p["is_correct"]) for p in picks if p["is_correct"] is not None]
@@ -107,7 +107,7 @@ def _by_user(picks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for pick in picks:
         picks_by_user[pick["user_id"]].append(pick)
     users = [
-        {"user_id": user_id, "name": user_picks[0]["name"], **_record(user_picks)}
+        {"user_id": user_id, "name": user_picks[0]["name"], **pick_record(user_picks)}
         for user_id, user_picks in picks_by_user.items()
     ]
     users.sort(key=lambda u: (-u["picks"], -u["wins"], u["name"]))
@@ -195,8 +195,8 @@ def _team_profile(
             for split in ("overall", "home", "away", "favorite", "underdog")
         },
         "pool": {
-            "picked": _record(picked),
-            "against": _record(against),
+            "picked": pick_record(picked),
+            "against": pick_record(against),
             "believers": _by_user(picked),
             "faders": _by_user(against),
         },

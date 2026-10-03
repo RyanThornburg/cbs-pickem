@@ -32,9 +32,9 @@ class Division:
 
     def final(
         self, home: str, away: str, score: tuple[int, int], spread: float = -2.5
-    ) -> None:
+    ) -> int:
         self.kickoff += timedelta(hours=1)
-        self.seed.final(
+        return self.seed.final(
             self.week_id, self.ids[home], self.ids[away], score, spread, self.kickoff
         )
 
@@ -143,6 +143,38 @@ class TestStandings:
         buf = _teams(standings.compute_standings())["BUF"]
 
         assert (buf["wins"], buf["losses"]) == (0, 0)
+
+    def test_pool_record_on_each_team(
+        self, league: Division, seed: Seed, clients: Clients
+    ) -> None:
+        first = league.final("BUF", "MIA", (24, 20))
+        second = league.final("NYJ", "BUF", (24, 20))
+        upcoming = seed.game(
+            league.week_id,
+            home_team_id=league.ids["BUF"],
+            away_team_id=league.ids["NE"],
+            status="SCHEDULED",
+        )
+        amy, bob, cal = (seed.user(name) for name in ("amy", "bob", "cal"))
+        seed.pick(amy, first, league.ids["BUF"], is_correct=True)
+        seed.pick(amy, second, league.ids["BUF"], is_correct=False)
+        seed.pick(bob, first, league.ids["BUF"], is_correct=True)
+        seed.pick(cal, first, league.ids["MIA"], is_correct=False)
+        seed.pick(cal, second, league.ids["NYJ"], is_correct=True)
+        seed.pick(bob, upcoming, league.ids["NE"])  # revealed, not graded
+
+        teams = _teams(standings.compute_standings())
+
+        # same numbers as BUF's team key (test_team_profiles)
+        assert teams["BUF"]["pool"] == {
+            "picked": {"picks": 3, "wins": 2, "losses": 1, "win_pct": 0.667},
+            "against": {"picks": 3, "wins": 1, "losses": 1, "win_pct": 0.5},
+        }
+        assert teams["NE"]["pool"]["picked"]["picks"] == 1
+        assert teams["DAL"]["pool"] == {
+            "picked": {"picks": 0, "wins": 0, "losses": 0, "win_pct": None},
+            "against": {"picks": 0, "wins": 0, "losses": 0, "win_pct": None},
+        }
 
     def test_write(self, league: Division, clients: Clients) -> None:
         standings.write_season_standings()

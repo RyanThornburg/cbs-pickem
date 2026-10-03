@@ -341,6 +341,25 @@ class TestTeamProfilesRefresh:
         orchestration.main()
         assert self._written(tasks)[1:] == [{home, away}, {home, away}]
 
+    def test_standings_rewritten_with_the_team_keys(
+        self,
+        tasks: Recorder,
+        seed: Seed,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # the standings key carries the pool's record on each team
+        week = seed.week(1)
+        home, away = seed.team(), seed.team()
+        game = seed.game(week, home_team_id=home, away_team_id=away, status="SCHEDULED")
+        orchestration.main()
+        freeze_all(monkeypatch, QUIET + timedelta(minutes=1))
+        before = tasks.count("write_season_standings")
+
+        seed.pick(seed.user("a"), game, home)
+        orchestration.main()
+
+        assert tasks.count("write_season_standings") == before + 1
+
     def test_a_live_score_doesnt_rewrite(
         self, tasks: Recorder, seed: Seed, d1: FakeD1
     ) -> None:

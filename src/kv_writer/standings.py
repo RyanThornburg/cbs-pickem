@@ -8,6 +8,7 @@ from typing import Any
 from config.config import SEASON
 from db.clients import get_d1, get_kv
 from src.game_rules import ats_side
+from src.kv_writer.team_profiles import pick_record
 from src.timestamps import utc_iso
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,15 @@ JOIN weeks w ON w.week_id = g.week_id
 WHERE w.season_id = ? AND g.status = 'FINAL'
     AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL
 ORDER BY g.game_time
+"""
+
+_SEASON_PICKS_SQL = """
+SELECT up.picked_team_id, up.is_correct, g.home_team_id AS home_id,
+    g.away_team_id AS away_id
+FROM user_picks up
+JOIN games g ON g.game_id = up.game_id
+JOIN weeks w ON w.week_id = g.week_id
+WHERE w.season_id = ?
 """
 
 
@@ -60,13 +70,33 @@ def _streak(results: list[str]) -> str | None:
     return f"{results[-1]}{count}"
 
 
+def _pool_picks(
+    picks: list[dict[str, Any]],
+) -> tuple[dict[int, list[dict[str, Any]]], dict[int, list[dict[str, Any]]]]:
+    """(picked, against) by team id - against is a pick on the other team
+    in that team's game, same as the team key's pool block"""
+    picked: defaultdict[int, list[dict[str, Any]]] = defaultdict(list)
+    against: defaultdict[int, list[dict[str, Any]]] = defaultdict(list)
+    for pick in picks:
+        team_id = pick["picked_team_id"]
+        picked[team_id].append(pick)
+        if team_id == pick["home_id"]:
+            against[pick["away_id"]].append(pick)
+        elif team_id == pick["away_id"]:
+            against[pick["home_id"]].append(pick)
+    return picked, against
+
+
 def _team_entry(
     team: dict[str, Any],
     games: list[tuple[dict[str, Any], str]],
     teams_by_id: dict[int, dict[str, Any]],
+    picked: list[dict[str, Any]],
+    against: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """games: (game, side) for every FINAL game this team played, in
-    kickoff order"""
+    kickoff order. picked/against: every pool pick on or against them this
+    season, graded or not"""
     results: list[str] = []
     home: list[str] = []
     road: list[str] = []
@@ -117,6 +147,7 @@ def _team_entry(
             if covers + ats_losses
             else None,
         },
+        "pool": {"picked": pick_record(picked), "against": pick_record(against)},
     }
 
 
@@ -133,11 +164,18 @@ def compute_standings() -> list[dict[str, Any]]:
     for game in d1.query(_FINAL_GAMES_SQL, [SEASON]).results:
         games_by_team[game["home_id"]].append((game, "home"))
         games_by_team[game["away_id"]].append((game, "away"))
+    picked, against = _pool_picks(d1.query(_SEASON_PICKS_SQL, [SEASON]).results)
 
     entries_by_division: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
     conference_by_division: dict[str, str] = {}
     for team_id, team in teams_by_id.items():
-        entry = _team_entry(team, games_by_team[team_id], teams_by_id)
+        entry = _team_entry(
+            team,
+            games_by_team[team_id],
+            teams_by_id,
+            picked.get(team_id, []),
+            against.get(team_id, []),
+        )
         entries_by_division[team["division"]].append(
             {**entry, "_rank": team["division_rank"]}
         )

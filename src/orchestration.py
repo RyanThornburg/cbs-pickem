@@ -496,12 +496,19 @@ def _run_standings_refresh(client: D1Client, now: datetime) -> None:
         )
 
 
+def _write_team_keys(team_ids: set[int]) -> None:
+    write_team_profiles(team_ids)
+    write_season_standings()
+
+
 def _run_team_profiles_refresh(client: D1Client) -> None:
     """Rewrite team:{season}:{team_id} for both teams of every game whose
     fingerprint (status, line, final score, pick and grade counts - see
     team_profiles.py) changed since the last write. The first run has
     nothing saved, so it writes every team. The fingerprints are only
-    saved once the write worked, so a failure retries next tick."""
+    saved once the write worked, so a failure retries next tick. The
+    standings key carries the pool's record on each team, so it's
+    rewritten alongside."""
     fingerprints = game_fingerprints(client)
     saved = json.loads(get_state(client, "team_profiles_games") or "{}")
     team_ids = {
@@ -515,7 +522,7 @@ def _run_team_profiles_refresh(client: D1Client) -> None:
     if run_and_record(
         client,
         "team_profiles_write",
-        lambda: write_team_profiles(team_ids),
+        lambda: _write_team_keys(team_ids),
         "team_profiles_last_run_at",
         "team_profiles_last_success_at",
     ):
