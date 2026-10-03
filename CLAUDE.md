@@ -117,9 +117,8 @@ That archive isn't fully trustworthy as-is — confirmed live 2026-09-11
 that the original `data/2025/2025_standings.json` was actually a
 duplicate of 2024's data (fixed by hand; see `db/CLAUDE.md`). Season
 2015/2016's saved standings are missing their actual champion entirely
-and can't be recovered. First/second-half winners (`first_half_rank`/
-`second_half_rank` etc. on `historical_standings`) are only filled in for
-2025 (entered by hand) — see `CLAUDE.local.md`'s TODO list for the full
+and can't be recovered. First/second-half winners (`historical_period_standings`)
+are only filled in for 2025 (entered by hand) — see `CLAUDE.local.md`'s TODO list for the full
 state of what's backfilled vs. not.
 
 ## Paths & Logging

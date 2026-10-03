@@ -336,9 +336,9 @@ writer section. Found 2026-09-27 that it was only actually dropped from
 local: prod still had the empty table plus `idx_user_stats_season`/
 `trg_user_stats_updated_at`, dropped from prod 2026-09-28.)
 
-`historical_standings.first_half_rank`/`first_half_score`/
-`second_half_rank`/`second_half_score` are nullable for the same reason,
-one level more specific: almost none of the archive has the per-week
+Half-season standings (now `historical_period_standings` rows, see
+below) are sparse for the same reason, one level more specific: almost
+none of the archive has the per-week
 `periodScores` breakdown needed to derive a half-season split at all
 (only 2024/2025 saved it, and even then nothing parses it automatically,
 see below). Confirmed live 2026-09-11 that **`data/2024/2024_standings.json`
@@ -370,10 +370,11 @@ overall stays on `historical_standings`, which gained its own
 `last_place`. `seasons.periods_json` saves the season's period structure
 at close-out (labels, weeks, paid places), so the history page knows one
 season was halves and another thirds - NULL for the archive seasons.
-2025's hand-entered halves are copied into the period table as
-`first_half`/`second_half` rows; the `first_half_*`/`second_half_*`
-columns stay (and close-out keeps writing them) until the UI reads the
-new shape. Applying it to an existing database (no `setup.sh`):
+2025's hand-entered halves were copied into the period table as
+`first_half`/`second_half` rows, and once the UI read the new shape the
+old `historical_standings.first_half_rank`/`first_half_score`/
+`second_half_rank`/`second_half_score` columns were dropped (2026-10-02).
+Applying it to an existing database (no `setup.sh`):
 
 ```sql
 ALTER TABLE seasons ADD COLUMN periods_json TEXT;
@@ -385,6 +386,11 @@ FROM historical_standings WHERE first_half_rank IS NOT NULL;
 INSERT INTO historical_period_standings (season_id, user_id, period_key, rank, score)
 SELECT season_id, user_id, 'second_half', second_half_rank, second_half_score
 FROM historical_standings WHERE second_half_rank IS NOT NULL;
+-- once nothing reads them:
+ALTER TABLE historical_standings DROP COLUMN first_half_rank;
+ALTER TABLE historical_standings DROP COLUMN first_half_score;
+ALTER TABLE historical_standings DROP COLUMN second_half_rank;
+ALTER TABLE historical_standings DROP COLUMN second_half_score;
 ```
 
 `historical_user_mapping` is the audit trail for how each archived CBS
