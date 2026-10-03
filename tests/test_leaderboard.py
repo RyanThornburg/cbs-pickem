@@ -26,6 +26,10 @@ def _by_name(board: list[dict[str, Any]] | None) -> dict[str, dict[str, Any]]:
     return {row["name"]: row for row in board}
 
 
+def _standing(entry: dict[str, Any]) -> dict[str, Any]:
+    return {key: entry[key] for key in ("score", "place", "in_money")}
+
+
 def _season_scores(seed: Seed, scores: dict[str, list[int]]) -> dict[str, int]:
     """Seed one weekly_performance row per user per week, weeks numbered
     from 1. Returns user ids by name."""
@@ -251,23 +255,23 @@ class TestPeriods:
 
         rows = _by_name(compute_week_leaderboard(d1, 4))
 
-        assert rows["a"]["periods"]["first_third"] == {
+        assert _standing(rows["a"]["periods"]["first_third"]) == {
             "score": 10,
             "place": 1,
             "in_money": True,
         }
-        assert rows["b"]["periods"]["second_third"] == {
+        assert _standing(rows["b"]["periods"]["second_third"]) == {
             "score": 9,
             "place": 1,
             "in_money": True,
         }
-        assert rows["c"]["periods"]["overall"] == {
+        assert _standing(rows["c"]["periods"]["overall"]) == {
             "score": 12,
             "place": 1,
             "in_money": True,
         }
         # not started yet
-        assert rows["a"]["periods"]["third_third"] == {
+        assert _standing(rows["a"]["periods"]["third_third"]) == {
             "score": None,
             "place": None,
             "in_money": False,
@@ -290,6 +294,118 @@ class TestPeriods:
                 assert row[f"{key}_score"] == periods[key]["score"]
                 assert row[f"{key}_place"] == periods[key]["place"]
                 assert row[f"in_money_{key}"] == periods[key]["in_money"]
+
+
+class TestLastPlace:
+    PAID = (
+        Period("overall", "Overall", 1, None, paid_places=1, pay_last_place=True),
+        Period("first_third", "First Third", 1, 2, paid_places=1, pay_last_place=True),
+        Period("rest", "Rest", 3, None, paid_places=1, pay_last_place=True),
+    )
+
+    @pytest.fixture(autouse=True)
+    def _paid(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(leaderboard, "PERIODS", self.PAID)
+
+    def _week(self, seed: Seed, week_number: int, complete: bool = True) -> int:
+        week_id = seed.week(week_number)
+        seed.d1.query(
+            "UPDATE weeks SET is_complete = ? WHERE week_id = ?", [complete, week_id]
+        )
+        return week_id
+
+    def test_lowest_eligible_score_wins(self, d1: FakeD1, seed: Seed) -> None:
+        weeks = [self._week(seed, n) for n in (1, 2)]
+        users = {name: seed.user(name) for name in ("top", "low", "skipped")}
+        for week_id in weeks:
+            seed.performance(users["top"], week_id, 4)
+            seed.performance(users["low"], week_id, 1)
+        # the lowest score, but one week short a pick
+        seed.performance(users["skipped"], weeks[0], 0, picks_made=5)
+        seed.performance(users["skipped"], weeks[1], 0, picks_made=4)
+
+        rows = _by_name(compute_week_leaderboard(d1, 2))
+        overall = {name: row["periods"]["overall"] for name, row in rows.items()}
+
+        assert overall["skipped"]["last_place_eligible"] is False
+        assert overall["skipped"]["in_money_last_place"] is False
+        assert overall["low"]["last_place_eligible"] is True
+        assert overall["low"]["in_money_last_place"] is True
+        assert overall["top"]["in_money_last_place"] is False
+
+    def test_a_missing_week_row_is_not_eligible(self, d1: FakeD1, seed: Seed) -> None:
+        week1, week2 = self._week(seed, 1), self._week(seed, 2)
+        late = seed.user("late")
+        seed.performance(seed.user("a"), week1, 3)
+        seed.performance(seed.user("a2"), week2, 3)
+        seed.performance(late, week2, 0)
+
+        row = _by_name(compute_week_leaderboard(d1, 2))["late"]
+
+        assert row["periods"]["overall"]["last_place_eligible"] is False
+
+    def test_unfinished_week_does_not_count(self, d1: FakeD1, seed: Seed) -> None:
+        # before the deadline only kicked-off picks are loaded
+        week = self._week(seed, 1, complete=False)
+        seed.performance(seed.user("a"), week, 0, picks_made=2)
+        seed.performance(seed.user("b"), week, 1, picks_made=3)
+
+        overall = _by_name(compute_week_leaderboard(d1, 1))["a"]["periods"]["overall"]
+
+        assert overall["last_place_eligible"] is True
+        assert overall["in_money_last_place"] is True
+
+    def test_tied_for_last_both_paid(self, d1: FakeD1, seed: Seed) -> None:
+        week = self._week(seed, 1)
+        for name, score in (("a", 1), ("b", 1), ("c", 4)):
+            seed.performance(seed.user(name), week, score)
+
+        rows = _by_name(compute_week_leaderboard(d1, 1))
+
+        paid = {
+            n for n, r in rows.items() if r["periods"]["overall"]["in_money_last_place"]
+        }
+        assert paid == {"a", "b"}
+
+    def test_each_period_judged_on_its_own_weeks(self, d1: FakeD1, seed: Seed) -> None:
+        weeks = [self._week(seed, n) for n in (1, 2, 3)]
+        a, b = seed.user("a"), seed.user("b")
+        for week_id in weeks:
+            seed.performance(b, week_id, 3)
+        # a skips week 1, then picks lowest in week 3
+        seed.performance(a, weeks[0], 0, picks_made=0)
+        seed.performance(a, weeks[1], 5)
+        seed.performance(a, weeks[2], 0)
+
+        periods = _by_name(compute_week_leaderboard(d1, 3))["a"]["periods"]
+
+        assert periods["overall"]["last_place_eligible"] is False
+        assert periods["first_third"]["last_place_eligible"] is False
+        assert periods["rest"]["last_place_eligible"] is True
+        assert periods["rest"]["in_money_last_place"] is True
+
+    def test_before_the_period_starts(self, d1: FakeD1, seed: Seed) -> None:
+        seed.performance(seed.user("a"), self._week(seed, 1), 2)
+
+        rest = _by_name(compute_week_leaderboard(d1, 1))["a"]["periods"]["rest"]
+
+        assert rest["last_place_eligible"] is None
+        assert rest["in_money_last_place"] is False
+
+    def test_not_paid_unless_the_period_says_so(
+        self, d1: FakeD1, seed: Seed, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            leaderboard, "PERIODS", (Period("overall", "Overall", 1, None, 1),)
+        )
+        week = self._week(seed, 1)
+        seed.performance(seed.user("a"), week, 0)
+        seed.performance(seed.user("b"), week, 5)
+
+        overall = _by_name(compute_week_leaderboard(d1, 1))["a"]["periods"]["overall"]
+
+        assert overall["last_place_eligible"] is True
+        assert overall["in_money_last_place"] is False
 
 
 class TestInMoney:

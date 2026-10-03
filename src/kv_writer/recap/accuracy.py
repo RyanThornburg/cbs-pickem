@@ -3,6 +3,7 @@
 from collections import defaultdict
 from typing import Any
 
+from config.config import PICKS_PER_WEEK
 from src.game_rules import (
     ats_side,
     favorite_side,
@@ -10,7 +11,6 @@ from src.game_rules import (
     winner_side,
 )
 from src.kv_writer.recap.common import (
-    PICKS_PER_WEEK,
     Season,
     game_line,
     make_item,

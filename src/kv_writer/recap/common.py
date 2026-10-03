@@ -12,7 +12,6 @@ from src.kv_writer.shared import game_team_dicts
 
 EASTERN = ZoneInfo("America/New_York")
 SHORT_MAX = 80  # `short` headline length, so a one-line strip keeps its height
-PICKS_PER_WEEK = 5
 
 
 @dataclass

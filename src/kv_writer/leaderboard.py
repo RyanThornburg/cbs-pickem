@@ -6,7 +6,7 @@ import logging
 from collections import defaultdict
 from typing import Any
 
-from config.config import PERIODS, SEASON, Period
+from config.config import PERIODS, PICKS_PER_WEEK, SEASON, Period
 from db.clients import get_d1, get_kv
 from db.d1_client import D1Client
 from src.game_rules import standard_rank
@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 
 # calculate vs adding a running total in db
 _WEEKLY_PERFORMANCE_SQL = """
-SELECT wp.user_id, u.name, w.week_number, wp.picks_correct, wp.trending_score,
-    wp.has_submitted_picks
+SELECT wp.user_id, u.name, w.week_number, wp.picks_made, wp.picks_correct,
+    wp.trending_score, wp.has_submitted_picks
 FROM weekly_performance wp
 JOIN weeks w ON w.week_id = wp.week_id
 JOIN users u ON u.user_id = wp.user_id
@@ -35,6 +35,13 @@ FROM user_picks up
 JOIN games g ON g.game_id = up.game_id
 JOIN weeks w ON w.week_id = g.week_id
 WHERE w.season_id = ? AND w.week_number = ?
+"""
+
+# last place eligibility only judges finished weeks - before the Sunday
+# deadline picks_made only counts picks on games that have kicked off
+_COMPLETE_WEEKS_SQL = """
+SELECT week_number FROM weeks
+WHERE season_id = ? AND week_number <= ? AND is_complete = 1
 """
 
 # prior seasons count of a user from historical standings
@@ -50,12 +57,42 @@ def _in_money(place: int | None, paid_places: int) -> bool:
 
 
 def _period_entry(
-    period: Period, score: int | None, place: int | None
+    period: Period,
+    score: int | None,
+    place: int | None,
+    last_place_eligible: bool | None,
+    last_place_score: int | None,
 ) -> dict[str, Any]:
     return {
         "score": score,
         "place": place,
         "in_money": _in_money(place, period.paid_places),
+        "last_place_eligible": last_place_eligible,
+        "in_money_last_place": period.pay_last_place
+        and bool(last_place_eligible)
+        and score is not None
+        and score == last_place_score,
+    }
+
+
+def _last_place_eligible(
+    period: Period,
+    week_number: int,
+    complete_weeks: list[int],
+    picks_made: dict[tuple[int, int], int],
+    user_ids: list[int],
+) -> dict[int, bool | None]:
+    """A full PICKS_PER_WEEK picks in every finished week of the period so
+    far - None before the period starts. Everyone is eligible until a week
+    of the period finishes."""
+    if week_number < period.start_week:
+        return dict.fromkeys(user_ids)
+    weeks = [week for week in complete_weeks if period.covers(week)]
+    return {
+        user_id: all(
+            picks_made.get((user_id, week), 0) >= PICKS_PER_WEEK for week in weeks
+        )
+        for user_id in user_ids
     }
 
 
@@ -103,10 +140,12 @@ def compute_week_leaderboard(
     # a period that hasn't started yet stays empty - every user's score is None
     period_score: dict[str, dict[int, int]] = {period.key: {} for period in PERIODS}
     has_submitted_picks: dict[int, bool] = {}
+    picks_made: dict[tuple[int, int], int] = {}
 
     for row in performance_rows:
         user_id = row["user_id"]
         names[user_id] = row["name"]
+        picks_made[(user_id, row["week_number"])] = row["picks_made"] or 0
         picks_correct = row["picks_correct"] or 0
         cumulative_score[user_id] = cumulative_score.get(user_id, 0) + picks_correct
         for period in PERIODS:
@@ -120,6 +159,30 @@ def compute_week_leaderboard(
 
     place = standard_rank(cumulative_score)
     period_place = {key: standard_rank(scores) for key, scores in period_score.items()}
+
+    complete_weeks = [
+        row["week_number"]
+        for row in d1.query(_COMPLETE_WEEKS_SQL, [SEASON, week_number]).results
+    ]
+    user_ids = list(cumulative_score)
+    eligible = {
+        period.key: _last_place_eligible(
+            period, week_number, complete_weeks, picks_made, user_ids
+        )
+        for period in PERIODS
+    }
+    # the lowest score among eligible users, None when nobody is
+    last_place_score = {
+        period.key: min(
+            (
+                score
+                for user_id, score in period_score[period.key].items()
+                if eligible[period.key][user_id]
+            ),
+            default=None,
+        )
+        for period in PERIODS
+    }
 
     prior_seasons_by_user = _prior_seasons_by_user(d1)
 
@@ -143,6 +206,8 @@ def compute_week_leaderboard(
                 period,
                 period_score[period.key].get(user_id),
                 period_place[period.key].get(user_id),
+                eligible[period.key][user_id],
+                last_place_score[period.key],
             )
             for period in PERIODS
         }
