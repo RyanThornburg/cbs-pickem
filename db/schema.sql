@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS seasons (
     start_date DATE,
     end_date DATE,
     is_active BOOLEAN DEFAULT FALSE,
+    periods_json TEXT, -- the pool's pay periods for the season (config.PERIODS as src/periods.py's period_definitions() shows them), saved at close-out, NULL for archive seasons
     historical_data_incomplete BOOLEAN DEFAULT FALSE -- our archived standings for this season are missing entries (confirmed for 2015/2016 - the actual rank-1, and for 2016 rank-2, are absent from the saved CBS export), not a property of the season itself
 );
 
@@ -350,9 +351,26 @@ CREATE TABLE IF NOT EXISTS historical_standings (
     first_half_score INT,
     second_half_rank INT,
     second_half_score INT,
+    last_place BOOLEAN NOT NULL DEFAULT FALSE, -- won the overall last place payout
     FOREIGN KEY (season_id) REFERENCES seasons(season_id),
     FOREIGN KEY (user_id) REFERENCES users(user_id),
     UNIQUE (season_id, user_id)
+);
+
+-- A closed season's standings in each pay period other than overall (that
+-- one is historical_standings itself), one row per user per period.
+-- period_key is the season's config.PERIODS key - seasons.periods_json
+-- has the labels and weeks.
+CREATE TABLE IF NOT EXISTS historical_period_standings (
+    season_id INT NOT NULL,
+    user_id INT NOT NULL,
+    period_key VARCHAR(30) NOT NULL,
+    rank INT,
+    score INT,
+    last_place BOOLEAN NOT NULL DEFAULT FALSE, -- won that period's last place payout
+    FOREIGN KEY (season_id) REFERENCES seasons(season_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id),
+    PRIMARY KEY (season_id, user_id, period_key)
 );
 
 -- Identity resolution audit trail for the historical_standings backfill -

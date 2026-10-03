@@ -25,6 +25,7 @@ def test_core_tables_exist(d1: FakeD1) -> None:
         "user_picks",
         "weekly_performance",
         "historical_standings",
+        "historical_period_standings",
         "historical_user_mapping",
         "odds_snapshots",
         "game_snapshots",

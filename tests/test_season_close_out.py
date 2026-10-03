@@ -2,6 +2,7 @@
 yet) and the KV keys it and the season's bookkeeping feed: meta:historical,
 plus meta:current, the odds key and the user profile keys."""
 
+import json
 from typing import Any
 
 import pytest
@@ -10,9 +11,10 @@ from config.config import (
     PERIODS_BY_KEY,
     SEASON,
     CBSConfig,
+    Period,
 )
 from src import season_close_out
-from src.kv_writer import historical, odds, shared, user_profiles
+from src.kv_writer import historical, leaderboard, odds, shared, user_profiles
 from tests.conftest import Clients, FakeD1, Seed
 
 OVERALL_PAID_PLACES = PERIODS_BY_KEY["overall"].paid_places
@@ -36,6 +38,7 @@ def _full_season(seed: Seed, scores: dict[str, list[int]]) -> dict[str, int]:
         "UPDATE seasons SET name = 'MorLocked 10.0' WHERE season_id = ?", [SEASON]
     )
     week_ids = [seed.week(n) for n in range(1, LAST_WEEK + 1)]
+    seed.d1.query("UPDATE weeks SET is_complete = 1 WHERE season_id = ?", [SEASON])
     users = {}
     for name, week_scores in scores.items():
         users[name] = seed.user(name)
@@ -127,6 +130,96 @@ class TestCloseOut:
         assert len(rows) == 2
         assert rows[users["b"]]["final_rank"] == 1  # now tied
 
+    def test_periods_and_last_place(
+        self, clients: Clients, seed: Seed, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        thirds = (
+            Period("overall", "Overall", 1, None, 1, pay_last_place=True),
+            Period("first_third", "First Third", 1, 6, 1, pay_last_place=True),
+            Period("second_third", "Second Third", 7, 12, 1),
+            Period("third_third", "Third Third", 13, None, 1),
+        )
+        monkeypatch.setattr(leaderboard, "PERIODS", thirds)
+        monkeypatch.setattr(season_close_out, "PERIODS", thirds)
+        monkeypatch.setattr("src.periods.PERIODS", thirds)
+        users = _full_season(seed, {"a": [5], "b": [3], "c": [1]})
+        # c is lowest but skipped week 2, so b takes overall last place
+        clients.d1.query(
+            "UPDATE weekly_performance SET picks_made = 0 WHERE user_id = ? AND week_id ="
+            " (SELECT week_id FROM weeks WHERE week_number = 2)",
+            [users["c"]],
+        )
+
+        season_close_out.close_out_season()
+
+        rows = _standings(clients.d1)
+        assert {u: r["last_place"] for u, r in rows.items()} == {
+            users["a"]: 0,
+            users["b"]: 1,
+            users["c"]: 0,
+        }
+        periods = clients.d1.query(
+            "SELECT user_id, period_key, rank, score, last_place"
+            " FROM historical_period_standings WHERE season_id = ?",
+            [SEASON],
+        ).results
+        by_key = {(r["user_id"], r["period_key"]): r for r in periods}
+        assert {k for _, k in by_key} == {"first_third", "second_third", "third_third"}
+        assert by_key[(users["a"], "first_third")]["rank"] == 1
+        assert by_key[(users["a"], "first_third")]["score"] == 30
+        assert by_key[(users["b"], "first_third")]["last_place"] == 1
+        # not paid in the second third
+        assert not any(
+            r["last_place"] for r in periods if r["period_key"] == "second_third"
+        )
+        saved = clients.d1.query(
+            "SELECT periods_json FROM seasons WHERE season_id = ?", [SEASON]
+        ).results[0]["periods_json"]
+        assert [(p["key"], p["end_week"]) for p in json.loads(saved)] == [
+            ("overall", LAST_WEEK),
+            ("first_third", 6),
+            ("second_third", 12),
+            ("third_third", LAST_WEEK),
+        ]
+
+        key = clients.kv.values["meta:historical"]
+        assert [(w["period_key"], w["names"]) for w in key["last_place"]] == [
+            ("overall", ["b"]),
+            ("first_third", ["b"]),
+        ]
+        assert [(w["label"], w["names"]) for w in key["period_champions"]] == [
+            ("First Third", ["a"]),
+            ("Second Third", ["a"]),
+            ("Third Third", ["a"]),
+        ]
+
+    def test_rerun_drops_periods_no_longer_configured(
+        self, clients: Clients, seed: Seed, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _full_season(seed, {"a": [5], "b": [1]})
+        season_close_out.close_out_season()
+        overall_only = (Period("overall", "Overall", 1, None, 1),)
+        monkeypatch.setattr(leaderboard, "PERIODS", overall_only)
+        monkeypatch.setattr(season_close_out, "PERIODS", overall_only)
+
+        season_close_out.close_out_season()
+
+        assert (
+            clients.d1.query("SELECT * FROM historical_period_standings").results == []
+        )
+
+    def test_unfinished_week_blocks_close_out(
+        self, clients: Clients, seed: Seed
+    ) -> None:
+        _full_season(seed, {"a": [5]})
+        clients.d1.query(
+            "UPDATE weeks SET is_complete = 0 WHERE week_number = ?", [LAST_WEEK]
+        )
+
+        season_close_out.close_out_season()
+
+        assert _standings(clients.d1) == {}
+
     def test_nothing_to_close_out(self, clients: Clients, seed: Seed) -> None:
         season_close_out.close_out_season()  # no weeks at all
         seed.week(1)
@@ -179,6 +272,34 @@ class TestMetaHistorical:
                     30 if second else None,
                 ],
             )
+        # 2024 as an archive season (no periods_json), 2025 closed out with thirds
+        for name, rank, last in (("ann", 1, False), ("bob", 2, True)):
+            seed.d1.query(
+                "INSERT INTO historical_period_standings (season_id, user_id,"
+                " period_key, rank, score, last_place) VALUES (2024, ?, 'first_half', ?, 40, ?)",
+                [users[name], rank, last],
+            )
+        seed.season(2025)
+        seed.d1.query(
+            "UPDATE seasons SET periods_json = ? WHERE season_id = 2025",
+            [
+                json.dumps(
+                    [
+                        {"key": "overall", "label": "Overall"},
+                        {"key": "early", "label": "Early Third"},
+                    ]
+                )
+            ],
+        )
+        seed.historical(users["cy"], 2025, final_rank=1, final_score=90)
+        seed.d1.query(
+            "UPDATE historical_standings SET last_place = 1 WHERE season_id = 2025"
+        )
+        seed.d1.query(
+            "INSERT INTO historical_period_standings (season_id, user_id, period_key,"
+            " rank, score, last_place) VALUES (2025, ?, 'early', 1, 33, 0)",
+            [users["cy"]],
+        )
         # 2016's archive is missing its actual champion
         seed.season(2016)
         seed.d1.query(
@@ -200,6 +321,7 @@ class TestMetaHistorical:
             (2016, ["??? unknown/missing user"]),
             (2023, ["ann"]),
             (2024, ["ann", "bob"]),
+            (2025, ["cy"]),
         ]
         assert key["champions"][0]["incomplete"] is True
         assert [
@@ -208,8 +330,53 @@ class TestMetaHistorical:
         assert [(c["year"], c["names"]) for c in key["second_half_champions"]] == [
             (2024, ["bob"])
         ]
-        assert set(key["years"]) == {"2016", "2023", "2024"}
+        assert set(key["years"]) == {"2016", "2023", "2024", "2025"}
         assert key["years"]["2024"]["pool_name"] == "Pool 2024"
+
+    def test_periods(self, clients: Clients, seed: Seed) -> None:
+        users = self._history(seed)
+
+        historical.write_historical()
+
+        key = clients.kv.values["meta:historical"]
+        assert key["period_champions"] == [
+            # an archive season's label comes from its key
+            {
+                "year": 2024,
+                "period_key": "first_half",
+                "label": "First Half",
+                "names": ["ann"],
+                "score": 40,
+            },
+            {
+                "year": 2025,
+                "period_key": "early",
+                "label": "Early Third",
+                "names": ["cy"],
+                "score": 33,
+            },
+        ]
+        assert [
+            (w["year"], w["period_key"], w["names"]) for w in key["last_place"]
+        ] == [
+            (2024, "first_half", ["bob"]),
+            (2025, "overall", ["cy"]),
+        ]
+        assert key["years"]["2024"]["periods"] is None
+        assert [p["key"] for p in key["years"]["2025"]["periods"]] == [
+            "overall",
+            "early",
+        ]
+        bob_2024 = next(
+            s for s in key["years"]["2024"]["standings"] if s["user_id"] == users["bob"]
+        )
+        assert bob_2024["periods"] == {
+            "first_half": {"rank": 2, "score": 40, "last_place": True}
+        }
+        assert bob_2024["last_place"] is False
+        career = {c["name"]: c for c in key["career"]}
+        assert career["cy"]["season_history"][-1]["last_place"] is True
+        assert career["cy"]["season_history"][-1]["periods"]["early"]["rank"] == 1
 
     def test_career(self, clients: Clients, seed: Seed) -> None:
         users = self._history(seed)
@@ -219,7 +386,7 @@ class TestMetaHistorical:
         career = {c["name"]: c for c in clients.kv.values["meta:historical"]["career"]}
         assert career["ann"]["titles"] == 2
         assert career["ann"]["best_finish_years"] == [2023, 2024]
-        assert career["cy"]["appearances"] == [2016, 2024]
+        assert career["cy"]["appearances"] == [2016, 2024, 2025]
         assert career["bob"]["titles"] == 2  # career counts the 2016 row
         assert [
             c["user_id"] for c in clients.kv.values["meta:historical"]["career"]
