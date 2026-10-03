@@ -7,16 +7,18 @@ from typing import Any
 import pytest
 
 from config.config import (
-    FIRST_HALF_PAID_PLACES,
-    OVERALL_PAID_PLACES,
+    PERIODS_BY_KEY,
     SEASON,
-    SECOND_HALF_PAID_PLACES,
-    SECOND_HALF_START_WEEK,
     CBSConfig,
 )
 from src import season_close_out
 from src.kv_writer import historical, odds, shared, user_profiles
 from tests.conftest import Clients, FakeD1, Seed
+
+OVERALL_PAID_PLACES = PERIODS_BY_KEY["overall"].paid_places
+FIRST_HALF_PAID_PLACES = PERIODS_BY_KEY["first_half"].paid_places
+SECOND_HALF_PAID_PLACES = PERIODS_BY_KEY["second_half"].paid_places
+SECOND_HALF_START_WEEK = PERIODS_BY_KEY["second_half"].start_week
 
 LAST_WEEK = 18
 
@@ -237,6 +239,33 @@ def test_meta_current(clients: Clients, seed: Seed) -> None:
     assert clients.kv.values["meta:current"] == {
         "season": SEASON,
         "current_week": 4,
+        # end_week None in config resolves to the season's last week loaded
+        "periods": [
+            {
+                "key": "overall",
+                "label": "Overall",
+                "start_week": 1,
+                "end_week": 4,
+                "paid_places": OVERALL_PAID_PLACES,
+                "pay_last_place": False,
+            },
+            {
+                "key": "first_half",
+                "label": "First Half",
+                "start_week": 1,
+                "end_week": SECOND_HALF_START_WEEK - 1,
+                "paid_places": FIRST_HALF_PAID_PLACES,
+                "pay_last_place": False,
+            },
+            {
+                "key": "second_half",
+                "label": "Second Half",
+                "start_week": SECOND_HALF_START_WEEK,
+                "end_week": 4,
+                "paid_places": SECOND_HALF_PAID_PLACES,
+                "pay_last_place": False,
+            },
+        ],
         "second_half_start_week": SECOND_HALF_START_WEEK,
         "paid_places": {
             "overall": OVERALL_PAID_PLACES,

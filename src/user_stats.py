@@ -8,9 +8,10 @@ from collections import Counter, defaultdict
 from statistics import pstdev
 from typing import Any
 
-from config.config import SEASON, SECOND_HALF_START_WEEK
+from config.config import PERIODS, SEASON
 from db.d1_client import D1Client
 from src.game_rules import favorite_side, standard_rank
+from src.periods import final_week_number, period_end
 
 _HOT_STREAK_THRESHOLD_PCT = 0.8  # "80% or better" - the user's own bar
 _MIN_TEAM_PICKS_FOR_RECORD = (
@@ -45,8 +46,6 @@ ORDER BY wp.user_id, w.week_number
 """
 
 _ACTIVE_USERS_SQL = "SELECT user_id, name FROM users WHERE is_active = TRUE"
-
-_FINAL_WEEK_SQL = "SELECT MAX(week_number) AS final_week FROM weeks WHERE season_id = ?"
 
 
 def _season_trend(season_history: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -599,9 +598,11 @@ def compute_user_profiles(
     }
     current_rank_by_user = standard_rank(cumulative_score_by_user)
 
-    final_week_row = d1.query(_FINAL_WEEK_SQL, [SEASON]).results
-    final_week = final_week_row[0]["final_week"] if final_week_row else None
-    money_weeks = {w for w in (SECOND_HALF_START_WEEK - 1, final_week) if w is not None}
+    # the last week of each pay period
+    final_week = final_week_number(d1)
+    money_weeks = {
+        end for period in PERIODS if (end := period_end(period, final_week)) is not None
+    }
 
     profiles: dict[int, dict[str, Any]] = {}
     for user_id, name in users.items():

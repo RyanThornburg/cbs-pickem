@@ -6,17 +6,16 @@ import logging
 from collections import defaultdict
 from typing import Any
 
-from config.config import (
-    FIRST_HALF_PAID_PLACES,
-    OVERALL_PAID_PLACES,
-    SEASON,
-    SECOND_HALF_PAID_PLACES,
-    SECOND_HALF_START_WEEK,
-)
+from config.config import PERIODS, SEASON, Period
 from db.clients import get_d1, get_kv
 from db.d1_client import D1Client
 from src.game_rules import standard_rank
-from src.kv_writer.shared import PAID_PLACES, for_current_week
+from src.kv_writer.shared import (
+    LEGACY_PAID_PLACES,
+    LEGACY_SECOND_HALF_START_WEEK,
+    for_current_week,
+)
+from src.periods import final_week_number, period_definitions
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +49,28 @@ def _in_money(place: int | None, paid_places: int) -> bool:
     return place is not None and place <= paid_places
 
 
+def _period_entry(
+    period: Period, score: int | None, place: int | None
+) -> dict[str, Any]:
+    return {
+        "score": score,
+        "place": place,
+        "in_money": _in_money(place, period.paid_places),
+    }
+
+
+def _legacy_period_fields(periods: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """The pre-`periods` per-user fields (first_half_score, in_money_overall,
+    ...), kept until the UI reads `periods` - remove with LEGACY_PAID_PLACES"""
+    fields: dict[str, Any] = {"in_money_overall": periods["overall"]["in_money"]}
+    for key in ("first_half", "second_half"):
+        entry = periods.get(key, {})
+        fields[f"{key}_score"] = entry.get("score")
+        fields[f"{key}_place"] = entry.get("place")
+        fields[f"in_money_{key}"] = entry.get("in_money", False)
+    return fields
+
+
 def _prior_seasons_by_user(d1: D1Client) -> dict[int, int]:
     return {
         row["user_id"]: row["prior_seasons"]
@@ -61,8 +82,8 @@ def compute_week_leaderboard(
     d1: D1Client, week_number: int
 ) -> list[dict[str, Any]] | None:
     """
-    overall and second half standings + current week
-    returning ranked / ties
+    overall standings, every config.PERIODS standings and the current week,
+    ranked with ties
     using cbs status is_correct/trending_status/trending_score instead
     of calculating the actual results
     """
@@ -75,14 +96,12 @@ def compute_week_leaderboard(
         )
         return None
 
-    in_second_half = week_number >= SECOND_HALF_START_WEEK
-
     names: dict[int, str] = {}
     weekly_score: dict[int, int] = {}
     trending_score: dict[int, int] = {}
     cumulative_score: dict[int, int] = {}
-    first_half_score: dict[int, int] = {}
-    second_half_score: dict[int, int] = {}
+    # a period that hasn't started yet stays empty - every user's score is None
+    period_score: dict[str, dict[int, int]] = {period.key: {} for period in PERIODS}
     has_submitted_picks: dict[int, bool] = {}
 
     for row in performance_rows:
@@ -90,20 +109,17 @@ def compute_week_leaderboard(
         names[user_id] = row["name"]
         picks_correct = row["picks_correct"] or 0
         cumulative_score[user_id] = cumulative_score.get(user_id, 0) + picks_correct
-        if row["week_number"] < SECOND_HALF_START_WEEK:
-            first_half_score[user_id] = first_half_score.get(user_id, 0) + picks_correct
-        elif in_second_half:
-            second_half_score[user_id] = (
-                second_half_score.get(user_id, 0) + picks_correct
-            )
+        for period in PERIODS:
+            if period.covers(row["week_number"]):
+                scores = period_score[period.key]
+                scores[user_id] = scores.get(user_id, 0) + picks_correct
         if row["week_number"] == week_number:
             weekly_score[user_id] = picks_correct
             trending_score[user_id] = row["trending_score"] or 0
             has_submitted_picks[user_id] = bool(row["has_submitted_picks"])
 
     place = standard_rank(cumulative_score)
-    first_half_place = standard_rank(first_half_score)
-    second_half_place = standard_rank(second_half_score) if in_second_half else {}
+    period_place = {key: standard_rank(scores) for key, scores in period_score.items()}
 
     prior_seasons_by_user = _prior_seasons_by_user(d1)
 
@@ -120,42 +136,40 @@ def compute_week_leaderboard(
             }
         )
 
-    users_json: list[dict[str, Any]] = [
-        {
-            "user_id": user_id,
-            "name": names[user_id],
-            # +1 for the current season itself because historical records don't have currrent season
-            "seasons_played": prior_seasons_by_user.get(user_id, 0) + 1,
-            "weekly_score": weekly_score.get(user_id, 0),
-            "trending_score": trending_score.get(user_id, 0),
-            "cumulative_score": cumulative_score[user_id],
-            "place": place[user_id],
-            "first_half_score": first_half_score.get(user_id),
-            "first_half_place": first_half_place.get(user_id),
-            "second_half_score": second_half_score.get(user_id)
-            if in_second_half
-            else None,
-            "second_half_place": second_half_place.get(user_id)
-            if in_second_half
-            else None,
-            "in_money_overall": _in_money(place.get(user_id), OVERALL_PAID_PLACES),
-            "in_money_first_half": _in_money(
-                first_half_place.get(user_id), FIRST_HALF_PAID_PLACES
-            ),
-            "in_money_second_half": in_second_half
-            and _in_money(second_half_place.get(user_id), SECOND_HALF_PAID_PLACES),
-            "has_submitted_picks": has_submitted_picks.get(user_id, False),
-            "picks": picks_by_user.get(user_id, []),
+    users_json: list[dict[str, Any]] = []
+    for user_id, user_cumulative in cumulative_score.items():
+        periods = {
+            period.key: _period_entry(
+                period,
+                period_score[period.key].get(user_id),
+                period_place[period.key].get(user_id),
+            )
+            for period in PERIODS
         }
-        for user_id in cumulative_score
-    ]
+        users_json.append(
+            {
+                "user_id": user_id,
+                "name": names[user_id],
+                # +1 for the current season itself because historical records don't have currrent season
+                "seasons_played": prior_seasons_by_user.get(user_id, 0) + 1,
+                "weekly_score": weekly_score.get(user_id, 0),
+                "trending_score": trending_score.get(user_id, 0),
+                "cumulative_score": user_cumulative,
+                "place": place[user_id],
+                "periods": periods,
+                **_legacy_period_fields(periods),
+                "has_submitted_picks": has_submitted_picks.get(user_id, False),
+                "picks": picks_by_user.get(user_id, []),
+            }
+        )
     users_json.sort(key=lambda u: u["place"])
     return users_json
 
 
 def write_week_leaderboard(week_number: int) -> None:
     """Write week:{season}:{weekNN}:leaderboard from compute_week_leaderboard()."""
-    users_json = compute_week_leaderboard(get_d1(), week_number)
+    d1 = get_d1()
+    users_json = compute_week_leaderboard(d1, week_number)
     if users_json is None:
         logger.warning(
             "No weekly_performance for season %s week %s - not writing leaderboard key",
@@ -168,8 +182,9 @@ def write_week_leaderboard(week_number: int) -> None:
         f"week:{SEASON}:{week_number:02d}:leaderboard",
         {
             "week": week_number,
-            "second_half_start_week": SECOND_HALF_START_WEEK,
-            "paid_places": PAID_PLACES,
+            "periods": period_definitions(final_week_number(d1)),
+            "second_half_start_week": LEGACY_SECOND_HALF_START_WEEK,
+            "paid_places": LEGACY_PAID_PLACES,
             "users": users_json,
         },
     )

@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from config.config import SEASON, SECOND_HALF_START_WEEK
+from config.config import PERIODS_BY_KEY, SEASON
 from src import user_stats as us
 from src.kv_writer.historical import career_record_by_user
 from tests.conftest import FakeD1, Seed
@@ -599,9 +599,10 @@ class TestComputeUserProfiles:
     def test_clutch_money_weeks(self, d1: FakeD1, seed: Seed) -> None:
         # the week before the second half starts, and the season's last week
         pool = Pool(seed)
-        last = SECOND_HALF_START_WEEK + 2
+        second_half_start = PERIODS_BY_KEY["second_half"].start_week
+        last = second_half_start + 2
         pool.score("a", 1, 1)
-        pool.score("a", SECOND_HALF_START_WEEK - 1, 5)
+        pool.score("a", second_half_start - 1, 5)
         pool.score("a", last, 4)
 
         clutch = _profiles(d1)["a"]["current_season"]["clutch"]

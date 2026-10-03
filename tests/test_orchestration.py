@@ -543,7 +543,13 @@ class TestEndToEnd:
 
         board = self.kv.values[f"week:{SEASON}:{week:02d}:leaderboard"]
         entries = self.cbs.weekly["standings"]["weekly"]["rankedEntries"]
-        assert set(board) == {"week", "second_half_start_week", "paid_places", "users"}
+        assert set(board) == {
+            "week",
+            "periods",
+            "second_half_start_week",
+            "paid_places",
+            "users",
+        }
         assert len(board["users"]) == len(entries)
         assert [u["place"] for u in board["users"]] == sorted(
             u["place"] for u in board["users"]

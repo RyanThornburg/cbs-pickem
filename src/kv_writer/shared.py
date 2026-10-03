@@ -14,24 +14,26 @@ from collections.abc import Callable
 from typing import Any
 
 from api.cbs_client import cbs_pool_url
-from config.config import (
-    FIRST_HALF_PAID_PLACES,
-    OVERALL_PAID_PLACES,
-    SEASON,
-    SECOND_HALF_PAID_PLACES,
-    SECOND_HALF_START_WEEK,
-    get_cbs_config,
-)
+from config.config import PERIODS_BY_KEY, SEASON, get_cbs_config
 from db.clients import get_d1, get_kv
 from db.d1_client import D1Client
+from src.periods import final_week_number, period_definitions
 
 logger = logging.getLogger(__name__)
 
-PAID_PLACES = {
-    "overall": OVERALL_PAID_PLACES,
-    "first_half": FIRST_HALF_PAID_PLACES,
-    "second_half": SECOND_HALF_PAID_PLACES,
+# The pre-`periods` fields (meta:current/leaderboard `paid_places` and
+# `second_half_start_week`), kept until the UI reads `periods` - remove
+# them together. Only meaningful while PERIODS has the two halves.
+LEGACY_PAID_PLACES = {
+    key: PERIODS_BY_KEY[key].paid_places
+    for key in ("overall", "first_half", "second_half")
+    if key in PERIODS_BY_KEY
 }
+LEGACY_SECOND_HALF_START_WEEK = (
+    PERIODS_BY_KEY["second_half"].start_week
+    if "second_half" in PERIODS_BY_KEY
+    else None
+)
 
 # Shared by games.py (write_week_games) and trends.py (write_week_trends) -
 # the exact same query, not duplicated on purpose.
@@ -113,7 +115,8 @@ def split_home_away(
 
 def write_meta_current() -> None:
     """Write meta:current - which week is live right now, for this season."""
-    current_week = resolve_current_week(get_d1())
+    d1 = get_d1()
+    current_week = resolve_current_week(d1)
     if current_week is None:
         logger.warning(
             "No current week found for season %s - not writing meta:current",
@@ -126,8 +129,9 @@ def write_meta_current() -> None:
         {
             "season": SEASON,
             "current_week": current_week,
-            "second_half_start_week": SECOND_HALF_START_WEEK,
-            "paid_places": PAID_PLACES,
+            "periods": period_definitions(final_week_number(d1)),
+            "second_half_start_week": LEGACY_SECOND_HALF_START_WEEK,
+            "paid_places": LEGACY_PAID_PLACES,
             "cbs_pool_url": cbs_pool_url(get_cbs_config().pool_id),
         },
     )

@@ -6,15 +6,19 @@ from typing import Any
 import pytest
 
 from config.config import (
-    FIRST_HALF_PAID_PLACES,
-    OVERALL_PAID_PLACES,
+    PERIODS_BY_KEY,
     SEASON,
-    SECOND_HALF_PAID_PLACES,
-    SECOND_HALF_START_WEEK,
+    Period,
 )
 from src.game_rules import standard_rank
+from src.kv_writer import leaderboard
 from src.kv_writer.leaderboard import compute_week_leaderboard
 from tests.conftest import FakeD1, Seed
+
+OVERALL_PAID_PLACES = PERIODS_BY_KEY["overall"].paid_places
+FIRST_HALF_PAID_PLACES = PERIODS_BY_KEY["first_half"].paid_places
+SECOND_HALF_PAID_PLACES = PERIODS_BY_KEY["second_half"].paid_places
+SECOND_HALF_START_WEEK = PERIODS_BY_KEY["second_half"].start_week
 
 
 def _by_name(board: list[dict[str, Any]] | None) -> dict[str, dict[str, Any]]:
@@ -229,6 +233,63 @@ class TestHalves:
         assert row["in_money_first_half"] is False
         assert row["second_half_score"] == 4
         assert row["second_half_place"] == 1
+
+
+class TestPeriods:
+    THIRDS = (
+        Period("overall", "Overall", 1, None, paid_places=2),
+        Period("first_third", "First Third", 1, 2, paid_places=1),
+        Period("second_third", "Second Third", 3, 4, paid_places=1),
+        Period("third_third", "Third Third", 5, None, paid_places=1),
+    )
+
+    def test_any_period_structure(
+        self, d1: FakeD1, seed: Seed, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(leaderboard, "PERIODS", self.THIRDS)
+        _season_scores(seed, {"a": [5, 5, 1, 1], "b": [1, 1, 5, 4], "c": [3, 3, 3, 3]})
+
+        rows = _by_name(compute_week_leaderboard(d1, 4))
+
+        assert rows["a"]["periods"]["first_third"] == {
+            "score": 10,
+            "place": 1,
+            "in_money": True,
+        }
+        assert rows["b"]["periods"]["second_third"] == {
+            "score": 9,
+            "place": 1,
+            "in_money": True,
+        }
+        assert rows["c"]["periods"]["overall"] == {
+            "score": 12,
+            "place": 1,
+            "in_money": True,
+        }
+        # not started yet
+        assert rows["a"]["periods"]["third_third"] == {
+            "score": None,
+            "place": None,
+            "in_money": False,
+        }
+        # the old half-season fields are absent, not wrong
+        assert rows["a"]["first_half_score"] is None
+        assert rows["a"]["in_money_overall"] is True  # tied with c for first
+
+    def test_legacy_fields_mirror_the_halves(self, d1: FakeD1, seed: Seed) -> None:
+        _season_scores(seed, {"a": [3] * SECOND_HALF_START_WEEK, "b": [1]})
+
+        for row in _by_name(
+            compute_week_leaderboard(d1, SECOND_HALF_START_WEEK)
+        ).values():
+            periods = row["periods"]
+            assert row["in_money_overall"] == periods["overall"]["in_money"]
+            assert periods["overall"]["score"] == row["cumulative_score"]
+            assert periods["overall"]["place"] == row["place"]
+            for key in ("first_half", "second_half"):
+                assert row[f"{key}_score"] == periods[key]["score"]
+                assert row[f"{key}_place"] == periods[key]["place"]
+                assert row[f"in_money_{key}"] == periods[key]["in_money"]
 
 
 class TestInMoney:

@@ -12,14 +12,40 @@ from dotenv import load_dotenv
 logger = logging.getLogger(__name__)
 
 SEASON = 2026
-# used for second half standings
-# current pool has 3 standings, 1st half, 2nd half and overall
-SECOND_HALF_START_WEEK = 10
 
-# How many places get paid per standings category
-OVERALL_PAID_PLACES = 5
-FIRST_HALF_PAID_PLACES = 3
-SECOND_HALF_PAID_PLACES = 3
+# Every pick'em entry makes this many picks a week
+PICKS_PER_WEEK = 5
+
+
+@dataclass(frozen=True)
+class Period:
+    """One standings period the pool pays out on. end_week None runs
+    through the season's last week."""
+
+    key: str
+    label: str
+    start_week: int
+    end_week: int | None
+    paid_places: int
+    # last place among users who made PICKS_PER_WEEK picks every week of the period
+    pay_last_place: bool = False
+
+    def covers(self, week_number: int) -> bool:
+        return week_number >= self.start_week and (
+            self.end_week is None or week_number <= self.end_week
+        )
+
+
+# The pool's payout structure for SEASON - "overall" is the season-long
+# standings and has to stay. Change it at the season bump, before
+# new_season.py, never mid-season (season_close_out.py saves whatever is
+# here as the closed season's structure).
+PERIODS = (
+    Period("overall", "Overall", 1, None, paid_places=5),
+    Period("first_half", "First Half", 1, 9, paid_places=3),
+    Period("second_half", "Second Half", 10, None, paid_places=3),
+)
+PERIODS_BY_KEY = {period.key: period for period in PERIODS}
 
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data" / str(SEASON)
