@@ -1119,15 +1119,19 @@ src.kv_writer.__main__`).
   `abbr`, e.g. AFC) → `divisions` (name, e.g. "AFC East") → `teams` in
   order, each with `rank`, W-L-T, `win_pct` (a tie counts half),
   points for/against/diff, `home`/`road`/`division_record`/
-  `conference_record`, `streak` ("W3"), and `ats` (covers/losses against
-  the CBS line). Records are computed from our own FINAL games, so they
+  `conference_record`, `streak` ("W3"), `ats` (covers/losses against
+  the CBS line), and `pool` (`picked`/`against`, the same records as the
+  team key's `pool.picked`/`pool.against`, so the UI's standings page
+  doesn't need all 32 team keys - added 2026-10-02). Records are computed from our own FINAL games, so they
   match the scoreboard the moment a game ends (checked 2026-09-30 against
   prod: every team's record, points and streak matched Sports IO's).
   Order is `win_pct`, then `teams.division_rank` (Sports IO's position,
   which applies the NFL tiebreakers we don't) - so on equal records the
   order is only as fresh as the last `load_standings()`. No playoff
-  seeding. Written by `_run_standings_refresh()` (see Orchestration) and
-  daily housekeeping.
+  seeding. Written by `_run_standings_refresh()` (see Orchestration),
+  daily housekeeping, and alongside the team keys whenever
+  `_run_team_profiles_refresh()` rewrites any (a pick reveal or CBS
+  grading changes `pool` without a new FINAL).
 - `write_team_profiles(team_ids=None)` → `team:{season}:{team_id}` (added
   2026-09-30, `team_profiles.py`) - one key per team: `team` (with
   conference/division), straight-up `record`, `ats` against the CBS line
@@ -1143,7 +1147,8 @@ src.kv_writer.__main__`).
   status, line, score once FINAL, pick count, graded count, correct
   count) differs from the last successful write, saved as JSON in
   `orchestration_state.team_profiles_games` - so a pick reveal or CBS
-  grading rewrites two keys, a live score change doesn't. Daily
+  grading rewrites two keys (plus the standings key, for its `pool`
+  column), a live score change doesn't. Daily
   housekeeping rewrites all 32 as a backstop. `team_profiles_write` in
   `meta:admin`.
 - `write_historical()` → `meta:historical` — see `db/CLAUDE.md`'s
