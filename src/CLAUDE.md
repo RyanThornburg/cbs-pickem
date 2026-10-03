@@ -746,8 +746,9 @@ there (confirmed live: `__init__.py` alone raises `No module named
 src.kv_writer.__main__`).
 
 - `write_meta_current()` → `meta:current` — `current_week` from
-  `weeks.is_current`, plus `second_half_start_week` and `paid_places`
-  (both config, see below) so the UI never hardcodes pool rules, and
+  `weeks.is_current`, plus `periods` (`config.PERIODS`, see below) so the
+  UI never hardcodes pool rules (the old `second_half_start_week`/
+  `paid_places` stay alongside until the UI switches), and
   `cbs_pool_url` (added 2026-09-27, `api.cbs_client.cbs_pool_url()` +
   `CBS_POOL_ID`, the same builder `CBSClient` scrapes from) for the UI to
   link out to the CBS pool home page.
@@ -874,9 +875,21 @@ src.kv_writer.__main__`).
   computation lives in `compute_week_leaderboard(d1, week_number)`, split
   out from the write function specifically so `season_close_out.py` can
   reuse the identical math for a season's final standings — see below.
-  Each user also gets `in_money_overall`/`in_money_first_half`/
-  `in_money_second_half` booleans against the configured payout counts,
-  plus `seasons_played` (added 2026-09-11, `_prior_seasons_by_user()`)
+  Each user also gets a `periods` map, one entry per `config.PERIODS`
+  key: `score`/`place`/`in_money` (all null/false before the period
+  starts), `last_place_eligible` (`PICKS_PER_WEEK` picks in every
+  *finished* week of that period so far - `weeks.is_complete`, since
+  before the deadline `picks_made` only counts kicked-off picks; null
+  before the period starts) and `in_money_last_place` (the period pays
+  last place, the user is eligible and has the lowest eligible score -
+  ties share it). The key also carries a top-level `periods` list (the
+  definitions, `end_week` resolved to the season's last week, via
+  `src/periods.py`). The old per-user `first_half_*`/`second_half_*`/
+  `in_money_overall`/`in_money_first_half`/`in_money_second_half` fields
+  are derived from `periods` (`_legacy_period_fields()`) and stay until
+  the UI reads `periods` - remove them together with
+  `shared.LEGACY_PAID_PLACES`/`LEGACY_SECOND_HALF_START_WEEK`.
+  Users also get `seasons_played` (added 2026-09-11, `_prior_seasons_by_user()`)
   computed from `historical_standings` rather than stored on `users` -
   deliberately not a persisted column since it's a pure derivation with no
   ongoing-maintenance win from storing it (see reasoning below). Every
@@ -1134,7 +1147,15 @@ src.kv_writer.__main__`).
   housekeeping rewrites all 32 as a backstop. `team_profiles_write` in
   `meta:admin`.
 - `write_historical()` → `meta:historical` — see `db/CLAUDE.md`'s
-  `historical_standings` section for what feeds this.
+  `historical_standings` section for what feeds this. Each year carries
+  `periods` (`seasons.periods_json`, null for archive seasons), each
+  standing (and each career `season_history` entry) its `periods` map
+  (`{key: {rank, score, last_place}}`) and overall `last_place`; top-level
+  `period_champions` and `last_place` list `{year, period_key, label,
+  names, score}` in each season's own period order (an archive season's
+  label comes from its key, "first_half" -> "First Half"). The old
+  `first_half_champions`/`second_half_champions` and per-standing
+  `first_half_*`/`second_half_*` stay until the UI switches.
 - `write_user_profiles()` → `user:{user_id}:season:{season}`, one key per
   active user (added 2026-09-21 — never actually documented here until
   now; see `CLAUDE.local.md`'s "`user_stats` has no loader" entry for the
@@ -1280,12 +1301,19 @@ different loaders feed each of them: `write_incomplete_weeks_games()`,
 `write_current_week_leaderboard()`, `write_current_week_trends()`,
 `write_season_trends()` and `write_admin_status()` - see above.
 
-`config.OVERALL_PAID_PLACES`/`FIRST_HALF_PAID_PLACES`/
-`SECOND_HALF_PAID_PLACES` (added 2026-09-11, `PAID_PLACES` in
-`kv_writer/shared.py`) are hand-set pool-admin rules, same convention as
-`SECOND_HALF_START_WEEK` — currently 5/3/3, matching what the pool
-actually pays out. Change these, not the leaderboard math, if the pool's
-payout structure ever changes.
+`config.PERIODS` (2026-10-02, replacing `SECOND_HALF_START_WEEK` and the
+three `*_PAID_PLACES` constants) is the pool's payout structure: a tuple
+of `Period(key, label, start_week, end_week, paid_places,
+pay_last_place)`, `end_week` None meaning "through the last week".
+`overall` is the season-long standings and must stay; any other periods
+(halves, thirds, ...) can be added or removed. 2026 is overall top 5,
+each half top 3, no last place. Change `PERIODS`, not the leaderboard
+math, when the pool's structure changes - at the season bump, before
+`new_season.py`, never mid-season (close-out saves whatever is there as
+the closed season's structure). `src/periods.py` holds the helpers
+(`final_week_number()`, `period_end()`, `period_definitions()`), outside
+`kv_writer` so `user_stats.py` can use them: the clutch stat's money
+weeks are each period's last week.
 
 ## Season close-out
 
@@ -1296,12 +1324,14 @@ passed as an argument) because `compute_week_leaderboard()`, which it
 reuses for the closing math, is itself hardcoded to `config.SEASON` —
 accepting a different season id here would silently mislabel that
 season's real data. Resolves the season's final week via
-`MAX(week_number) FROM weeks`, computes that week's leaderboard, and
-upserts one `historical_standings` row per user from
-`entry["place"]`/`entry["cumulative_score"]`/`entry["first_half_place"]`/
-`entry["first_half_score"]`/`entry["second_half_place"]`/
-`entry["second_half_score"]`, then calls `write_historical()` to refresh
-KV.
+`MAX(week_number) FROM weeks`, refuses if any week of the season isn't
+`is_complete` yet (last place eligibility only judges finished weeks),
+computes that week's leaderboard, and in one batch upserts one
+`historical_standings` row per user (overall place/score, the old
+half-season columns, and `last_place`), replaces the season's
+`historical_period_standings` rows (every non-overall period), and saves
+`config.PERIODS` to `seasons.periods_json`. Then calls
+`write_historical()` to refresh KV.
 
 **Never run this before the season's real final week has been played** —
 confirmed live 2026-09-10 that doing so produces a wrong result

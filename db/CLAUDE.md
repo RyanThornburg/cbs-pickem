@@ -362,6 +362,31 @@ as real extra scope for one year of benefit; only 2025's halves are
 filled in, entered by hand from the user's own records. Come back to this
 if 2024's half-season winners are ever wanted.
 
+Pay periods (2026-10-02, see `src/CLAUDE.md`'s `config.PERIODS` note):
+`historical_period_standings` holds a closed season's rank/score in every
+period other than overall (one row per user per period, `period_key` =
+that season's `config.PERIODS` key), plus a `last_place` winner flag;
+overall stays on `historical_standings`, which gained its own
+`last_place`. `seasons.periods_json` saves the season's period structure
+at close-out (labels, weeks, paid places), so the history page knows one
+season was halves and another thirds - NULL for the archive seasons.
+2025's hand-entered halves are copied into the period table as
+`first_half`/`second_half` rows; the `first_half_*`/`second_half_*`
+columns stay (and close-out keeps writing them) until the UI reads the
+new shape. Applying it to an existing database (no `setup.sh`):
+
+```sql
+ALTER TABLE seasons ADD COLUMN periods_json TEXT;
+ALTER TABLE historical_standings ADD COLUMN last_place BOOLEAN NOT NULL DEFAULT FALSE;
+-- then historical_period_standings' CREATE TABLE from schema.sql, then:
+INSERT INTO historical_period_standings (season_id, user_id, period_key, rank, score)
+SELECT season_id, user_id, 'first_half', first_half_rank, first_half_score
+FROM historical_standings WHERE first_half_rank IS NOT NULL;
+INSERT INTO historical_period_standings (season_id, user_id, period_key, rank, score)
+SELECT season_id, user_id, 'second_half', second_half_rank, second_half_score
+FROM historical_standings WHERE second_half_rank IS NOT NULL;
+```
+
 `historical_user_mapping` is the audit trail for how each archived CBS
 entry got matched onto a `users.user_id` - name matching is
 case-insensitive (confirmed live: "Bill Morlok" in the 2015 archive vs.

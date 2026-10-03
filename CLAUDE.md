@@ -95,9 +95,13 @@ distinguish partial from complete):
 1. `uv run python -m src.season_close_out [local|prod]` — computes that
    season's final cumulative standings the same way the live weekly
    leaderboard always has, writes one `historical_standings` row per
-   user, then refreshes `meta:historical` in KV.
-2. Bump `config.SEASON` and run `src/new_season.py` for the new year, same
-   as always.
+   user plus their `historical_period_standings` rows, saves
+   `config.PERIODS` to `seasons.periods_json`, then refreshes
+   `meta:historical` in KV. It refuses while any week of the season
+   isn't `is_complete` (the last game's FINAL marks it).
+2. Bump `config.SEASON`, set `config.PERIODS` to the new season's payout
+   structure (if it changed), and run `src/new_season.py` for the new
+   year, same as always.
 
 `historical_standings`/`historical_user_mapping` were originally
 backfilled once (2026-09-10) from a pre-2026 archive
