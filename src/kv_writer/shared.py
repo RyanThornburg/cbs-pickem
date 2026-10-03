@@ -14,26 +14,12 @@ from collections.abc import Callable
 from typing import Any
 
 from api.cbs_client import cbs_pool_url
-from config.config import PERIODS_BY_KEY, SEASON, get_cbs_config
+from config.config import SEASON, get_cbs_config
 from db.clients import get_d1, get_kv
 from db.d1_client import D1Client
 from src.periods import final_week_number, period_definitions
 
 logger = logging.getLogger(__name__)
-
-# The pre-`periods` fields (meta:current/leaderboard `paid_places` and
-# `second_half_start_week`), kept until the UI reads `periods` - remove
-# them together. Only meaningful while PERIODS has the two halves.
-LEGACY_PAID_PLACES = {
-    key: PERIODS_BY_KEY[key].paid_places
-    for key in ("overall", "first_half", "second_half")
-    if key in PERIODS_BY_KEY
-}
-LEGACY_SECOND_HALF_START_WEEK = (
-    PERIODS_BY_KEY["second_half"].start_week
-    if "second_half" in PERIODS_BY_KEY
-    else None
-)
 
 # Shared by games.py (write_week_games) and trends.py (write_week_trends) -
 # the exact same query, not duplicated on purpose.
@@ -130,8 +116,6 @@ def write_meta_current() -> None:
             "season": SEASON,
             "current_week": current_week,
             "periods": period_definitions(final_week_number(d1)),
-            "second_half_start_week": LEGACY_SECOND_HALF_START_WEEK,
-            "paid_places": LEGACY_PAID_PLACES,
             "cbs_pool_url": cbs_pool_url(get_cbs_config().pool_id),
         },
     )

@@ -10,11 +10,7 @@ from config.config import PERIODS, PICKS_PER_WEEK, SEASON, Period
 from db.clients import get_d1, get_kv
 from db.d1_client import D1Client
 from src.game_rules import standard_rank
-from src.kv_writer.shared import (
-    LEGACY_PAID_PLACES,
-    LEGACY_SECOND_HALF_START_WEEK,
-    for_current_week,
-)
+from src.kv_writer.shared import for_current_week
 from src.periods import final_week_number, period_definitions
 
 logger = logging.getLogger(__name__)
@@ -94,18 +90,6 @@ def _last_place_eligible(
         )
         for user_id in user_ids
     }
-
-
-def _legacy_period_fields(periods: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """The pre-`periods` per-user fields (first_half_score, in_money_overall,
-    ...), kept until the UI reads `periods` - remove with LEGACY_PAID_PLACES"""
-    fields: dict[str, Any] = {"in_money_overall": periods["overall"]["in_money"]}
-    for key in ("first_half", "second_half"):
-        entry = periods.get(key, {})
-        fields[f"{key}_score"] = entry.get("score")
-        fields[f"{key}_place"] = entry.get("place")
-        fields[f"in_money_{key}"] = entry.get("in_money", False)
-    return fields
 
 
 def _prior_seasons_by_user(d1: D1Client) -> dict[int, int]:
@@ -222,7 +206,6 @@ def compute_week_leaderboard(
                 "cumulative_score": user_cumulative,
                 "place": place[user_id],
                 "periods": periods,
-                **_legacy_period_fields(periods),
                 "has_submitted_picks": has_submitted_picks.get(user_id, False),
                 "picks": picks_by_user.get(user_id, []),
             }
@@ -248,8 +231,6 @@ def write_week_leaderboard(week_number: int) -> None:
         {
             "week": week_number,
             "periods": period_definitions(final_week_number(d1)),
-            "second_half_start_week": LEGACY_SECOND_HALF_START_WEEK,
-            "paid_places": LEGACY_PAID_PLACES,
             "users": users_json,
         },
     )

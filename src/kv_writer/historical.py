@@ -18,8 +18,7 @@ logger = logging.getLogger(__name__)
 _HISTORICAL_SQL = """
 SELECT hs.season_id, s.name AS pool_name, s.historical_data_incomplete,
     s.periods_json, u.user_id, u.name, u.is_active, hs.final_rank, hs.final_score,
-    hs.first_half_rank, hs.first_half_score,
-    hs.second_half_rank, hs.second_half_score, hs.last_place
+    hs.last_place
 FROM historical_standings hs
 JOIN users u ON u.user_id = hs.user_id
 JOIN seasons s ON s.season_id = hs.season_id
@@ -99,10 +98,6 @@ def _career_record(
                 "incomplete": bool(row["historical_data_incomplete"]),
                 "rank": row["final_rank"],
                 "score": row["final_score"],
-                "first_half_rank": row["first_half_rank"],
-                "first_half_score": row["first_half_score"],
-                "second_half_rank": row["second_half_rank"],
-                "second_half_score": row["second_half_score"],
                 "last_place": bool(row["last_place"]),
                 "periods": periods.get((row["season_id"], row["user_id"]), {}),
             }
@@ -125,8 +120,6 @@ def write_historical() -> None:
 
     years: dict[str, dict[str, Any]] = {}
     champions_by_season: dict[int, dict[str, Any]] = {}
-    first_half_champions_by_season: dict[int, dict[str, Any]] = {}
-    second_half_champions_by_season: dict[int, dict[str, Any]] = {}
     # (season, period_key) -> {year, period_key, label, names, score}
     period_champions: dict[tuple[int, str], dict[str, Any]] = {}
     last_places: dict[tuple[int, str], dict[str, Any]] = {}
@@ -197,10 +190,6 @@ def write_historical() -> None:
                 "name": row["name"],
                 "rank": row["final_rank"],
                 "score": row["final_score"],
-                "first_half_rank": row["first_half_rank"],
-                "first_half_score": row["first_half_score"],
-                "second_half_rank": row["second_half_rank"],
-                "second_half_score": row["second_half_score"],
                 "last_place": bool(row["last_place"]),
                 "periods": user_periods,
             }
@@ -221,28 +210,7 @@ def write_historical() -> None:
             champion["names"].append(row["name"])
             champion["score"] = row["final_score"]
 
-        # I didn't track these or have the data
-        # season_close_out.py starts writing these going forward.
-        if row["first_half_rank"] == 1:
-            first_half = first_half_champions_by_season.setdefault(
-                row["season_id"], {"year": row["season_id"], "names": [], "score": None}
-            )
-            first_half["names"].append(row["name"])
-            first_half["score"] = row["first_half_score"]
-        if row["second_half_rank"] == 1:
-            second_half = second_half_champions_by_season.setdefault(
-                row["season_id"], {"year": row["season_id"], "names": [], "score": None}
-            )
-            second_half["names"].append(row["name"])
-            second_half["score"] = row["second_half_score"]
-
     champions = sorted(champions_by_season.values(), key=lambda c: c["year"])
-    first_half_champions = sorted(
-        first_half_champions_by_season.values(), key=lambda c: c["year"]
-    )
-    second_half_champions = sorted(
-        second_half_champions_by_season.values(), key=lambda c: c["year"]
-    )
 
     def season_order(winner: dict[str, Any]) -> tuple[int, int, str]:
         # the season's own period order, overall first; archive seasons by key
@@ -255,8 +223,6 @@ def write_historical() -> None:
         {
             "years": years,
             "champions": champions,
-            "first_half_champions": first_half_champions,
-            "second_half_champions": second_half_champions,
             "period_champions": sorted(period_champions.values(), key=season_order),
             "last_place": sorted(last_places.values(), key=season_order),
             "career": sorted(career.values(), key=lambda c: c["user_id"]),

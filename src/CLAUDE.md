@@ -747,8 +747,7 @@ src.kv_writer.__main__`).
 
 - `write_meta_current()` → `meta:current` — `current_week` from
   `weeks.is_current`, plus `periods` (`config.PERIODS`, see below) so the
-  UI never hardcodes pool rules (the old `second_half_start_week`/
-  `paid_places` stay alongside until the UI switches), and
+  UI never hardcodes pool rules, and
   `cbs_pool_url` (added 2026-09-27, `api.cbs_client.cbs_pool_url()` +
   `CBS_POOL_ID`, the same builder `CBSClient` scrapes from) for the UI to
   link out to the CBS pool home page.
@@ -884,11 +883,10 @@ src.kv_writer.__main__`).
   last place, the user is eligible and has the lowest eligible score -
   ties share it). The key also carries a top-level `periods` list (the
   definitions, `end_week` resolved to the season's last week, via
-  `src/periods.py`). The old per-user `first_half_*`/`second_half_*`/
-  `in_money_overall`/`in_money_first_half`/`in_money_second_half` fields
-  are derived from `periods` (`_legacy_period_fields()`) and stay until
-  the UI reads `periods` - remove them together with
-  `shared.LEGACY_PAID_PLACES`/`LEGACY_SECOND_HALF_START_WEEK`.
+  `src/periods.py`). The pre-periods fields (`first_half_*`/
+  `second_half_*`/`in_money_*` per user, `second_half_start_week`/
+  `paid_places` on the key and meta:current) were removed 2026-10-02 once
+  the UI switched.
   Users also get `seasons_played` (added 2026-09-11, `_prior_seasons_by_user()`)
   computed from `historical_standings` rather than stored on `users` -
   deliberately not a persisted column since it's a pure derivation with no
@@ -1160,7 +1158,7 @@ src.kv_writer.__main__`).
   names, score}` in each season's own period order (an archive season's
   label comes from its key, "first_half" -> "First Half"). The old
   `first_half_champions`/`second_half_champions` and per-standing
-  `first_half_*`/`second_half_*` stay until the UI switches.
+  `first_half_*`/`second_half_*` were removed 2026-10-02.
 - `write_user_profiles()` → `user:{user_id}:season:{season}`, one key per
   active user (added 2026-09-21 — never actually documented here until
   now; see `CLAUDE.local.md`'s "`user_stats` has no loader" entry for the
@@ -1332,8 +1330,8 @@ season's real data. Resolves the season's final week via
 `MAX(week_number) FROM weeks`, refuses if any week of the season isn't
 `is_complete` yet (last place eligibility only judges finished weeks),
 computes that week's leaderboard, and in one batch upserts one
-`historical_standings` row per user (overall place/score, the old
-half-season columns, and `last_place`), replaces the season's
+`historical_standings` row per user (overall place/score and
+`last_place`), replaces the season's
 `historical_period_standings` rows (every non-overall period), and saves
 `config.PERIODS` to `seasons.periods_json`. Then calls
 `write_historical()` to refresh KV.

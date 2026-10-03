@@ -173,7 +173,7 @@ def test_seasons_played_counts_the_current_season(d1: FakeD1, seed: Seed) -> Non
 
 
 class TestHalves:
-    def test_before_second_half_has_no_second_half_fields(
+    def test_before_second_half_it_has_no_standings(
         self, d1: FakeD1, seed: Seed
     ) -> None:
         last_first_half = SECOND_HALF_START_WEEK - 1
@@ -181,11 +181,11 @@ class TestHalves:
 
         row = _by_name(compute_week_leaderboard(d1, last_first_half))["a"]
 
-        assert row["first_half_score"] == 3 * last_first_half
-        assert row["first_half_place"] == 1
-        assert row["second_half_score"] is None
-        assert row["second_half_place"] is None
-        assert row["in_money_second_half"] is False
+        assert row["periods"]["first_half"]["score"] == 3 * last_first_half
+        assert row["periods"]["first_half"]["place"] == 1
+        assert row["periods"]["second_half"]["score"] is None
+        assert row["periods"]["second_half"]["place"] is None
+        assert row["periods"]["second_half"]["in_money"] is False
 
     def test_second_half_only_counts_weeks_from_the_split(
         self, d1: FakeD1, seed: Seed
@@ -203,13 +203,13 @@ class TestHalves:
 
         rows = _by_name(compute_week_leaderboard(d1, weeks_in))
 
-        assert rows["a"]["first_half_score"] == 5 * first_half
-        assert rows["a"]["second_half_score"] == 2
-        assert rows["b"]["first_half_score"] == first_half
-        assert rows["b"]["second_half_score"] == 10
-        assert rows["a"]["first_half_place"] == 1
-        assert rows["b"]["second_half_place"] == 1
-        assert rows["a"]["second_half_place"] == 2
+        assert rows["a"]["periods"]["first_half"]["score"] == 5 * first_half
+        assert rows["a"]["periods"]["second_half"]["score"] == 2
+        assert rows["b"]["periods"]["first_half"]["score"] == first_half
+        assert rows["b"]["periods"]["second_half"]["score"] == 10
+        assert rows["a"]["periods"]["first_half"]["place"] == 1
+        assert rows["b"]["periods"]["second_half"]["place"] == 1
+        assert rows["a"]["periods"]["second_half"]["place"] == 2
         # overall is the sum of both halves
         assert rows["a"]["cumulative_score"] == 5 * first_half + 2
         assert rows["b"]["cumulative_score"] == first_half + 10
@@ -222,9 +222,12 @@ class TestHalves:
         at_split = _by_name(compute_week_leaderboard(d1, SECOND_HALF_START_WEEK))
         later = _by_name(compute_week_leaderboard(d1, SECOND_HALF_START_WEEK + 2))
 
-        assert at_split["a"]["first_half_score"] == later["a"]["first_half_score"]
-        assert at_split["a"]["second_half_score"] == 2
-        assert later["a"]["second_half_score"] == 6
+        assert (
+            at_split["a"]["periods"]["first_half"]["score"]
+            == later["a"]["periods"]["first_half"]["score"]
+        )
+        assert at_split["a"]["periods"]["second_half"]["score"] == 2
+        assert later["a"]["periods"]["second_half"]["score"] == 6
 
     def test_user_joining_in_the_second_half(self, d1: FakeD1, seed: Seed) -> None:
         week_ids = [seed.week(n) for n in range(1, SECOND_HALF_START_WEEK + 1)]
@@ -232,11 +235,11 @@ class TestHalves:
 
         row = _by_name(compute_week_leaderboard(d1, SECOND_HALF_START_WEEK))["late"]
 
-        assert row["first_half_score"] is None
-        assert row["first_half_place"] is None
-        assert row["in_money_first_half"] is False
-        assert row["second_half_score"] == 4
-        assert row["second_half_place"] == 1
+        assert row["periods"]["first_half"]["score"] is None
+        assert row["periods"]["first_half"]["place"] is None
+        assert row["periods"]["first_half"]["in_money"] is False
+        assert row["periods"]["second_half"]["score"] == 4
+        assert row["periods"]["second_half"]["place"] == 1
 
 
 class TestPeriods:
@@ -276,24 +279,6 @@ class TestPeriods:
             "place": None,
             "in_money": False,
         }
-        # the old half-season fields are absent, not wrong
-        assert rows["a"]["first_half_score"] is None
-        assert rows["a"]["in_money_overall"] is True  # tied with c for first
-
-    def test_legacy_fields_mirror_the_halves(self, d1: FakeD1, seed: Seed) -> None:
-        _season_scores(seed, {"a": [3] * SECOND_HALF_START_WEEK, "b": [1]})
-
-        for row in _by_name(
-            compute_week_leaderboard(d1, SECOND_HALF_START_WEEK)
-        ).values():
-            periods = row["periods"]
-            assert row["in_money_overall"] == periods["overall"]["in_money"]
-            assert periods["overall"]["score"] == row["cumulative_score"]
-            assert periods["overall"]["place"] == row["place"]
-            for key in ("first_half", "second_half"):
-                assert row[f"{key}_score"] == periods[key]["score"]
-                assert row[f"{key}_place"] == periods[key]["place"]
-                assert row[f"in_money_{key}"] == periods[key]["in_money"]
 
 
 class TestLastPlace:
@@ -416,7 +401,7 @@ class TestInMoney:
 
         rows = _by_name(compute_week_leaderboard(d1, 1))
 
-        paid = {n for n, r in rows.items() if r["in_money_overall"]}
+        paid = {n for n, r in rows.items() if r["periods"]["overall"]["in_money"]}
         assert paid == {f"u{i}" for i in range(OVERALL_PAID_PLACES)}
 
     def test_tie_at_the_cutoff_pays_everyone_tied(self, d1: FakeD1, seed: Seed) -> None:
@@ -430,9 +415,9 @@ class TestInMoney:
 
         for name in ("tie1", "tie2", "tie3"):
             assert rows[name]["place"] == OVERALL_PAID_PLACES
-            assert rows[name]["in_money_overall"] is True
+            assert rows[name]["periods"]["overall"]["in_money"] is True
         assert rows["last"]["place"] == OVERALL_PAID_PLACES + 3
-        assert rows["last"]["in_money_overall"] is False
+        assert rows["last"]["periods"]["overall"]["in_money"] is False
 
     def test_half_season_paid_places(self, d1: FakeD1, seed: Seed) -> None:
         first_half = SECOND_HALF_START_WEEK - 1
@@ -445,8 +430,12 @@ class TestInMoney:
 
         rows = _by_name(compute_week_leaderboard(d1, SECOND_HALF_START_WEEK))
 
-        first_paid = {n for n, r in rows.items() if r["in_money_first_half"]}
-        second_paid = {n for n, r in rows.items() if r["in_money_second_half"]}
+        first_paid = {
+            n for n, r in rows.items() if r["periods"]["first_half"]["in_money"]
+        }
+        second_paid = {
+            n for n, r in rows.items() if r["periods"]["second_half"]["in_money"]
+        }
         assert first_paid == {f"u{i}" for i in range(FIRST_HALF_PAID_PLACES)}
         assert second_paid == {
             f"u{i}" for i in range(count - SECOND_HALF_PAID_PLACES, count)

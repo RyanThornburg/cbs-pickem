@@ -346,11 +346,6 @@ CREATE TABLE IF NOT EXISTS historical_standings (
     final_rank INT NOT NULL, -- CBS's own tie-aware rank.value
     final_score INT NOT NULL,
     is_champion BOOLEAN AS (final_rank = 1),
-    -- don't have all the data so allow nulls
-    first_half_rank INT,
-    first_half_score INT,
-    second_half_rank INT,
-    second_half_score INT,
     last_place BOOLEAN NOT NULL DEFAULT FALSE, -- won the overall last place payout
     FOREIGN KEY (season_id) REFERENCES seasons(season_id),
     FOREIGN KEY (user_id) REFERENCES users(user_id),

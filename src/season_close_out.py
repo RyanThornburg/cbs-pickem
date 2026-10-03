@@ -15,18 +15,12 @@ logger = logging.getLogger(__name__)
 
 _UPSERT_STANDING_SQL = """
 INSERT INTO historical_standings
-    (season_id, user_id, pool_name, final_rank, final_score,
-     first_half_rank, first_half_score, second_half_rank, second_half_score,
-     last_place)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (season_id, user_id, pool_name, final_rank, final_score, last_place)
+VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT(season_id, user_id) DO UPDATE SET
     pool_name = excluded.pool_name,
     final_rank = excluded.final_rank,
     final_score = excluded.final_score,
-    first_half_rank = excluded.first_half_rank,
-    first_half_score = excluded.first_half_score,
-    second_half_rank = excluded.second_half_rank,
-    second_half_score = excluded.second_half_score,
     last_place = excluded.last_place
 """
 
@@ -93,10 +87,6 @@ def close_out_season() -> None:
                 pool_name,
                 entry["place"],
                 entry["cumulative_score"],
-                entry["first_half_place"],
-                entry["first_half_score"],
-                entry["second_half_place"],
-                entry["second_half_score"],
                 entry["periods"]["overall"]["in_money_last_place"],
             ],
         )

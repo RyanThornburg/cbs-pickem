@@ -72,12 +72,19 @@ class TestCloseOut:
         season_close_out.close_out_season()
 
         rows = _standings(clients.d1)
-        a, b, c = rows[users["a"]], rows[users["b"]], rows[users["c"]]
+        a, c = rows[users["a"]], rows[users["c"]]
         assert (c["final_rank"], c["final_score"]) == (1, 4 * LAST_WEEK)
         assert c["is_champion"] == 1
-        assert (a["first_half_rank"], a["first_half_score"]) == (1, 5 * first_half)
-        assert (b["second_half_rank"], b["second_half_score"]) == (1, 5 * second_half)
         assert a["final_score"] == 5 * first_half + second_half
+        periods = {
+            (r["user_id"], r["period_key"]): (r["rank"], r["score"])
+            for r in clients.d1.query(
+                "SELECT * FROM historical_period_standings WHERE season_id = ?",
+                [SEASON],
+            ).results
+        }
+        assert periods[(users["a"], "first_half")] == (1, 5 * first_half)
+        assert periods[(users["b"], "second_half")] == (1, 5 * second_half)
         assert {r["pool_name"] for r in rows.values()} == {"MorLocked 10.0"}
 
     def test_matches_the_live_leaderboard(self, clients: Clients, seed: Seed) -> None:
@@ -242,14 +249,14 @@ class TestMetaHistorical:
     def _history(self, seed: Seed) -> dict[str, int]:
         users = {name: seed.user(name) for name in ("ann", "bob", "cy")}
         rows = [
-            # (season, user, rank, score, first half rank, second half rank)
-            (2023, "ann", 1, 80, None, None),
-            (2023, "bob", 2, 75, None, None),
-            (2024, "ann", 1, 70, 1, 2),  # a shared title
-            (2024, "bob", 1, 70, 2, 1),
-            (2024, "cy", 3, 60, 1, 3),  # shared first half
+            # (season, user, rank, score)
+            (2023, "ann", 1, 80),
+            (2023, "bob", 2, 75),
+            (2024, "ann", 1, 70),  # a shared title
+            (2024, "bob", 1, 70),
+            (2024, "cy", 3, 60),
         ]
-        for season, name, rank, score, first, second in rows:
+        for season, name, rank, score in rows:
             seed.season(season)
             # meta:historical's pool name comes from seasons.name
             seed.d1.query(
@@ -257,20 +264,9 @@ class TestMetaHistorical:
                 [f"Pool {season}", season],
             )
             seed.d1.query(
-                "INSERT INTO historical_standings (season_id, user_id, pool_name, final_rank,"
-                " final_score, first_half_rank, first_half_score, second_half_rank,"
-                " second_half_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [
-                    season,
-                    users[name],
-                    f"Pool {season}",
-                    rank,
-                    score,
-                    first,
-                    40 if first else None,
-                    second,
-                    30 if second else None,
-                ],
+                "INSERT INTO historical_standings (season_id, user_id, pool_name,"
+                " final_rank, final_score) VALUES (?, ?, ?, ?, ?)",
+                [season, users[name], f"Pool {season}", rank, score],
             )
         # 2024 as an archive season (no periods_json), 2025 closed out with thirds
         for name, rank, last in (("ann", 1, False), ("bob", 2, True)):
@@ -324,12 +320,7 @@ class TestMetaHistorical:
             (2025, ["cy"]),
         ]
         assert key["champions"][0]["incomplete"] is True
-        assert [
-            (c["year"], sorted(c["names"])) for c in key["first_half_champions"]
-        ] == [(2024, ["ann", "cy"])]
-        assert [(c["year"], c["names"]) for c in key["second_half_champions"]] == [
-            (2024, ["bob"])
-        ]
+        assert "first_half_champions" not in key
         assert set(key["years"]) == {"2016", "2023", "2024", "2025"}
         assert key["years"]["2024"]["pool_name"] == "Pool 2024"
 
@@ -433,12 +424,6 @@ def test_meta_current(clients: Clients, seed: Seed) -> None:
                 "pay_last_place": False,
             },
         ],
-        "second_half_start_week": SECOND_HALF_START_WEEK,
-        "paid_places": {
-            "overall": OVERALL_PAID_PLACES,
-            "first_half": FIRST_HALF_PAID_PLACES,
-            "second_half": SECOND_HALF_PAID_PLACES,
-        },
         "cbs_pool_url": "https://picks.cbssports.com/football/pickem/pools/pool1",
     }
 
