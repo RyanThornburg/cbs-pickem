@@ -769,10 +769,18 @@ src.kv_writer.__main__`).
 - `write_week_games()` → `week:{season}:{weekNN}:games` — schedule +
   picks (naturally empty pre-lock, `user_picks` only ever has
   locked/revealed rows) + a `live` block (down/distance/possession/
-  weather from `game_snapshots`) present only while `games.status` is
-  `IN_PROGRESS`/`HALFTIME`/`DELAYED` — a missing `live` key means no live
-  data, not zeros. Snapshots are only captured for `IN_PROGRESS`/
-  `HALFTIME`, so during a delay `live` is the last snapshot from before it. Also carries `stadium` (name/city/state/country/lat/lng/
+  weather from `game_snapshots`) present once the game has a snapshot and
+  until `games.status` is done (`FINAL`/`CANCELLED`/`POSTPONED`) — a
+  missing `live` key means no live data, not zeros. Snapshots are only
+  captured while ESPN shows a game in progress, so one existing means it
+  has kicked off; during a delay `live` is the last snapshot from before
+  it. **Not gated on Sports IO's status since 2026-10-04**: it was
+  `games.status` in `IN_PROGRESS`/`HALFTIME`/`DELAYED`, and Sports IO
+  marked every 1PM game started about 6 minutes after ESPN did (9 after
+  kickoff), so the scoreboard looked unstarted that long. While Sports
+  IO's status still says `SCHEDULED`, the key's `status` comes from the
+  snapshot (`_espn_status()`: `HALFTIME`, `DELAYED`, else `IN_PROGRESS`);
+  once Sports IO's is live, it stands. Also carries `stadium` (name/city/state/country/lat/lng/
   roof_type/surface_type, `None` if `games.stadium_id` isn't resolved
   yet) and `forecast` (added 2026-09-15, `games.forecast_*` — the
   pregame forecast captured by `src/loaders/pregame_weather_loader.py`,

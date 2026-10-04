@@ -386,14 +386,59 @@ class TestLiveBlock:
         board.snapshot(game, quarter=2)
         assert "live" in _games(clients)[game["game_id"]]
 
-    @pytest.mark.parametrize("status", ["SCHEDULED", "FINAL", "POSTPONED"])
-    def test_no_live_block_otherwise(
+    @pytest.mark.parametrize("status", ["FINAL", "CANCELLED", "POSTPONED"])
+    def test_no_live_block_once_done(
         self, clients: Clients, board: Board, status: str
     ) -> None:
         # a FINAL game keeps its old snapshots - they mustn't show as live
         game = board.game(status=status)
         board.snapshot(game, quarter=4)
-        assert "live" not in _games(clients)[game["game_id"]]
+        written = _games(clients)[game["game_id"]]
+        assert "live" not in written
+        assert written["status"] == status
+
+    def test_no_live_block_before_kickoff(self, clients: Clients, board: Board) -> None:
+        game = board.game(status="SCHEDULED")
+        written = _games(clients)[game["game_id"]]
+        assert "live" not in written
+        assert written["status"] == "SCHEDULED"
+
+    @pytest.mark.parametrize(
+        ("status_desc", "status"),
+        [
+            ("STATUS_IN_PROGRESS", "IN_PROGRESS"),
+            ("STATUS_END_PERIOD", "IN_PROGRESS"),
+            ("STATUS_HALFTIME", "HALFTIME"),
+            (None, "IN_PROGRESS"),
+        ],
+    )
+    def test_live_once_espn_has_it_under_way(
+        self, clients: Clients, board: Board, status_desc: str | None, status: str
+    ) -> None:
+        # Sports IO's status still says SCHEDULED minutes after kickoff
+        game = board.game(status="SCHEDULED")
+        board.snapshot(
+            game,
+            quarter=1,
+            time_remaining="12:46",
+            status_desc=status_desc,
+            home_score=7,
+            away_score=0,
+        )
+
+        written = _games(clients)[game["game_id"]]
+
+        assert written["status"] == status
+        assert written["live"]["time_remaining"] == "12:46"
+        assert (written["home_score"], written["away_score"]) == (7, 0)
+
+    def test_sports_io_live_status_is_kept(
+        self, clients: Clients, board: Board
+    ) -> None:
+        # once Sports IO says live, its status stands - ESPN's isn't mapped over it
+        game = board.game(status="DELAYED")
+        board.snapshot(game, quarter=3, status_desc="STATUS_IN_PROGRESS")
+        assert _games(clients)[game["game_id"]]["status"] == "DELAYED"
 
     def test_no_snapshot_yet(self, clients: Clients, board: Board) -> None:
         game = board.game(status="IN_PROGRESS")

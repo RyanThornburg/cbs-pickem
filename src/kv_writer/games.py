@@ -7,7 +7,7 @@ from typing import Any
 
 from config.config import SEASON
 from db.clients import get_d1, get_kv
-from src.game_rules import LIVE_STATUSES
+from src.game_rules import DONE_STATUSES, LIVE_STATUSES
 from src.kv_writer.game_details import player_line
 from src.kv_writer.shared import (
     GAMES_SQL,
@@ -259,6 +259,19 @@ def _prefer_snapshot_score(game_json: dict[str, Any], snapshot: dict[str, Any]) 
         game_json["away_score"] = away
 
 
+def _espn_status(snapshot: dict[str, Any]) -> str:
+    """games.status's vocabulary for a game ESPN has under way - its
+    snapshot status is 'STATUS_IN_PROGRESS', 'STATUS_HALFTIME',
+    'STATUS_END_PERIOD', ... (CBS's 'INPROGRESS'/'HALFTIME' before
+    2026-09-27)"""
+    desc = snapshot["status_desc"] or ""
+    if "HALFTIME" in desc:
+        return "HALFTIME"
+    if "DELAYED" in desc:
+        return "DELAYED"
+    return "IN_PROGRESS"
+
+
 def write_week_games(week_number: int) -> None:
     """Write week:{season}:{weekNN}:games - one week's schedule, joined with
     who picked which side (naturally empty pre-lock - user_picks only ever
@@ -331,8 +344,15 @@ def write_week_games(week_number: int) -> None:
             },
         }
 
+        # live once ESPN has it under way, not just once Sports IO's status
+        # says so - that lagged kickoff by 7+ minutes (2026-10-04, every 1PM
+        # game), leaving the scoreboard looking unstarted. Snapshots are only
+        # captured while ESPN shows a game in progress, so one existing for a
+        # game that isn't done means it has kicked off.
         snapshot = latest_snapshot_by_game.get(game["game_id"])
-        if snapshot and game["status"] in LIVE_STATUSES:
+        if snapshot and game["status"] not in DONE_STATUSES:
+            if game["status"] not in LIVE_STATUSES:
+                game_json["status"] = _espn_status(snapshot)
             game_json["live"] = _snapshot_live_block(snapshot)
             _prefer_snapshot_score(game_json, snapshot)
 
