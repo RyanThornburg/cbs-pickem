@@ -307,7 +307,9 @@ game details KV key's team box score sums those lines into `punts`/
 `punt_yards`/`punt_average` (see `src/CLAUDE.md`).
 
 `/games/events` (`get_game_events()`, scoring plays - loaded by
-`src/loaders/scoring_plays_loader.py` since 2026-09-27) and
+`src/loaders/scoring_plays_loader.py` from 2026-09-27 until 2026-10-04,
+when it moved to ESPN's summary, see the ESPN section; the client and
+model are kept but nothing loads them now) and
 `/games/statistics/players` (`get_player_statistics()`, per-player box
 score - `src/loaders/player_stats_loader.py`) were both checked against
 real data before trusting the models, and each surfaced something:
@@ -462,11 +464,26 @@ sometimes has a leading space. `situation.yardLine` is yards from the
 against ESPN's own drive log; 0 means no spot.
 
 `get_summary(event_id)` (added 2026-09-27) reads the per-game summary
-endpoint (`.../nfl/summary?event={id}`), only for the finished-game win
-probability curve (`src/loaders/win_probability_loader.py`). Only
-`winprobability` and `drives` are modeled; the response also has a box
-score, leaders, scoring plays, odds and more, deliberately unused since
-Sports IO covers those. Each `winprobability` entry is `{homeWinPercentage,
+endpoint (`.../nfl/summary?event={id}`, ~800KB), for the finished-game win
+probability curve (`src/loaders/win_probability_loader.py`) and, since
+2026-10-04, scoring plays (`src/loaders/scoring_plays_loader.py`). Only
+`winprobability`, `drives` and `scoringPlays` are modeled; the response
+also has a box score, leaders, odds and more, deliberately unused since
+Sports IO covers those. `scoringPlays` replaced Sports IO's
+`/games/events` after measuring live (2026-10-04, IND @ WAS): Sports IO's
+events landed ~5.5 minutes after ESPN's scoreboard showed the score (its
+own live score lags about as much), while ESPN's summary had the play
+when its scoreboard did. Across all 49 FINAL 2026 games the two had the
+same plays with the same score after each and the same quarter. ESPN's
+entries are `{id, text, homeScore, awayScore, period.number, clock.
+displayValue, team.abbreviation, scoringType.abbreviation}`: score after
+the play (a TD's includes its try), clock never missing (Sports IO's was
+null ~15% of the time), `scoringType` `TD`/`FG`/`SF` on all 417 plays
+checked (the play's own `type` is finer, e.g. "Passing Touchdown", and
+had no abbreviation on two). No player field - the loader takes the name
+the text leads with ("Jonathan Taylor 5 Yd Rush ..."), which matched
+Sports IO's player on 141 of 151 plays (the rest name style, e.g.
+"James Cook III", plus one lateral play with no name to take). Each `winprobability` entry is `{homeWinPercentage,
 tiePercentage, playId}` - no clock or score of its own, so it's joined to
 `drives.previous[].plays[]` by play id. Exactly one entry per game matches
 no play: ESPN's pre-kickoff value (confirmed across all 43 FINAL 2026

@@ -33,7 +33,7 @@ _FINAL = {"FT", "AOT"}
 
 # only the parts of ESPN's summary the models read - the rest (box score,
 # leaders, odds, news, ...) is most of its ~800KB
-_SUMMARY_KEYS = ("winprobability", "drives")
+_SUMMARY_KEYS = ("winprobability", "drives", "scoringPlays")
 
 
 def save(name: str, data: Any) -> None:

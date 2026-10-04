@@ -17,7 +17,7 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management and
   (takes a per-env lock under `locks/` and skips the tick if the previous
   one is still running)
 - Run the live ticker (a **second** cron entry, also `* * * * *`): `uv run python -m src.live_ticker [local|prod]`
-  — ESPN snapshots + the games KV key every 15 seconds during games, exits
+  — ESPN snapshots, scoring plays + the games KV key every 15 seconds during games, exits
   immediately otherwise. See `src/CLAUDE.md`'s "Live ticker" section.
 - One-off season bootstrap (season/teams/CBS users/team mapper): `uv run python -m src.new_season [local|prod]`
 - Scrape CBS and save weekly standings: `uv run python -m api.cbs_client`
@@ -30,7 +30,7 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management and
 - Capture live game snapshots (score/quarter/weather/field position): `uv run python -m src.loaders.game_snapshots_loader [local|prod]`
 - Load per-player box scores (Sports IO `/games/statistics/players`) for live games, or a whole week: `uv run python -m src.loaders.player_stats_loader [local|prod] [week_number]`
 - Capture ESPN's full win probability curve for FINAL games (or replace a whole week's): `uv run python -m src.loaders.win_probability_loader [local|prod] [week_number]`
-- Refresh scoring plays for games whose score moved (Sports IO `/games/events`), or backfill a whole week: `uv run python -m src.loaders.scoring_plays_loader [local|prod] [week_number]`
+- Refresh scoring plays for games whose score moved (ESPN game summary), or backfill a whole week: `uv run python -m src.loaders.scoring_plays_loader [local|prod] [week_number]`
 - Load odds (The Odds API only, Sports IO odds not built): `uv run python -m src.loaders.odds_loader [local|prod]`
 - Load CBS weeks/games/picks for the current week, or re-load a past week:
   `uv run python -m src.loaders.cbs_loader [local|prod] [week_number]`

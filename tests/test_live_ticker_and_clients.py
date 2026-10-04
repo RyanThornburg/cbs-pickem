@@ -40,6 +40,7 @@ class TestLiveTicker:
             "clock": clock,
             "candidates": True,
             "rounds": [],  # what each snapshot round returns (changed game ids)
+            "plays": [],  # what each scoring plays round returns, the same way
             "writes": [],
             "details": [],
         }
@@ -54,7 +55,15 @@ class TestLiveTicker:
         monkeypatch.setattr(
             live_ticker, "has_candidate_games", lambda: state["candidates"]
         )
+
+        def plays() -> set[int]:
+            result = state["plays"].pop(0) if state["plays"] else set()
+            if isinstance(result, Exception):
+                raise result
+            return result
+
         monkeypatch.setattr(live_ticker, "load_game_snapshots", snapshots)
+        monkeypatch.setattr(live_ticker, "load_scoring_plays", plays)
         monkeypatch.setattr(
             live_ticker,
             "write_games_weeks",
@@ -83,6 +92,33 @@ class TestLiveTicker:
         # and the changed games' details keys (live win probability)
         assert ticker["details"] == [{1}, {1, 2}]
         assert get_state(d1, "game_snapshot_last_success_at") is not None
+        assert get_state(d1, "scoring_plays_last_success_at") is not None
+
+    def test_new_scoring_play_rewrites_the_games_key(
+        self, ticker: dict[str, Any]
+    ) -> None:
+        # ESPN's summary had the play a round after the score changed
+        ticker["rounds"] = [{1}, set(), set(), set()]
+        ticker["plays"] = [set(), {1}, set(), set()]
+
+        live_ticker.main()
+
+        assert ticker["writes"] == [{1}, {1}]
+        # scoring plays aren't in the details key
+        assert ticker["details"] == [{1}]
+
+    def test_scoring_plays_failure_is_recorded(
+        self, ticker: dict[str, Any], d1: FakeD1
+    ) -> None:
+        ticker["rounds"] = [{1}, set(), set(), set()]
+        ticker["plays"] = [RuntimeError("ESPN summary down")]
+
+        live_ticker.main()
+
+        # the snapshot's games key write still happened
+        assert ticker["writes"] == [{1}]
+        events = d1.query("SELECT source FROM system_events").results
+        assert events == [{"source": "scoring_plays_refresh"}]
 
     def test_outside_game_time(self, ticker: dict[str, Any], d1: FakeD1) -> None:
         ticker["candidates"] = False

@@ -1,6 +1,8 @@
 """Fast live refresh - a game_snapshots capture from ESPN every 15 seconds
-during games, and a rewrite of the games KV key for any week whose
-snapshot changed, plus that game's details key (live win probability).
+during games, then scoring plays for any game whose score moved (ESPN's
+game summary), and a rewrite of the games KV key for any week whose
+snapshot or plays changed, plus the changed games' details keys (live win
+probability).
 
 src/orchestration.py only ticks once a minute, and that tick can take 40+
 seconds, so the scoreboard was routinely a minute or more behind ESPN's
@@ -23,6 +25,7 @@ from db.clients import get_d1
 from db.d1_client import D1Client
 from src.kv_writer import write_game_details, write_games_weeks
 from src.loaders.game_snapshots_loader import has_candidate_games, load_game_snapshots
+from src.loaders.scoring_plays_loader import load_scoring_plays
 from src.scheduling import acquire_lock, run_and_record, soft
 
 logger = logging.getLogger(__name__)
@@ -34,9 +37,11 @@ LAST_ROUND_START_SECONDS = 45
 
 
 def _round(client: D1Client) -> None:
-    """One capture: new snapshots, then the games key for just the weeks
-    that changed. Cursor/success keys match what orchestration used to set
-    for snapshots, so meta:admin's game_snapshot_capture entry still works."""
+    """One capture: new snapshots, then scoring plays (right after, so a
+    new score's play is looked for the same round), then the games key for
+    just the weeks that changed. Cursor/success keys match what
+    orchestration sets for both, so meta:admin's game_snapshot_capture and
+    scoring_plays_refresh entries cover either process."""
     changed: set[int] = set()
     run_and_record(
         client,
@@ -46,8 +51,22 @@ def _round(client: D1Client) -> None:
         "game_snapshot_last_success_at",
     )
 
+    plays_changed: set[int] = set()
+    run_and_record(
+        client,
+        "scoring_plays_refresh",
+        lambda: plays_changed.update(load_scoring_plays()),
+        "scoring_plays_last_run_at",
+        "scoring_plays_last_success_at",
+    )
+
+    if changed or plays_changed:
+        soft(
+            client,
+            "live_games_kv_write",
+            lambda: write_games_weeks(changed | plays_changed),
+        )
     if changed:
-        soft(client, "live_games_kv_write", lambda: write_games_weeks(changed))
         # the live win probability curve in each changed game's details key
         soft(client, "live_game_details_write", lambda: write_game_details(changed))
 

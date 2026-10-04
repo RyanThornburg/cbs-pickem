@@ -159,26 +159,36 @@ already never took `env` (see `config/CLAUDE.md`).
   a curve for stops being retried. The live value was already on every
   `game_snapshots` row; this is the gap-free version. Week CLI arg
   replaces a week's curves; weeks 1-3 of 2026 loaded on prod 2026-09-27.
-- `scoring_plays_loader.py` (added 2026-09-27) — `load_scoring_plays()`
-  replaces a game's `game_scoring_plays` rows from Sports IO's
-  `/games/events`, but only for live (or FINAL within
-  `FINAL_RECHECK_HOURS` of kickoff) games whose latest stored play isn't
-  at the current `games.home_score`/`away_score` - so with nothing new
-  it's one D1 query and no API calls, cheap enough for every tick. That
-  score check is sound because every scoring play raises the combined
-  score and Sports IO returns them in order (confirmed live across all
-  272 2025 regular-season games, 0 exceptions). Delete-and-replace rather
-  than upsert since events have no id, and it picks up Sports IO's own
-  corrections. An empty event list never wipes stored rows (Sports IO's
-  events can lag the score by a tick). `minute` is null on ~15% of plays
-  (2025: 355 of 2,339) - stored as a null `clock`, order comes from
-  `sequence`. Quarter names map `First`..`Fourth`/`Overtime` → 1-5, an
-  unknown one is a `mapping_gaps` row. Types seen: `TD`, `FG`, `SF` and
-  `Safety` (both), `2PTC`, and one truncated `Pass Interception Re` -
-  stored raw. `backfill_week_scoring_plays(week)` (CLI: a week number
-  after the env) skips the score check, for weeks that predate this -
-  weeks 1-3 of 2026 backfilled on prod 2026-09-27 (46 games, every FINAL
-  game's last play matched its final score).
+- `scoring_plays_loader.py` (added 2026-09-27, ESPN since 2026-10-04) —
+  `load_scoring_plays()` replaces a game's `game_scoring_plays` rows from
+  ESPN's game summary (`get_summary(espn_event_id).scoring_plays`), but
+  only for live (or FINAL within `FINAL_RECHECK_HOURS` of kickoff) games
+  whose latest stored play isn't at the current score - the latest
+  `game_snapshots` row's (ESPN), or `games.home_score`/`away_score`
+  (Sports IO) for a game with no snapshots. Not both: Sports IO's score
+  runs minutes behind ESPN's, and checking it too would refetch the
+  ~800KB summary every round until it caught up. With nothing new it's
+  one D1 query and no API calls. Called every 15 seconds by
+  `src/live_ticker.py` (right after the snapshot capture) and every tick
+  by orchestration, which covers a late correction after the ticker stops
+  on FINAL. Returns the game_ids whose plays changed, so the ticker
+  rewrites just those weeks' games keys. If ESPN's list has the same
+  number of plays and last score as what's stored (its summary a round
+  behind its own scoreboard), nothing is written and it's tried again
+  next round. An empty list never wipes stored rows. Delete-and-replace,
+  which also picks up ESPN's corrections. Quarter is ESPN's period (5 =
+  OT), `type` its `scoringType` (`TD`/`FG`/`SF`), teams matched by
+  abbreviation (`espn_client.ABBREV_CORRECTIONS`, a miss is a
+  `mapping_gaps` row), `player_name` taken from the text it leads with
+  (null when it doesn't, e.g. a lateral play). **Why ESPN**: measured
+  live 2026-10-04 (IND @ WAS), Sports IO's `/games/events` landed ~5.5
+  minutes after ESPN's scoreboard showed the score, while the scoreboard
+  itself updates every 15s - the UI showed a score minutes before its
+  play. Both sources had the same plays and scores for all 49 FINAL 2026
+  games; see `api/CLAUDE.md`'s ESPN section. Rows written before then are
+  Sports IO's (clock null on ~15%, types also `Safety`/`2PTC`).
+  `backfill_week_scoring_plays(week)` (CLI: a week number after the env)
+  skips the score check and rewrites every game in the week.
 - `pregame_weather_loader.py` (added 2026-09-15) — `load_pregame_weather()`
   captures a forecast for the *current* week's `SCHEDULED` games onto
   `games.forecast_*`, overwriting in place each run rather than keeping
@@ -451,9 +461,12 @@ Cadences, and why each one is what it is:
   `meta:admin`).
 - **Scoring plays, every tick, live window or not** -
   `_run_scoring_plays_refresh()`, see `scoring_plays_loader.py` above for
-  why that's cheap. Runs before `write_incomplete_weeks_games()` so a new
-  score's play reaches KV the same tick. try/except with its own success
-  cursor, surfaced in `meta:admin` as `scoring_plays_refresh`.
+  why that's cheap. During games the live ticker runs the same refresh
+  every 15 seconds and is what gets a play to KV quickly; this one is the
+  catch-up after the ticker stops on FINAL. Runs before
+  `write_incomplete_weeks_games()` so a play it finds reaches KV the same
+  tick. try/except with its own success cursor, surfaced in `meta:admin`
+  as `scoring_plays_refresh` (both processes stamp the same keys).
 - **`should_run()` has 30s of slack** (`_SHOULD_RUN_SLACK_SECONDS`, added
   2026-09-27). Each cursor is stamped when its task finishes, so on a
   60s cron the next tick always lands a few seconds short - without the
@@ -664,8 +677,10 @@ to `orchestration.py` and also run every minute
 Outside game time it exits after one D1 query
 (`game_snapshots_loader.has_candidate_games()`). During games it loops for
 most of its minute: a round at 0/15/30/45 seconds, each one
-`load_game_snapshots()` (one ESPN scoreboard call for every game) and then
-`kv_writer.write_games_weeks()` for just the weeks whose snapshot changed.
+`load_game_snapshots()` (one ESPN scoreboard call for every game), then
+`load_scoring_plays()` (an ESPN summary call only for a game whose score
+just moved, added 2026-10-04), and then `kv_writer.write_games_weeks()`
+for just the weeks whose snapshot or scoring plays changed.
 No new round starts after `LAST_ROUND_START_SECONDS` (45), so a run ends
 before cron starts the next; its lock (`live_ticker.{env}`) covers a
 run that doesn't.

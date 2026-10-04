@@ -2,6 +2,7 @@
 responses: game_snapshots_loader (what the live scoreboard shows),
 scoring_plays_loader, player_stats_loader, win_probability_loader."""
 
+import copy
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -324,34 +325,55 @@ def _plays(d1: FakeD1, game_id: int) -> list[dict[str, Any]]:
 
 class TestScoringPlays:
     @pytest.fixture
-    def final(self, season: FakeD1, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    def final(
+        self, season: FakeD1, apis: FakeApis, monkeypatch: pytest.MonkeyPatch
+    ) -> dict[str, Any]:
+        """the captured game, linked to its ESPN event, with the clock four
+        hours after kickoff. Only that event's summary has scoring plays -
+        the rest of the saved week is FINAL too, and with the clock frozen
+        on Thursday night those look recent as well."""
         game = _captured_game(season)
-        freeze(monkeypatch, scoring_plays_loader, _kickoff(game) + timedelta(hours=4))
-        return game
-
-    def _event_calls(self, apis: FakeApis, game_id: int | None = None) -> int:
-        """Sports IO events fetches - for one game (by its Sports IO id),
-        or all of them. The rest of the saved week is FINAL too, and with
-        the clock frozen on Thursday night those look recent as well."""
-        return sum(
-            1
-            for endpoint, params in apis.calls
-            if endpoint == Endpoint.GAME_EVENTS
-            and (game_id is None or params["id"] == game_id)
+        event_id = capture_info()["espn_event_id"]
+        season.query(
+            "UPDATE games SET espn_event_id = 'other-' || game_id"
+            " WHERE week_id = ? AND game_id != ?",
+            [game["week_id"], game["game_id"]],
         )
+        season.query(
+            "UPDATE games SET espn_event_id = ? WHERE game_id = ?",
+            [event_id, game["game_id"]],
+        )
+        saved = apis.responses["summary"]
+        apis.responses["summary"] = lambda eid: (
+            copy.deepcopy(saved) if eid == event_id else {"scoringPlays": []}
+        )
+        freeze(monkeypatch, scoring_plays_loader, _kickoff(game) + timedelta(hours=4))
+        return {**game, "espn_event_id": event_id}
+
+    def _saved_plays(self) -> list[dict[str, Any]]:
+        return fixture("espn_summary.json")["scoringPlays"]
+
+    def _calls(self, apis: FakeApis, game: dict[str, Any]) -> int:
+        return apis.summary_calls.count(game["espn_event_id"])
 
     def test_loads_a_game_whose_score_moved(
-        self, season: FakeD1, apis: FakeApis, final: dict[str, Any]
+        self, season: FakeD1, final: dict[str, Any]
     ) -> None:
-        scoring_plays_loader.load_scoring_plays()
+        assert scoring_plays_loader.load_scoring_plays() == {final["game_id"]}
 
         plays = _plays(season, final["game_id"])
-        saved = apis.responses[Endpoint.GAME_EVENTS]
+        saved = self._saved_plays()
         assert [p["sequence"] for p in plays] == list(range(1, len(saved) + 1))
-        quarters = {"First": 1, "Second": 2, "Third": 3, "Fourth": 4, "Overtime": 5}
-        assert [p["quarter"] for p in plays] == [quarters[e["quarter"]] for e in saved]
-        assert [p["type"] for p in plays] == [e["type"] for e in saved]
+        assert [p["quarter"] for p in plays] == [e["period"]["number"] for e in saved]
+        assert [p["clock"] for p in plays] == [
+            e["clock"]["displayValue"] for e in saved
+        ]
+        assert [p["type"] for p in plays] == [
+            e["scoringType"]["abbreviation"] for e in saved
+        ]
+        assert [p["description"] for p in plays] == [e["text"].strip() for e in saved]
         assert all(p["team_id"] is not None for p in plays)
+        assert all(p["player_name"] for p in plays)
         # the last play lands on the final score
         assert (plays[-1]["home_score"], plays[-1]["away_score"]) == (
             final["home_score"],
@@ -359,15 +381,14 @@ class TestScoringPlays:
         )
 
     def test_caught_up_game_is_not_fetched_again(
-        self, season: FakeD1, apis: FakeApis, final: dict[str, Any]
+        self, apis: FakeApis, final: dict[str, Any]
     ) -> None:
         scoring_plays_loader.load_scoring_plays()
-        game_id = final["sports_io_game_id"]
-        assert self._event_calls(apis, game_id) == 1
+        assert self._calls(apis, final) == 1
 
         scoring_plays_loader.load_scoring_plays()
 
-        assert self._event_calls(apis, game_id) == 1
+        assert self._calls(apis, final) == 1
 
     def test_new_score_refetches(
         self, season: FakeD1, apis: FakeApis, final: dict[str, Any]
@@ -377,21 +398,76 @@ class TestScoringPlays:
             "UPDATE games SET home_score = home_score + 7 WHERE game_id = ?",
             [final["game_id"]],
         )
-        game_id = final["sports_io_game_id"]
+
+        # ESPN's summary hasn't caught up - fetched, but nothing rewritten
+        assert scoring_plays_loader.load_scoring_plays() == set()
+
+        assert self._calls(apis, final) == 2
+
+    def test_espn_snapshot_score_wins_over_the_games_row(
+        self, season: FakeD1, apis: FakeApis, final: dict[str, Any]
+    ) -> None:
+        scoring_plays_loader.load_scoring_plays()
+        # Sports IO's score (the games row) is ahead of ESPN's here
+        season.query(
+            "INSERT INTO game_snapshots (game_id, home_score, away_score)"
+            " VALUES (?, ?, ?)",
+            [final["game_id"], final["home_score"], final["away_score"]],
+        )
+        season.query(
+            "UPDATE games SET home_score = home_score + 7 WHERE game_id = ?",
+            [final["game_id"]],
+        )
+
+        scoring_plays_loader.load_scoring_plays()
+        assert self._calls(apis, final) == 1
+
+        # and ESPN's score moving on is what triggers a fetch
+        season.query(
+            "INSERT INTO game_snapshots (game_id, home_score, away_score)"
+            " VALUES (?, ?, ?)",
+            [final["game_id"], final["home_score"] + 3, final["away_score"]],
+        )
+        scoring_plays_loader.load_scoring_plays()
+        assert self._calls(apis, final) == 2
+
+    def test_game_espn_has_under_way_before_sports_io(
+        self, season: FakeD1, apis: FakeApis, final: dict[str, Any]
+    ) -> None:
+        # Sports IO's status hasn't caught up, but ESPN's snapshot has a score
+        season.query(
+            "UPDATE games SET status = 'SCHEDULED', home_score = NULL,"
+            " away_score = NULL WHERE game_id = ?",
+            [final["game_id"]],
+        )
+        season.query(
+            "INSERT INTO game_snapshots (game_id, home_score, away_score)"
+            " VALUES (?, ?, ?)",
+            [final["game_id"], final["home_score"], final["away_score"]],
+        )
+
+        assert final["game_id"] in scoring_plays_loader.load_scoring_plays()
+
+    def test_scheduled_game_without_snapshots_is_left_alone(
+        self, season: FakeD1, apis: FakeApis, final: dict[str, Any]
+    ) -> None:
+        season.query(
+            "UPDATE games SET status = 'SCHEDULED' WHERE game_id = ?",
+            [final["game_id"]],
+        )
 
         scoring_plays_loader.load_scoring_plays()
 
-        assert self._event_calls(apis, game_id) == 2
+        assert self._calls(apis, final) == 0
 
     def test_long_finished_game_is_left_alone(
-        self, season: FakeD1, apis: FakeApis, monkeypatch: pytest.MonkeyPatch
+        self, apis: FakeApis, final: dict[str, Any], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        game = _captured_game(season)
-        freeze(monkeypatch, scoring_plays_loader, _kickoff(game) + timedelta(days=2))
+        freeze(monkeypatch, scoring_plays_loader, _kickoff(final) + timedelta(days=2))
 
         scoring_plays_loader.load_scoring_plays()
 
-        assert self._event_calls(apis, game["sports_io_game_id"]) == 0
+        assert self._calls(apis, final) == 0
 
     def test_empty_response_keeps_stored_plays(
         self, season: FakeD1, apis: FakeApis, final: dict[str, Any]
@@ -402,42 +478,66 @@ class TestScoringPlays:
             "UPDATE games SET home_score = home_score + 3 WHERE game_id = ?",
             [final["game_id"]],
         )
-        apis.responses[Endpoint.GAME_EVENTS] = []
+        apis.responses["summary"] = {"scoringPlays": []}
 
-        scoring_plays_loader.load_scoring_plays()
+        assert scoring_plays_loader.load_scoring_plays() == set()
 
         assert _plays(season, final["game_id"]) == stored
 
     def test_fetch_failure_is_skipped(
         self, season: FakeD1, apis: FakeApis, final: dict[str, Any]
     ) -> None:
-        def fail(params: dict[str, Any]) -> list[Any]:
-            raise RuntimeError("Sports IO down")
-
-        apis.responses[Endpoint.GAME_EVENTS] = fail
+        apis.responses["summary"] = RuntimeError("ESPN down")
         scoring_plays_loader.load_scoring_plays()
         assert _plays(season, final["game_id"]) == []
 
-    def test_unknown_quarter_is_a_mapping_gap(
+    def test_unknown_team_is_a_mapping_gap(
         self, season: FakeD1, apis: FakeApis, final: dict[str, Any]
     ) -> None:
-        apis.responses[Endpoint.GAME_EVENTS][0]["quarter"] = "Fifth"
+        saved = fixture("espn_summary.json")
+        saved["scoringPlays"][0]["team"]["abbreviation"] = "XYZ"
+        apis.responses["summary"] = saved
 
         scoring_plays_loader.load_scoring_plays()
 
-        assert _plays(season, final["game_id"])[0]["quarter"] is None
+        assert _plays(season, final["game_id"])[0]["team_id"] is None
         assert _rows(season, "SELECT entity_type, raw_value FROM mapping_gaps") == [
-            {"entity_type": "event_quarter", "raw_value": "Fifth"}
+            {"entity_type": "team", "raw_value": "XYZ"}
         ]
 
     def test_week_backfill_ignores_the_score_check(
-        self, season: FakeD1, apis: FakeApis
+        self, season: FakeD1, apis: FakeApis, final: dict[str, Any]
     ) -> None:
-        # no clock freeze - the game is long past the recheck window
-        scoring_plays_loader.backfill_week_scoring_plays(capture_info()["week"])
-        game = _captured_game(season)
-        assert _plays(season, game["game_id"])
-        assert self._event_calls(apis) == 16  # every game that week
+        scoring_plays_loader.load_scoring_plays()
+        apis.summary_calls.clear()
+
+        # rewrites even a game that's caught up
+        assert scoring_plays_loader.backfill_week_scoring_plays(
+            capture_info()["week"]
+        ) == {final["game_id"]}
+        assert len(apis.summary_calls) == 16  # every game that week
+
+
+@pytest.mark.parametrize(
+    ("text", "player"),
+    [
+        ("Jonathan Taylor 5 Yd Rush (Spencer Shrader Kick)", "Jonathan Taylor"),
+        ("Spencer Shrader 44 Yd Field Goal ", "Spencer Shrader"),
+        (
+            "Jaxon Smith-Njigba 11 Yd pass from Sam Darnold (Jason Myers Kick)",
+            "Jaxon Smith-Njigba",
+        ),
+        (
+            (
+                "Brock Purdy complete pass to Mike Evans for 2 yards, lateral to"
+                " Deebo Samuel for 80 yards (Eddy Pineiro Kick)"
+            ),
+            None,
+        ),
+    ],
+)
+def test_scoring_play_player_name(text: str, player: str | None) -> None:
+    assert scoring_plays_loader._player_name(text) == player
 
 
 def _player_rows(d1: FakeD1) -> dict[tuple[int, str, str], dict[str, Any]]:

@@ -218,9 +218,10 @@ def _capture_odds(client: D1Client, state_key: str, success_key: str) -> None:
 
 def _run_scoring_plays_refresh(client: D1Client) -> None:
     """Every tick, live window or not - load_scoring_plays() only calls
-    Sports IO for games whose score moved since their last fetch (one D1
-    query otherwise), and a game's last score can land after the live
-    window closes. Enrichment, so a failure is recorded, never raised."""
+    ESPN for games whose score moved since their last fetch (one D1 query
+    otherwise), and a game's last score can land after the live ticker
+    stops on FINAL. The live ticker runs the same refresh every 15 seconds
+    during games. Enrichment, so a failure is recorded, never raised."""
     run_and_record(
         client,
         "scoring_plays_refresh",

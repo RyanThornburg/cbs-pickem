@@ -242,22 +242,21 @@ CREATE TABLE IF NOT EXISTS game_team_stats (
 );
 
 
--- Scoring plays for a game, from Sports IO's /games/events, in the order
--- Sports IO returns them (every scoring play raises the combined score, so
--- that order is chronological - confirmed live across all of 2025). No
--- Sports IO id to dedup on: src/loaders/scoring_plays_loader.py replaces a
--- game's rows wholesale whenever its latest play's score falls behind
--- games.home_score/away_score, which also picks up Sports IO's corrections.
+-- Scoring plays for a game, from ESPN's game summary (Sports IO's
+-- /games/events until 2026-10-04 - same plays, ~5 minutes later), in the
+-- order ESPN returns them, chronological. src/loaders/scoring_plays_loader.py
+-- replaces a game's rows wholesale whenever its latest play's score falls
+-- behind the game's current score, which also picks up ESPN's corrections.
 CREATE TABLE IF NOT EXISTS game_scoring_plays (
     scoring_play_id INTEGER PRIMARY KEY AUTOINCREMENT,
     game_id INT NOT NULL,
-    sequence INT NOT NULL, -- 1-based position in Sports IO's list
+    sequence INT NOT NULL, -- 1-based position in ESPN's list
     quarter INT, -- 1-4, 5=OT, same scale as game_snapshots.quarter
-    clock VARCHAR(10), -- time left in the quarter, e.g. '8:26' - null on ~15% of plays
+    clock VARCHAR(10), -- time left in the quarter, e.g. '8:26' (null on ~15% of Sports IO-era plays)
     team_id INT, -- team that scored
-    type VARCHAR(30), -- Sports IO's raw type: 'TD', 'FG', 'SF'/'Safety', '2PTC', ...
+    type VARCHAR(30), -- ESPN's scoringType: 'TD', 'FG', 'SF' (Sports IO-era rows also 'Safety', '2PTC', ...)
     description TEXT, -- e.g. 'Roman Wilson 38 Yd pass from Aaron Rodgers (Chris Boswell Kick)'
-    player_name VARCHAR(100),
+    player_name VARCHAR(100), -- from ESPN's text ('Name 5 Yd Rush ...'), null if it doesn't lead with one
     home_score INT NOT NULL, -- score after this play
     away_score INT NOT NULL,
     captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

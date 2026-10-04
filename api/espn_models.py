@@ -151,7 +151,35 @@ class WinProbabilityPoint(EspnModel):
     play_id: str = Field(alias="playId")
 
 
+class ScoringPlayTeam(EspnModel):
+    abbreviation: str
+
+
+class ScoringType(EspnModel):
+    abbreviation: str | None = None
+
+
+class ScoringPlay(EspnModel):
+    # score after the play - a TD's entry includes its extra point/2pt try
+    # once that's run, same as Sports IO's /games/events (confirmed live
+    # 2026-10-04: every scoring play's score matched across all 49 FINAL
+    # 2026 games). No player field, only the text.
+    id: str
+    text: str
+    home_score: int = Field(alias="homeScore")
+    away_score: int = Field(alias="awayScore")
+    period: PlayPeriod | None = None
+    clock: PlayClock | None = None
+    team: ScoringPlayTeam | None = None
+    # 'TD'/'FG'/'SF' - the play's own `type` is finer-grained ('Passing
+    # Touchdown') and has no abbreviation on a few odd plays
+    scoring_type: ScoringType | None = Field(default=None, alias="scoringType")
+
+
 class Summary(EspnModel):
+    scoring_plays: list[ScoringPlay] = Field(
+        default_factory=list[ScoringPlay], alias="scoringPlays"
+    )
     win_probability: list[WinProbabilityPoint] = Field(
         default_factory=list[WinProbabilityPoint], alias="winprobability"
     )
