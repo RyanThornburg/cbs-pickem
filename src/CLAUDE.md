@@ -306,7 +306,16 @@ by type (`is_game_relevant_alert()` - a title-prefix denylist,
 `IRRELEVANT_ALERT_PREFIXES`, of coastal/marine types like Rip Current,
 Beach Hazards and Coastal Flood, all seen live on prod before this
 existed). A denylist rather than an allowlist so an unseen alert type is
-still shown. Stored as a JSON list (`games.forecast_alerts_json`,
+still shown. Cold alerts (Freeze/Hard Freeze at 32F, Frost at 36F,
+`COLD_ALERT_MAX_TEMP_F`) are also dropped when the forecast low across
+that same window stays above the temperature (live snapshots: the current
+temperature; a daily forecast: the day's low; an unknown low keeps the
+alert). Needed because Pirate Weather's alert `time` is when the NWS
+issued it, not when the hazard starts, and it has no onset field: on
+2026-10-15 a Freeze Warning issued that morning "from midnight tonight"
+showed on SEA @ DEN (6PM MDT, forecast 54 to 47F). Other alert types
+still go by time alone, so an alert issued well before its hazard can
+still land on a game that ends first. Stored as a JSON list (`games.forecast_alerts_json`,
 `game_snapshots.weather_alerts_json`: `[{title, severity, starts,
 expires, uri}]`) and exposed as `weather_alerts` (a list, `[]` if none)
 in both the games KV key's `forecast` and `live.weather` blocks -
