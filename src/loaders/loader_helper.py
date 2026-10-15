@@ -88,6 +88,30 @@ def is_game_relevant_alert(title: str) -> bool:
     return not title.startswith(IRRELEVANT_ALERT_PREFIXES)
 
 
+# Cold alerts the game's own forecast can rule out, by title prefix: kept
+# only when the forecast low is at or below the temperature. Needed because
+# Pirate Weather's alert `time` is when it was issued, not when the hazard
+# starts - seen live 2026-10-15, a Freeze Warning issued that morning "from
+# midnight tonight" landed on a 6PM MDT game in Denver forecast 54 to 47F.
+# Frost forms with the air a few degrees above freezing, hence 36.
+COLD_ALERT_MAX_TEMP_F = (
+    ("Hard Freeze", 32),
+    ("Freeze", 32),
+    ("Frost", 36),
+)
+
+
+def _ruled_out_by_temperature(title: str, low_f: float | None) -> bool:
+    """True for a cold alert (COLD_ALERT_MAX_TEMP_F) whose game forecast low
+    stays above its temperature. An unknown low keeps the alert."""
+    if low_f is None:
+        return False
+    for prefix, max_temp_f in COLD_ALERT_MAX_TEMP_F:
+        if title.startswith(prefix):
+            return low_f > max_temp_f
+    return False
+
+
 def _alert_overlaps(alert: Alert, window_start: datetime, window_end: datetime) -> bool:
     """Pirate Weather returns whatever's active/upcoming for the location
     right now, regardless of the actual game - a Friday-only flood watch
@@ -133,12 +157,16 @@ def _iso(epoch: int | None) -> str | None:
 
 
 def _overlapping_alerts(
-    forecast: Forecast, window_start: datetime, window_hours: float
+    forecast: Forecast,
+    window_start: datetime,
+    window_hours: float,
+    low_f: float | None,
 ) -> str:
     """JSON list of the game-relevant alerts overlapping the window
     ('[]' if none) - {title, severity (NWS scale: Extreme/Severe/Moderate/
     Minor), starts, expires, uri}, for games.forecast_alerts_json/
-    game_snapshots.weather_alerts_json"""
+    game_snapshots.weather_alerts_json. `low_f` is the forecast low across
+    the window, for _ruled_out_by_temperature()."""
     window_end = window_start + timedelta(hours=window_hours)
     return json.dumps(
         [
@@ -152,6 +180,7 @@ def _overlapping_alerts(
             for a in forecast.alerts
             if is_game_relevant_alert(a.title)
             and _alert_overlaps(a, window_start, window_end)
+            and not _ruled_out_by_temperature(a.title, low_f)
         ]
     )
 
@@ -195,7 +224,9 @@ def capture_weather(
     forecast = _fetch_outdoor_forecast(latitude, longitude, roof_type, context)
     if forecast is None or forecast.currently is None:
         return _NO_WEATHER
-    alerts = _overlapping_alerts(forecast, datetime.now(UTC), 0)
+    alerts = _overlapping_alerts(
+        forecast, datetime.now(UTC), 0, forecast.currently.temperature
+    )
     return _datapoint_to_weather(forecast.currently, alerts)
 
 
@@ -333,8 +364,10 @@ def capture_pregame_forecast(
 
     Alerts are filtered against the separate, usually longer
     [kickoff, kickoff + alert_window_hours] - an alert only needs to touch
-    any part of the game to be worth showing - and to game-relevant types
-    only (is_game_relevant_alert()).
+    any part of the game to be worth showing - to game-relevant types
+    only (is_game_relevant_alert()), and dropping a cold alert the low
+    across that window rules out (_ruled_out_by_temperature(); the day's
+    low for a daily forecast).
 
     (None, all-None, all-None) if kickoff is past both horizons (never falls
     back to `currently`), or for the same reasons as capture_weather()."""
@@ -343,13 +376,26 @@ def capture_pregame_forecast(
         return None, _NO_WEATHER, _NO_WINDOW
 
     kickoff_ts = kickoff.timestamp()
-    alerts = _overlapping_alerts(forecast, kickoff, alert_window_hours)
 
     hourly = forecast.hourly.data if forecast.hourly else []
     kickoff_point = next(
         (p for p in hourly if p.time <= kickoff_ts < p.time + 3600), None
     )
     if kickoff_point is not None:
+        alert_end_ts = kickoff_ts + alert_window_hours * 3600
+        alert_temps = [
+            p.temperature
+            for p in hourly
+            if p.time < alert_end_ts
+            and p.time + 3600 > kickoff_ts
+            and p.temperature is not None
+        ]
+        alerts = _overlapping_alerts(
+            forecast,
+            kickoff,
+            alert_window_hours,
+            min(alert_temps) if alert_temps else None,
+        )
         window_end_ts = kickoff_ts + window_hours * 3600
         window_points = [
             p for p in hourly if p.time < window_end_ts and p.time + 3600 > kickoff_ts
@@ -378,6 +424,9 @@ def capture_pregame_forecast(
     )
     if kickoff_day is not None:
         logger.info("Kickoff past the hourly horizon for %s, using daily", context)
+        alerts = _overlapping_alerts(
+            forecast, kickoff, alert_window_hours, kickoff_day.temperature_min
+        )
         return "daily", *_daily_to_forecast(kickoff_day, alerts)
 
     logger.info("Kickoff past the daily forecast horizon for %s", context)

@@ -496,6 +496,51 @@ class TestPregameWeather:
         first = json.loads(row["forecast_alerts_json"])[0]
         assert set(first) == {"title", "severity", "starts", "expires", "uri"}
 
+    @pytest.mark.parametrize(
+        ("game_low_f", "kept"),
+        [
+            (47, []),
+            (33, ["Frost Advisory"]),
+            (30, ["Freeze Warning", "Frost Advisory"]),
+        ],
+    )
+    def test_cold_alerts_need_a_cold_game(
+        self,
+        season: FakeD1,
+        upcoming: dict[str, Any],
+        game_low_f: float,
+        kept: list[str],
+    ) -> None:
+        # issued that morning for overnight - Pirate Weather's `time` is the
+        # issue time, so by time alone both overlap an evening game
+        outdoor = next(r for r in _forecast_rows(season) if r["roof_type"] == "Open")
+        kickoff = int(
+            datetime.strptime(outdoor["game_time"], "%Y-%m-%dT%H:%M:%SZ")
+            .replace(tzinfo=UTC)
+            .timestamp()
+        )
+        upcoming["alerts"] = [
+            {
+                "title": title,
+                "severity": "Severe",
+                "time": kickoff - 8 * 3600,
+                "expires": kickoff + 15 * 3600,
+            }
+            for title in ("Freeze Warning", "Frost Advisory")
+        ]
+        alert_end = kickoff + pregame_weather_loader.GAME_DURATION_HOURS * 3600
+        for point in upcoming["hourly"]["data"]:
+            in_game = point["time"] < alert_end and point["time"] + 3600 > kickoff
+            # colder after the game, which must not count
+            point["temperature"] = game_low_f if in_game else 20
+
+        pregame_weather_loader.load_pregame_weather()
+
+        row = next(
+            r for r in _forecast_rows(season) if r["game_id"] == outdoor["game_id"]
+        )
+        assert [a["title"] for a in json.loads(row["forecast_alerts_json"])] == kept
+
     def test_weather_failure_skips_the_game(
         self, season: FakeD1, apis: FakeApis, upcoming: dict[str, Any]
     ) -> None:
