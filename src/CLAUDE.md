@@ -917,9 +917,17 @@ src.kv_writer.__main__`).
   before the deadline `picks_made` only counts kicked-off picks; null
   before the period starts) and `in_money_last_place` (the period pays
   last place, the user is eligible and has the lowest eligible score -
-  ties share it). The key also carries a top-level `periods` list (the
-  definitions, `end_week` resolved to the season's last week, via
-  `src/periods.py`). The pre-periods fields (`first_half_*`/
+  ties share it). `payout`/`last_place_payout` (2026-10-17) are what the
+  user would win if the period ended now: tied users pool the amounts of
+  the places they cover and split them evenly (two tied for 2nd share
+  2nd + 3rd; past the paid places there's less to split), to the cent;
+  last place splits its amount among the tied winners. `0` when out of
+  the money, `null` before the period starts or when the period has no
+  payouts configured. The key also carries a top-level `periods` list (the
+  definitions with their `payouts`/`last_place_payout`, `end_week`
+  resolved to the season's last week, via `src/periods.py`), and close-out
+  saves the same list to `seasons.periods_json`, so history keeps each
+  season's amounts. The pre-periods fields (`first_half_*`/
   `second_half_*`/`in_money_*` per user, `second_half_start_week`/
   `paid_places` on the key and meta:current) were removed 2026-10-02 once
   the UI switched.
@@ -1355,7 +1363,11 @@ different loaders feed each of them: `write_incomplete_weeks_games()`,
 `config.PERIODS` (2026-10-02, replacing `SECOND_HALF_START_WEEK` and the
 three `*_PAID_PLACES` constants) is the pool's payout structure: a tuple
 of `Period(key, label, start_week, end_week, paid_places,
-pay_last_place)`, `end_week` None meaning "through the last week".
+pay_last_place, payouts, last_place_payout)`, `end_week` None meaning
+"through the last week". `payouts` (whole dollars per paid place, 1st
+first, one per paid place) and `last_place_payout` (needs
+`pay_last_place`) are optional (2026-10-17); `Period` raises on a
+mismatch.
 `overall` is the season-long standings and must stay; any other periods
 (halves, thirds, ...) can be added or removed. 2026 is overall top 5,
 each half top 3, no last place. Change `PERIODS`, not the leaderboard

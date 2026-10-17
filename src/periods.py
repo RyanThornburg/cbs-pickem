@@ -31,6 +31,8 @@ def period_definitions(final_week: int | None) -> list[dict[str, Any]]:
             "end_week": period_end(period, final_week),
             "paid_places": period.paid_places,
             "pay_last_place": period.pay_last_place,
+            "payouts": list(period.payouts) if period.payouts is not None else None,
+            "last_place_payout": period.last_place_payout,
         }
         for period in PERIODS
     ]

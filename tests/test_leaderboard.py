@@ -487,3 +487,68 @@ class TestPicks:
         _season_scores(seed, {"a": [0]})
 
         assert _by_name(compute_week_leaderboard(d1, 1))["a"]["picks"] == []
+
+
+class TestPayouts:
+    PAID = (
+        Period(
+            "overall",
+            "Overall",
+            1,
+            None,
+            paid_places=3,
+            pay_last_place=True,
+            payouts=(500, 300, 100),
+            last_place_payout=50,
+        ),
+        Period("rest", "Rest", 2, None, paid_places=1),  # no payouts set
+    )
+
+    @pytest.fixture(autouse=True)
+    def _paid(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(leaderboard, "PERIODS", self.PAID)
+
+    def _payouts(self, d1: FakeD1, key: str = "overall") -> dict[str, tuple]:
+        rows = _by_name(compute_week_leaderboard(d1, 1))
+        return {
+            name: (
+                row["periods"][key]["payout"],
+                row["periods"][key]["last_place_payout"],
+            )
+            for name, row in rows.items()
+        }
+
+    def test_tied_places_pool_and_split(self, d1: FakeD1, seed: Seed) -> None:
+        # a 1st, b and c tied 2nd (share 2nd + 3rd), d and e tied last
+        _season_scores(seed, {"a": [5], "b": [4], "c": [4], "d": [1], "e": [1]})
+        assert self._payouts(d1) == {
+            "a": (500, 0),
+            "b": (200, 0),
+            "c": (200, 0),
+            "d": (0, 25),
+            "e": (0, 25),
+        }
+
+    def test_a_tie_past_the_paid_places_splits_what_is_left(
+        self, d1: FakeD1, seed: Seed
+    ) -> None:
+        _season_scores(seed, {"a": [5], "b": [4], "c": [3], "d": [3], "e": [3]})
+        payouts = self._payouts(d1)
+        # three tied for 3rd share 3rd's $100
+        assert [payouts[n][0] for n in "cde"] == [33.33, 33.33, 33.33]
+
+    def test_not_configured_or_not_started_is_none(
+        self, d1: FakeD1, seed: Seed
+    ) -> None:
+        _season_scores(seed, {"a": [5], "b": [4]})
+        assert self._payouts(d1, "rest") == {"a": (None, None), "b": (None, None)}
+
+
+class TestPeriodConfig:
+    def test_one_payout_per_paid_place(self) -> None:
+        with pytest.raises(ValueError, match="2 payouts for 3 paid places"):
+            Period("overall", "Overall", 1, None, 3, payouts=(500, 300))
+
+    def test_last_place_payout_needs_pay_last_place(self) -> None:
+        with pytest.raises(ValueError, match="without pay_last_place"):
+            Period("overall", "Overall", 1, None, 1, last_place_payout=50)

@@ -3,7 +3,7 @@ reused directly by src/season_close_out.py for the season's final
 standings, see src/CLAUDE.md's KV writer/Season close-out sections."""
 
 import logging
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import Any
 
 from config.config import PERIODS, PICKS_PER_WEEK, SEASON, Period
@@ -52,22 +52,53 @@ def _in_money(place: int | None, paid_places: int) -> bool:
     return place is not None and place <= paid_places
 
 
+def _place_payout(period: Period, place: int | None, tied: int) -> int | float | None:
+    """What this place pays if the period ended now: tied users pool the
+    amounts of the places they cover and split them (two tied for 2nd
+    share 2nd + 3rd). None with no payouts configured or before the
+    period starts, 0 out of the money."""
+    if period.payouts is None or place is None:
+        return None
+    pooled = sum(period.payouts[place - 1 : place - 1 + tied])
+    return _dollars(pooled / tied)
+
+
+def _dollars(amount: float) -> int | float:
+    """to the cent, a whole number as an int"""
+    rounded = round(amount, 2)
+    return int(rounded) if rounded == int(rounded) else rounded
+
+
 def _period_entry(
     period: Period,
     score: int | None,
     place: int | None,
+    tied: int,
     last_place_eligible: bool | None,
     last_place_score: int | None,
+    last_place_winners: int,
 ) -> dict[str, Any]:
+    in_money_last_place = (
+        period.pay_last_place
+        and bool(last_place_eligible)
+        and score is not None
+        and score == last_place_score
+    )
+    last_place_payout = None
+    if period.last_place_payout is not None and place is not None:
+        last_place_payout = (
+            _dollars(period.last_place_payout / last_place_winners)
+            if in_money_last_place
+            else 0
+        )
     return {
         "score": score,
         "place": place,
         "in_money": _in_money(place, period.paid_places),
+        "payout": _place_payout(period, place, tied),
         "last_place_eligible": last_place_eligible,
-        "in_money_last_place": period.pay_last_place
-        and bool(last_place_eligible)
-        and score is not None
-        and score == last_place_score,
+        "in_money_last_place": in_money_last_place,
+        "last_place_payout": last_place_payout,
     }
 
 
@@ -168,6 +199,17 @@ def compute_week_leaderboard(
         for period in PERIODS
     }
 
+    # how many users share each place, and last place, for splitting payouts
+    tied = {key: Counter(places.values()) for key, places in period_place.items()}
+    last_place_winners = {
+        period.key: sum(
+            1
+            for user_id, score in period_score[period.key].items()
+            if eligible[period.key][user_id] and score == last_place_score[period.key]
+        )
+        for period in PERIODS
+    }
+
     prior_seasons_by_user = _prior_seasons_by_user(d1)
 
     picks_by_user: defaultdict[int, list[dict[str, Any]]] = defaultdict(list)
@@ -190,8 +232,10 @@ def compute_week_leaderboard(
                 period,
                 period_score[period.key].get(user_id),
                 period_place[period.key].get(user_id),
+                tied[period.key][period_place[period.key].get(user_id)],
                 eligible[period.key][user_id],
                 last_place_score[period.key],
+                last_place_winners[period.key],
             )
             for period in PERIODS
         }

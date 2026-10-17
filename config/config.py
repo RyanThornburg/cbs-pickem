@@ -29,6 +29,23 @@ class Period:
     paid_places: int
     # last place among users who made PICKS_PER_WEEK picks every week of the period
     pay_last_place: bool = False
+    # optional: whole dollars for each paid place, 1st first - one amount per
+    # paid place. Tied users pool their places' amounts and split them.
+    payouts: tuple[int, ...] | None = None
+    # optional: whole dollars for last place (split on a tie), only with
+    # pay_last_place
+    last_place_payout: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.payouts is not None and len(self.payouts) != self.paid_places:
+            raise ValueError(
+                f"Period {self.key}: {len(self.payouts)} payouts for "
+                f"{self.paid_places} paid places"
+            )
+        if self.last_place_payout is not None and not self.pay_last_place:
+            raise ValueError(
+                f"Period {self.key}: last_place_payout without pay_last_place"
+            )
 
     def covers(self, week_number: int) -> bool:
         return week_number >= self.start_week and (
@@ -37,13 +54,23 @@ class Period:
 
 
 # The pool's payout structure for SEASON - "overall" is the season-long
-# standings and has to stay. Change it at the season bump, before
+# standings and has to stay. Add, remove or reshape the others (thirds,
+# quarters, ...) freely; payouts/last_place_payout are optional. Change it at the season bump, before
 # new_season.py, never mid-season (season_close_out.py saves whatever is
 # here as the closed season's structure).
 PERIODS = (
-    Period("overall", "Overall", 1, None, paid_places=5),
-    Period("first_half", "First Half", 1, 9, paid_places=3),
-    Period("second_half", "Second Half", 10, None, paid_places=3),
+    Period(
+        "overall",
+        "Overall",
+        1,
+        None,
+        paid_places=5,
+        payouts=(1380, 1000, 675, 475, 200),
+    ),
+    Period("first_half", "First Half", 1, 9, paid_places=3, payouts=(685, 450, 300)),
+    Period(
+        "second_half", "Second Half", 10, None, paid_places=3, payouts=(675, 450, 300)
+    ),
 )
 PERIODS_BY_KEY = {period.key: period for period in PERIODS}
 

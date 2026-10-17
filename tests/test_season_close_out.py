@@ -25,6 +25,11 @@ SECOND_HALF_START_WEEK = PERIODS_BY_KEY["second_half"].start_week
 LAST_WEEK = 18
 
 
+def _payouts(key: str) -> list[int] | None:
+    payouts = PERIODS_BY_KEY[key].payouts
+    return list(payouts) if payouts is not None else None
+
+
 @pytest.fixture(autouse=True)
 def _fakes(clients: Clients, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(shared, "get_cbs_config", lambda: CBSConfig("u", "p", "pool1"))
@@ -429,6 +434,8 @@ def test_meta_current(clients: Clients, seed: Seed) -> None:
                 "end_week": 4,
                 "paid_places": OVERALL_PAID_PLACES,
                 "pay_last_place": False,
+                "payouts": _payouts("overall"),
+                "last_place_payout": None,
             },
             {
                 "key": "first_half",
@@ -437,6 +444,8 @@ def test_meta_current(clients: Clients, seed: Seed) -> None:
                 "end_week": SECOND_HALF_START_WEEK - 1,
                 "paid_places": FIRST_HALF_PAID_PLACES,
                 "pay_last_place": False,
+                "payouts": _payouts("first_half"),
+                "last_place_payout": None,
             },
             {
                 "key": "second_half",
@@ -445,6 +454,8 @@ def test_meta_current(clients: Clients, seed: Seed) -> None:
                 "end_week": 4,
                 "paid_places": SECOND_HALF_PAID_PLACES,
                 "pay_last_place": False,
+                "payouts": _payouts("second_half"),
+                "last_place_payout": None,
             },
         ],
         "entry_fee": 200,
