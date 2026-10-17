@@ -413,3 +413,16 @@ an existing database:
 ALTER TABLE seasons ADD COLUMN entry_fee INT;
 UPDATE seasons SET entry_fee = 200 WHERE season_id = 2026;
 ```
+
+## `roster_backups` / `historical_standings.paid_amount`
+
+Added 2026-10-17, see `src/CLAUDE.md`'s "Roster backup" section.
+`roster_backups` holds a copy of the UI's `roster:{season}` KV key each
+time it changed; `historical_standings.paid_amount` is each user's entry
+fee paid, filled at close-out from that key (NULL if not recorded, and
+for every archive season). Applying it to an existing database: the
+`roster_backups` CREATE TABLE from `schema.sql`, then
+
+```sql
+ALTER TABLE historical_standings ADD COLUMN paid_amount INT;
+```

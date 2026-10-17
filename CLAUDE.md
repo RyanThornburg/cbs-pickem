@@ -43,6 +43,8 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management and
   force a full refresh
 - **End-of-season close-out (manual, run once the season is truly
   over — see "End of season" below): `uv run python -m src.season_close_out [local|prod]`**
+- Back up the UI's `roster:{season}` KV key (entry fee payments) to D1
+  (normally run by daily housekeeping): `uv run python -m src.roster_backup [local|prod]`
 - One-off historical-standings backfill (already run once for 2013-2025 —
   see "End of season" below; the script is gitignored and kept locally
   only): `uv run python -m src.historical_backfill [local|prod]`
@@ -95,7 +97,8 @@ distinguish partial from complete):
 1. `uv run python -m src.season_close_out [local|prod]` — computes that
    season's final cumulative standings the same way the live weekly
    leaderboard always has, writes one `historical_standings` row per
-   user plus their `historical_period_standings` rows, saves
+   user (with their entry fee `paid_amount` from the UI's
+   `roster:{season}` KV key) plus their `historical_period_standings` rows, saves
    `config.PERIODS` to `seasons.periods_json`, then refreshes
    `meta:historical` in KV. It refuses while any week of the season
    isn't `is_complete` (the last game's FINAL marks it).

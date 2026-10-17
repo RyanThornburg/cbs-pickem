@@ -62,7 +62,7 @@ class FakeD1:
 
 
 class FakeKV:
-    """Same write() surface as db.kv_client.KVClient - keeps each key's
+    """Same write()/read() surface as db.kv_client.KVClient - keeps each key's
     latest value in `values` instead of writing to Cloudflare."""
 
     def __init__(self) -> None:
@@ -70,6 +70,9 @@ class FakeKV:
 
     def write(self, key: str, value: dict[str, Any]) -> None:
         self.values[key] = value
+
+    def read(self, key: str) -> dict[str, Any] | None:
+        return self.values.get(key)
 
 
 class Clients:

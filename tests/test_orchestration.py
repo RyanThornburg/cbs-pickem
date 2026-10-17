@@ -53,6 +53,7 @@ TASKS = (
     "write_game_details",
     "write_admin_status",
     "write_admin_users",
+    "backup_roster",
 )
 
 # a quiet Wednesday: nothing live, the Sunday deadline still ahead

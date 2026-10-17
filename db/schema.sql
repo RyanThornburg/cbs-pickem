@@ -347,6 +347,7 @@ CREATE TABLE IF NOT EXISTS historical_standings (
     final_score INT NOT NULL,
     is_champion BOOLEAN AS (final_rank = 1),
     last_place BOOLEAN NOT NULL DEFAULT FALSE, -- won the overall last place payout
+    paid_amount INT, -- entry fee paid, from the roster:{season} KV key at close-out (src/roster_backup.py), NULL if not recorded
     FOREIGN KEY (season_id) REFERENCES seasons(season_id),
     FOREIGN KEY (user_id) REFERENCES users(user_id),
     UNIQUE (season_id, user_id)
@@ -411,6 +412,17 @@ CREATE INDEX IF NOT EXISTS idx_odds_snapshots_game_source_market ON odds_snapsho
 -- line sits still, so the loader skips a capture it already has (added
 -- 2026-09-28 after about 4 percent of rows turned out to be exact copies)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_odds_snapshots_capture ON odds_snapshots(game_id, source, bookmaker, market, captured_at);
+
+-- Copies of the UI's roster:{season} KV key (entry fee payments, edited
+-- from the admin page - this repo never writes that key). A new row only
+-- when the value changed, so every version is kept. See src/roster_backup.py.
+CREATE TABLE IF NOT EXISTS roster_backups (
+    roster_backup_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    season_id INT NOT NULL,
+    captured_at TIMESTAMP NOT NULL,
+    value_json TEXT NOT NULL,
+    FOREIGN KEY (season_id) REFERENCES seasons(season_id)
+);
 
 -- Small key-value store for src/orchestration.py's polling cursors - each
 -- task's scheduling cursor (e.g. cbs_live_last_poll_at, moved on every

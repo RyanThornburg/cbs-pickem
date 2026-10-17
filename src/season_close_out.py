@@ -10,18 +10,20 @@ from db.clients import get_d1
 from db.d1_client import D1Client, Statement
 from src.kv_writer import compute_week_leaderboard, write_historical
 from src.periods import final_week_number, period_definitions
+from src.roster_backup import backup_roster, paid_amounts
 
 logger = logging.getLogger(__name__)
 
 _UPSERT_STANDING_SQL = """
 INSERT INTO historical_standings
-    (season_id, user_id, pool_name, final_rank, final_score, last_place)
-VALUES (?, ?, ?, ?, ?, ?)
+    (season_id, user_id, pool_name, final_rank, final_score, last_place, paid_amount)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(season_id, user_id) DO UPDATE SET
     pool_name = excluded.pool_name,
     final_rank = excluded.final_rank,
     final_score = excluded.final_score,
-    last_place = excluded.last_place
+    last_place = excluded.last_place,
+    paid_amount = excluded.paid_amount
 """
 
 # a re-run replaces the season's period rows, so a period renamed in
@@ -78,6 +80,8 @@ def close_out_season() -> None:
         return
 
     pool_name = _season_pool_name(d1)
+    # a fresh backup first, so the paid amounts are the roster as it is now
+    paid = paid_amounts(backup_roster())
     statements: list[Statement] = [
         (
             _UPSERT_STANDING_SQL,
@@ -88,6 +92,7 @@ def close_out_season() -> None:
                 entry["place"],
                 entry["cumulative_score"],
                 entry["periods"]["overall"]["in_money_last_place"],
+                paid.get(entry["user_id"]),
             ],
         )
         for entry in standings

@@ -50,6 +50,7 @@ from src.loaders.sports_io_loader import (
 )
 from src.loaders.teams_loader import load_standings, load_teams
 from src.loaders.win_probability_loader import load_final_win_probability
+from src.roster_backup import backup_roster
 from src.scheduling import (
     acquire_lock,
     get_state,
@@ -269,6 +270,7 @@ def _housekeeping() -> None:
         ("load_espn_games", load_espn_games),  # neutral_site, incomplete weeks
         ("write_meta_current", write_meta_current),
         ("write_admin_users", write_admin_users),  # emails, admin page only
+        ("backup_roster", backup_roster),  # the admin page's roster:{season}
         # load_cbs_weeks() is what moves is_current to a new week, and the
         # odds key is otherwise only written after an odds capture - which
         # runs earlier in the tick, so it can't see the new week yet

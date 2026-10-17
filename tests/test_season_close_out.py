@@ -87,6 +87,23 @@ class TestCloseOut:
         assert periods[(users["b"], "second_half")] == (1, 5 * second_half)
         assert {r["pool_name"] for r in rows.values()} == {"MorLocked 10.0"}
 
+    def test_records_paid_amounts_from_the_roster(
+        self, clients: Clients, seed: Seed
+    ) -> None:
+        users = _full_season(seed, {"a": [5], "b": [1]})
+        clients.kv.values[f"roster:{SEASON}"] = {
+            "users": {str(users["a"]): {"paid_amount": 200}}
+        }
+
+        season_close_out.close_out_season()
+
+        rows = _standings(clients.d1)
+        assert rows[users["a"]]["paid_amount"] == 200
+        assert rows[users["b"]]["paid_amount"] is None
+        # and the roster was backed up on the way
+        backups = clients.d1.query("SELECT season_id FROM roster_backups").results
+        assert backups == [{"season_id": SEASON}]
+
     def test_matches_the_live_leaderboard(self, clients: Clients, seed: Seed) -> None:
         # close-out reuses compute_week_leaderboard(), so the final week's
         # leaderboard and the historical row can never disagree

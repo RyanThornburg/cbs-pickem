@@ -512,7 +512,7 @@ Cadences, and why each one is what it is:
   refresh + `teams_loader.load_teams()` (win/loss/tie records, added
   2026-09-15) + `load_cbs_weeks()`/`load_cbs_games()` + `load_espn_games()`
   + `write_meta_current()` + `write_admin_users()` (`admin:users`, see
-  "KV writer") + the current week's odds key
+  "KV writer") + `backup_roster()` (see "Roster backup") + the current week's odds key
   (`write_current_week_odds()`, added 2026-09-29) + the future weeks' games KV keys
   (`write_incomplete_weeks_games(include_future=True)`, see "KV writer").
   The odds step is there because `load_cbs_weeks()` is what moves
@@ -1366,6 +1366,20 @@ the closed season's structure). `src/periods.py` holds the helpers
 `kv_writer` so `user_stats.py` can use them: the clutch stat's money
 weeks are each period's last week.
 
+## Roster backup
+
+`roster:{season}` is the one KV key this repo reads but never writes: the
+UI's admin page edits it to track entry fee payments (added 2026-10-17).
+KV keeps no history, so `src/roster_backup.py`'s `backup_roster()` copies
+it to D1's `roster_backups` (`season_id`, `captured_at`, the whole value
+as JSON) from daily housekeeping, only when it differs from the last copy
+(compared as sorted-key JSON), so every version is kept and a bad write
+can be undone by writing an older copy back. A missing key saves nothing.
+The UI owns the shape; the only part read here is
+`users.{user_id}.paid_amount` (whole dollars), by `paid_amounts()` at
+season close-out. An entry without it, or a key that isn't a user_id, is
+left out. CLI: `uv run python -m src.roster_backup [local|prod]`.
+
 ## Season close-out
 
 `src/season_close_out.py` is the manual, once-a-year counterpart to
@@ -1378,8 +1392,9 @@ season's real data. Resolves the season's final week via
 `MAX(week_number) FROM weeks`, refuses if any week of the season isn't
 `is_complete` yet (last place eligibility only judges finished weeks),
 computes that week's leaderboard, and in one batch upserts one
-`historical_standings` row per user (overall place/score and
-`last_place`), replaces the season's
+`historical_standings` row per user (overall place/score, `last_place`,
+and `paid_amount` from a fresh `backup_roster()` - see "Roster backup"),
+replaces the season's
 `historical_period_standings` rows (every non-overall period), and saves
 `config.PERIODS` to `seasons.periods_json`. Then calls
 `write_historical()` to refresh KV.
