@@ -91,12 +91,15 @@ The pool's payout structure lives in `config.PERIODS`, one entry per standings p
 
 ```python
 PERIODS = (
-    Period("overall", "Overall", 1, None, paid_places=5),
-    Period("first_half", "First Half", 1, 9, paid_places=3),
-    Period("second_half", "Second Half", 10, None, paid_places=3),
+    Period("overall", "Overall", 1, None, paid_places=5, payouts=(1380, 1000, 675, 475, 200)),
+    Period("first_half", "First Half", 1, 9, paid_places=3, payouts=(685, 450, 300)),
+    Period("second_half", "Second Half", 10, None, paid_places=3, payouts=(685, 450, 300)),
 )
+ENTRY_FEE = 200
 ```
 
 `overall` is the season-long standings and always stays. Everything else is up to the pool: two halves today, thirds or quarters later, just a different list. Each period sets how many places get paid (ties at the cutoff all get paid) and whether it also pays last place (`pay_last_place=True`). Last place only counts players who made all five picks every week of that period, so you can't skip a week and coast to the bottom.
 
-Change it at the season bump, alongside `config.SEASON`, never mid-season. Closing out a season saves that season's structure with its results, so the history page still knows a past season was halves even after we switch.
+`payouts` (dollars per paid place, first place first) and `last_place_payout` are optional. When they're set, the leaderboard shows what each player would win if the period ended now, with tied places pooled and split. `config.ENTRY_FEE` is each entry's buy-in, saved with the season; the web UI's admin page tracks who's paid, and this repo backs that up daily and records each player's paid amount when the season closes out.
+
+Change these at the season bump, alongside `config.SEASON`, never mid-season. Closing out a season saves that season's structure with its results, so the history page still knows a past season was halves even after we switch.
