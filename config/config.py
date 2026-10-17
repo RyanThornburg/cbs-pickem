@@ -69,7 +69,7 @@ PERIODS = (
     ),
     Period("first_half", "First Half", 1, 9, paid_places=3, payouts=(685, 450, 300)),
     Period(
-        "second_half", "Second Half", 10, None, paid_places=3, payouts=(675, 450, 300)
+        "second_half", "Second Half", 10, None, paid_places=3, payouts=(685, 450, 300)
     ),
 )
 PERIODS_BY_KEY = {period.key: period for period in PERIODS}
