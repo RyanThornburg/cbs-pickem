@@ -4,6 +4,7 @@ runs this file, not __init__.py."""
 from config.config import run_cli
 from src.kv_writer import (
     write_admin_status,
+    write_admin_users,
     write_current_week_game_details,
     write_current_week_games,
     write_current_week_leaderboard,
@@ -34,6 +35,7 @@ def main() -> None:
     write_user_profiles()
     write_team_profiles()
     write_admin_status()
+    write_admin_users()
 
 
 if __name__ == "__main__":

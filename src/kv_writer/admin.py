@@ -1,4 +1,4 @@
-"""meta:admin - see src/CLAUDE.md's KV writer section."""
+"""meta:admin and admin:users - see src/CLAUDE.md's KV writer section."""
 
 import logging
 from datetime import UTC, datetime, timedelta
@@ -36,6 +36,13 @@ SELECT source, message, first_seen_at, last_seen_at, occurrences
 FROM system_events
 ORDER BY last_seen_at DESC
 LIMIT 20
+"""
+
+_USERS_SQL = """
+SELECT user_id, name, email, is_active
+FROM users
+WHERE cbs_id IS NOT NULL
+ORDER BY is_active DESC, name COLLATE NOCASE
 """
 
 # Deliberately more generous than orchestration.py's own intervals - a
@@ -232,3 +239,17 @@ def write_admin_status() -> None:
         mapping_gaps_totals["distinct_count"],
         system_events_totals["distinct_count"],
     )
+
+
+def write_admin_users() -> None:
+    """Write admin:users - every CBS member's email, for the admin page to
+    send pool updates. Kept out of meta:admin and every other key: the UI
+    must only serve this one behind the admin page's access check. Includes
+    members CBS has `hideEmail` set for (the pool manager can see them all).
+    Archive-only users (no cbs_id) are left out, they have no email."""
+    users = [
+        {**row, "is_active": bool(row["is_active"])}
+        for row in get_d1().query(_USERS_SQL).results
+    ]
+    get_kv().write("admin:users", {"updated_at": utc_iso(), "users": users})
+    logger.info("Wrote admin:users (%d users) to KV", len(users))

@@ -52,6 +52,7 @@ TASKS = (
     "write_team_profiles",
     "write_game_details",
     "write_admin_status",
+    "write_admin_users",
 )
 
 # a quiet Wednesday: nothing live, the Sunday deadline still ahead
@@ -513,6 +514,7 @@ class TestEndToEnd:
         for key in (
             "meta:current",
             "meta:admin",
+            "admin:users",
             f"season:{SEASON}:trends",
             f"season:{SEASON}:standings",
             *(f"week:{SEASON}:{n:02d}:games" for n in (week, week + 1, week + 2)),
@@ -643,3 +645,27 @@ def test_admin_flags_system_events_still_happening(
     assert (events["distinct_count"], events["active_count"]) == (2, 1)
     active = {e["source"]: e["active"] for e in events["recent"]}
     assert active == {"housekeeping": True, "odds_capture": False}
+
+
+def test_admin_users(clients: Clients, seed: Seed) -> None:
+    d1 = clients.d1
+    for name, email, cbs_id, active in (
+        ("bob", "bob@example.com", "c1", True),
+        ("Amy", "amy@example.com", "c2", True),
+        ("Gone", "gone@example.com", "c3", False),
+    ):
+        user_id = seed.user(name, is_active=active)
+        d1.query(
+            "UPDATE users SET email = ?, cbs_id = ? WHERE user_id = ?",
+            [email, cbs_id, user_id],
+        )
+    seed.user("Archive Only")  # no cbs_id
+
+    admin.write_admin_users()
+
+    users = clients.kv.values["admin:users"]["users"]
+    assert [(u["name"], u["email"], u["is_active"]) for u in users] == [
+        ("Amy", "amy@example.com", True),
+        ("bob", "bob@example.com", True),
+        ("Gone", "gone@example.com", False),
+    ]

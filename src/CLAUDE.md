@@ -509,7 +509,8 @@ Cadences, and why each one is what it is:
 - **Housekeeping, 24 hr, quiet periods only** — full Sports IO schedule
   refresh + `teams_loader.load_teams()` (win/loss/tie records, added
   2026-09-15) + `load_cbs_weeks()`/`load_cbs_games()` + `load_espn_games()`
-  + `write_meta_current()` + the current week's odds key
+  + `write_meta_current()` + `write_admin_users()` (`admin:users`, see
+  "KV writer") + the current week's odds key
   (`write_current_week_odds()`, added 2026-09-29) + the future weeks' games KV keys
   (`write_incomplete_weeks_games(include_future=True)`, see "KV writer").
   The odds step is there because `load_cbs_weeks()` is what moves
@@ -733,7 +734,7 @@ from `CLAUDE.local.md`.
 Cloudflare KV for `cbs-pickem-web`'s Worker to read — D1 stays the system
 of record, KV is a serving cache (see root `CLAUDE.md`'s Commands list
 and `CLAUDE.local.md`'s "Web UI" section for the overall architecture
-decision). Eleven key types; six (games, game details, leaderboard, odds,
+decision). Twelve key types; six (games, game details, leaderboard, odds,
 week trends, recap) have a `write_week_*`/`write_current_week_*` pair (the
 latter is a one-line call to `shared.for_current_week(write_week_*,
 label)`, which resolves `weeks.is_current` via `resolve_current_week()`,
@@ -1302,6 +1303,18 @@ src.kv_writer.__main__`).
   Called as the last step of every tick rather than after a specific D1
   write, since it's a handful of cheap local `SELECT`s and freshness
   matters most exactly when something just broke.
+- `write_admin_users()` → `admin:users` (added 2026-10-17, `admin.py`) -
+  `{updated_at, users: [{user_id, name, email, is_active}]}`, every user
+  with a `cbs_id` (active first, then by name), for the admin page to
+  send pool updates. Includes the members CBS has `hideEmail` set for
+  (about half the pool) - the pool manager sees every email on CBS's
+  players page, and this is for the manager only. **That's why it's its
+  own key**, not part of `meta:admin` or any key the public pages read:
+  the UI's Worker must only serve it behind the admin page's access
+  check. Emails come from `users.email`, which only
+  `load_cbs_users()` (`new_season.py`) fills, so the key changes once a
+  season; written by `new_season.py` right after it, and daily by
+  housekeeping as a backstop.
 - `write_incomplete_weeks_games()` (added 2026-09-15, replacing
   `write_current_week_games()` as `orchestration.py`'s unconditional
   per-tick call) → refreshes `week:{season}:{weekNN}:games` for **every**

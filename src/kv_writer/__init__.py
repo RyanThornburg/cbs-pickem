@@ -10,7 +10,7 @@ in __main__.py instead of here - `python -m src.kv_writer` runs a package's
 __main__.py, never __init__.py, regardless of what an `if __name__ ==
 "__main__":` block here might say."""
 
-from src.kv_writer.admin import write_admin_status
+from src.kv_writer.admin import write_admin_status, write_admin_users
 from src.kv_writer.game_details import (
     write_current_week_game_details,
     write_game_details,
@@ -50,6 +50,7 @@ __all__ = [
     "compute_week_recap",
     "game_fingerprints",
     "write_admin_status",
+    "write_admin_users",
     "write_current_week_game_details",
     "write_current_week_games",
     "write_current_week_leaderboard",

@@ -20,6 +20,7 @@ from src.game_rules import DONE_STATUSES, LIVE_WINDOW_HOURS, sql_list
 from src.kv_writer import (
     game_fingerprints,
     write_admin_status,
+    write_admin_users,
     write_current_week_games,
     write_current_week_leaderboard,
     write_current_week_odds,
@@ -267,6 +268,7 @@ def _housekeeping() -> None:
         ("load_cbs_games", load_cbs_games),
         ("load_espn_games", load_espn_games),  # neutral_site, incomplete weeks
         ("write_meta_current", write_meta_current),
+        ("write_admin_users", write_admin_users),  # emails, admin page only
         # load_cbs_weeks() is what moves is_current to a new week, and the
         # odds key is otherwise only written after an odds capture - which
         # runs earlier in the tick, so it can't see the new week yet
