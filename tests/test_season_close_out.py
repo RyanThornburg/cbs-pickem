@@ -110,10 +110,15 @@ class TestCloseOut:
 
     def test_refreshes_meta_historical(self, clients: Clients, seed: Seed) -> None:
         _full_season(seed, {"a": [5], "b": [1]})
+        clients.d1.query(
+            "UPDATE seasons SET entry_fee = 200 WHERE season_id = ?", [SEASON]
+        )
 
         season_close_out.close_out_season()
 
-        champions = clients.kv.values["meta:historical"]["champions"]
+        key = clients.kv.values["meta:historical"]
+        assert key["years"][str(SEASON)]["entry_fee"] == 200
+        champions = key["champions"]
         assert champions == [
             {
                 "year": SEASON,
@@ -391,6 +396,7 @@ class TestMetaHistorical:
 def test_meta_current(clients: Clients, seed: Seed) -> None:
     week_id = seed.week(4)
     clients.d1.query("UPDATE weeks SET is_current = 1 WHERE week_id = ?", [week_id])
+    clients.d1.query("UPDATE seasons SET entry_fee = 200 WHERE season_id = ?", [SEASON])
 
     shared.write_meta_current()
 
@@ -424,6 +430,7 @@ def test_meta_current(clients: Clients, seed: Seed) -> None:
                 "pay_last_place": False,
             },
         ],
+        "entry_fee": 200,
         "cbs_pool_url": "https://picks.cbssports.com/football/pickem/pools/pool1",
     }
 

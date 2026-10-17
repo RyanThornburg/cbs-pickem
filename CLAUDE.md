@@ -100,8 +100,9 @@ distinguish partial from complete):
    `meta:historical` in KV. It refuses while any week of the season
    isn't `is_complete` (the last game's FINAL marks it).
 2. Bump `config.SEASON`, set `config.PERIODS` to the new season's payout
-   structure (if it changed), and run `src/new_season.py` for the new
-   year, same as always.
+   structure and `config.ENTRY_FEE` to its buy-in (if either changed), and
+   run `src/new_season.py` for the new year, same as always (it saves the
+   fee to `seasons.entry_fee`).
 
 `historical_standings`/`historical_user_mapping` were originally
 backfilled once (2026-09-10) from a pre-2026 archive

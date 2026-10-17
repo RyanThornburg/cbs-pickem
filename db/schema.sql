@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS seasons (
     start_date DATE,
     end_date DATE,
     is_active BOOLEAN DEFAULT FALSE,
+    entry_fee INT, -- each entry's buy-in in whole dollars (config.ENTRY_FEE), saved by season_loader, NULL for archive seasons
     periods_json TEXT, -- the pool's pay periods for the season (config.PERIODS as src/periods.py's period_definitions() shows them), saved at close-out, NULL for archive seasons
     historical_data_incomplete BOOLEAN DEFAULT FALSE -- our archived standings for this season are missing entries (confirmed for 2015/2016 - the actual rank-1, and for 2016 rank-2, are absent from the saved CBS export), not a property of the season itself
 );

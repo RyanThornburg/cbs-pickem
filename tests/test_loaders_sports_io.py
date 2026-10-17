@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from api.sports_io_client import Endpoint
-from config.config import SEASON
+from config.config import ENTRY_FEE, SEASON
 from src.loaders import season_loader, sports_io_loader, stadiums_loader, teams_loader
 from tests.api_fixtures import FakeApis, capture_info, fixture
 from tests.conftest import Clients, FakeD1, Seed, freeze
@@ -497,11 +497,16 @@ class TestStadiumsAndSeason:
 
         rows = _rows(
             loaders.d1,
-            "SELECT season_id, name, is_active FROM seasons ORDER BY season_id",
+            "SELECT season_id, name, is_active, entry_fee FROM seasons ORDER BY season_id",
         )
         assert rows == [
-            {"season_id": SEASON - 1, "name": None, "is_active": 0},
-            {"season_id": SEASON, "name": f"{SEASON} Season", "is_active": 1},
+            {"season_id": SEASON - 1, "name": None, "is_active": 0, "entry_fee": None},
+            {
+                "season_id": SEASON,
+                "name": f"{SEASON} Season",
+                "is_active": 1,
+                "entry_fee": ENTRY_FEE,
+            },
         ]
 
     def test_season_loader_with_no_current_season(

@@ -99,8 +99,18 @@ def split_home_away(
     return home, away
 
 
+_ENTRY_FEE_SQL = "SELECT entry_fee FROM seasons WHERE season_id = ?"
+
+
+def _entry_fee(d1: D1Client) -> int | None:
+    """seasons.entry_fee for SEASON, None until season_loader has saved it"""
+    rows = d1.query(_ENTRY_FEE_SQL, [SEASON]).results
+    return rows[0]["entry_fee"] if rows else None
+
+
 def write_meta_current() -> None:
-    """Write meta:current - which week is live right now, for this season."""
+    """Write meta:current - which week is live right now, for this season,
+    plus the pool's rules (periods, entry fee)."""
     d1 = get_d1()
     current_week = resolve_current_week(d1)
     if current_week is None:
@@ -116,6 +126,7 @@ def write_meta_current() -> None:
             "season": SEASON,
             "current_week": current_week,
             "periods": period_definitions(final_week_number(d1)),
+            "entry_fee": _entry_fee(d1),
             "cbs_pool_url": cbs_pool_url(get_cbs_config().pool_id),
         },
     )

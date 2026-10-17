@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # historical season records
 _HISTORICAL_SQL = """
 SELECT hs.season_id, s.name AS pool_name, s.historical_data_incomplete,
-    s.periods_json, u.user_id, u.name, u.is_active, hs.final_rank, hs.final_score,
+    s.periods_json, s.entry_fee, u.user_id, u.name, u.is_active, hs.final_rank, hs.final_score,
     hs.last_place
 FROM historical_standings hs
 JOIN users u ON u.user_id = hs.user_id
@@ -162,6 +162,7 @@ def write_historical() -> None:
             {
                 "pool_name": row["pool_name"],
                 "incomplete": bool(row["historical_data_incomplete"]),
+                "entry_fee": row["entry_fee"],
                 "periods": season_periods,
                 "standings": [],
             },

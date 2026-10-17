@@ -47,6 +47,11 @@ PERIODS = (
 )
 PERIODS_BY_KEY = {period.key: period for period in PERIODS}
 
+# Each entry's buy-in for SEASON, in whole dollars. Same rule as PERIODS:
+# set it at the season bump, before new_season.py (season_loader saves it
+# to seasons.entry_fee), never mid-season.
+ENTRY_FEE = 200
+
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data" / str(SEASON)
 STATE_PATH: Path = PROJECT_ROOT / "secrets/state.json"

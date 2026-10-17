@@ -399,3 +399,17 @@ case-insensitive (confirmed live: "Bill Morlok" in the 2015 archive vs.
 `users.name = "bill morlok"` resolved to the same person automatically),
 and a name with no match at all gets a brand-new `is_active = FALSE`
 user row, logged as a warning for review rather than silently guessed.
+
+## `seasons.entry_fee`
+
+Each entry's buy-in for the season in whole dollars (2026-10-17),
+`config.ENTRY_FEE` saved by `season_loader.load_season()` - only for
+`config.SEASON`, and a NULL never overwrites a saved fee, so re-running the
+loader can't wipe an older season's. NULL for the archive seasons. Read
+back by `meta:current` and each year in `meta:historical`. Applying it to
+an existing database:
+
+```sql
+ALTER TABLE seasons ADD COLUMN entry_fee INT;
+UPDATE seasons SET entry_fee = 200 WHERE season_id = 2026;
+```

@@ -32,7 +32,9 @@ already never took `env` (see `config/CLAUDE.md`).
 
 - `season_loader.py` — upserts the current season (from Sports IO's
   `get_current_season()`) into `seasons`, clearing `is_active` on any
-  other row first so at most one season is ever active.
+  other row first so at most one season is ever active. Also saves
+  `config.ENTRY_FEE` to `seasons.entry_fee` when the season is
+  `config.SEASON` (2026-10-17).
 - `teams_loader.py` — upserts all 32 teams (Sports IO's `/teams` +
   `/standings` merged, since conference/division only live on the
   latter) into `teams`, keyed on `sports_io_team_id`. Also carries
@@ -772,7 +774,8 @@ src.kv_writer.__main__`).
 
 - `write_meta_current()` → `meta:current` — `current_week` from
   `weeks.is_current`, plus `periods` (`config.PERIODS`, see below) so the
-  UI never hardcodes pool rules, and
+  UI never hardcodes pool rules, `entry_fee` (`seasons.entry_fee`, whole
+  dollars, null until saved - see `db/CLAUDE.md`; added 2026-10-17), and
   `cbs_pool_url` (added 2026-09-27, `api.cbs_client.cbs_pool_url()` +
   `CBS_POOL_ID`, the same builder `CBSClient` scrapes from) for the UI to
   link out to the CBS pool home page.
@@ -1184,7 +1187,7 @@ src.kv_writer.__main__`).
   `meta:admin`.
 - `write_historical()` → `meta:historical` — see `db/CLAUDE.md`'s
   `historical_standings` section for what feeds this. Each year carries
-  `periods` (`seasons.periods_json`, null for archive seasons), each
+  `entry_fee` (null for archive seasons), `periods` (`seasons.periods_json`, null for archive seasons), each
   standing (and each career `season_history` entry) its `periods` map
   (`{key: {rank, score, last_place}}`) and overall `last_place`; top-level
   `period_champions` and `last_place` list `{year, period_key, label,
