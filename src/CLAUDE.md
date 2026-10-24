@@ -317,7 +317,12 @@ issued it, not when the hazard starts, and it has no onset field: on
 2026-10-15 a Freeze Warning issued that morning "from midnight tonight"
 showed on SEA @ DEN (6PM MDT, forecast 54 to 47F). Other alert types
 still go by time alone, so an alert issued well before its hazard can
-still land on a game that ends first. Stored as a JSON list (`games.forecast_alerts_json`,
+still land on a game that ends first. Outside the US the alerts come
+from MeteoAlarm in the country's own language; Météo-France's ("Vigilance
+jaune vent-violent") are translated to English first
+(`english_alert_title()`, "Yellow Wind Warning", 2026-10-24) and the
+filters see the English title. Other countries' titles pass through
+unchanged until a table is added for them. Stored as a JSON list (`games.forecast_alerts_json`,
 `game_snapshots.weather_alerts_json`: `[{title, severity, starts,
 expires, uri}]`) and exposed as `weather_alerts` (a list, `[]` if none)
 in both the games KV key's `forecast` and `live.weather` blocks -

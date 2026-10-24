@@ -88,6 +88,39 @@ def is_game_relevant_alert(title: str) -> bool:
     return not title.startswith(IRRELEVANT_ALERT_PREFIXES)
 
 
+# Outside the US, Pirate Weather passes on MeteoAlarm's alerts in the
+# country's own language. Météo-France's are always "Vigilance {color}
+# {hazard}" (seen live 2026-10-24 on the Paris game: "Vigilance jaune
+# vent-violent"). Other countries word theirs differently, so add a table
+# when one shows up on a game.
+METEO_FRANCE_COLORS = {"jaune": "Yellow", "orange": "Orange", "rouge": "Red"}
+METEO_FRANCE_HAZARDS = {
+    "vent-violent": "Wind",
+    "pluie-inondation": "Rain-Flood",
+    "orages": "Thunderstorm",
+    "neige-verglas": "Snow/Ice",
+    "canicule": "Heat",
+    "grand-froid": "Extreme Cold",
+    "crues": "Flood",
+    "vagues-submersion": "Wave/Coastal Flood",
+    "avalanches": "Avalanche",
+}
+
+
+def english_alert_title(title: str) -> str:
+    """A Météo-France title in English ("Vigilance jaune vent-violent" ->
+    "Yellow Wind Warning"). Anything else is returned unchanged."""
+    match title.split(" "):
+        case ["Vigilance", color, hazard] if (
+            color in METEO_FRANCE_COLORS and hazard in METEO_FRANCE_HAZARDS
+        ):
+            return (
+                f"{METEO_FRANCE_COLORS[color]} {METEO_FRANCE_HAZARDS[hazard]} Warning"
+            )
+        case _:
+            return title
+
+
 # Cold alerts the game's own forecast can rule out, by title prefix: kept
 # only when the forecast low is at or below the temperature. Needed because
 # Pirate Weather's alert `time` is when it was issued, not when the hazard
@@ -166,21 +199,22 @@ def _overlapping_alerts(
     ('[]' if none) - {title, severity (NWS scale: Extreme/Severe/Moderate/
     Minor), starts, expires, uri}, for games.forecast_alerts_json/
     game_snapshots.weather_alerts_json. `low_f` is the forecast low across
-    the window, for _ruled_out_by_temperature()."""
+    the window, for _ruled_out_by_temperature(). Titles are translated
+    (english_alert_title()) before filtering."""
     window_end = window_start + timedelta(hours=window_hours)
     return json.dumps(
         [
             {
-                "title": a.title,
+                "title": title,
                 "severity": a.severity,
                 "starts": _iso(a.time),
                 "expires": _iso(a.expires),
                 "uri": a.uri,
             }
             for a in forecast.alerts
-            if is_game_relevant_alert(a.title)
+            if is_game_relevant_alert(title := english_alert_title(a.title))
             and _alert_overlaps(a, window_start, window_end)
-            and not _ruled_out_by_temperature(a.title, low_f)
+            and not _ruled_out_by_temperature(title, low_f)
         ]
     )
 

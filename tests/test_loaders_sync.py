@@ -549,6 +549,19 @@ class TestPregameWeather:
         assert all(r["forecast_captured_at"] is None for r in _forecast_rows(season))
 
     @pytest.mark.parametrize(
+        ("title", "english"),
+        [
+            ("Vigilance jaune vent-violent", "Yellow Wind Warning"),
+            ("Vigilance orange pluie-inondation", "Orange Rain-Flood Warning"),
+            ("Vigilance rouge neige-verglas", "Red Snow/Ice Warning"),
+            ("Vigilance jaune inconnu", "Vigilance jaune inconnu"),  # unknown hazard
+            ("Wind Advisory", "Wind Advisory"),
+        ],
+    )
+    def test_alert_title_in_english(self, title: str, english: str) -> None:
+        assert loader_helper.english_alert_title(title) == english
+
+    @pytest.mark.parametrize(
         ("bearing", "compass"),
         [(0, "N"), (22, "NNE"), (90, "E"), (200, "SSW"), (350, "N")],
     )
