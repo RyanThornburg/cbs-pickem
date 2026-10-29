@@ -18,6 +18,7 @@ from src.loaders import (
     pregame_weather_loader,
     sports_io_loader,
 )
+from src.timestamps import parse_utc_iso, utc_iso
 from tests.api_fixtures import FakeApis, FakeCBS, capture_info
 from tests.conftest import FakeD1, Seed, freeze
 
@@ -719,6 +720,58 @@ class TestOdds:
         assert _rows(season, "SELECT source, raw_value FROM mapping_gaps") == [
             {"source": "the_odds_api", "raw_value": "Nowhere Nomads"}
         ]
+
+    def _shift_first_event(self, apis: FakeApis, delta: timedelta) -> dict[str, Any]:
+        event = apis.responses["odds"][0]
+        event["commence_time"] = utc_iso(parse_utc_iso(event["commence_time"]) + delta)
+        return event
+
+    def test_kickoff_off_by_minutes_still_links(
+        self, season: FakeD1, apis: FakeApis, before_kickoff: list[dict[str, Any]]
+    ) -> None:
+        # The Odds API had CHI @ SEA at 01:20Z, Sports IO at 01:15Z
+        game_time = before_kickoff[0]["commence_time"]
+        event = self._shift_first_event(apis, timedelta(minutes=5))
+
+        odds_loader.load_the_odds_api_odds()
+
+        (row,) = _rows(
+            season,
+            "SELECT game_time FROM games WHERE odds_api_event_id = ?",
+            [event["id"]],
+        )
+        assert row["game_time"] == game_time
+        assert _count(season, "odds_snapshots") == self._expected_rows(before_kickoff)
+        assert _count(season, "mapping_gaps") == 0
+
+    def test_unmatched_season_game_is_a_mapping_gap(
+        self, season: FakeD1, apis: FakeApis, before_kickoff: list[dict[str, Any]]
+    ) -> None:
+        event = self._shift_first_event(apis, timedelta(days=2))
+
+        odds_loader.load_the_odds_api_odds()
+
+        assert _rows(
+            season, "SELECT source, entity_type, raw_value FROM mapping_gaps"
+        ) == [
+            {
+                "source": "the_odds_api",
+                "entity_type": "game",
+                "raw_value": f"{event['away_team']} @ {event['home_team']}"
+                f" {event['commence_time']}",
+            }
+        ]
+
+    def test_playoff_event_is_not_a_mapping_gap(
+        self, season: FakeD1, apis: FakeApis, before_kickoff: list[dict[str, Any]]
+    ) -> None:
+        (last,) = _rows(season, "SELECT MAX(game_time) AS t FROM games")
+        event = apis.responses["odds"][0]
+        event["commence_time"] = utc_iso(parse_utc_iso(last["t"]) + timedelta(days=6))
+
+        odds_loader.load_the_odds_api_odds()
+
+        assert _count(season, "mapping_gaps") == 0
 
     def test_market_missing_a_side_is_skipped(
         self, season: FakeD1, apis: FakeApis, before_kickoff: list[dict[str, Any]]

@@ -101,10 +101,13 @@ already never took `env` (see `config/CLAUDE.md`).
   from The Odds API (spreads/totals/moneyline, American odds format
   requested directly via `oddsFormat=american` rather than converting
   decimal odds). Matches events onto `games` via `odds_api_event_id` when
-  already linked, falling back to `(home_team_id, away_team_id,
-  game_time)` on first sighting and backfilling the id — exact-match
-  works because `game_time` is normalized to the same UTC format
-  everywhere (see `db/CLAUDE.md`). `load_sports_io_odds()` is a
+  already linked, falling back on first sighting to the same home/away
+  pair's nearest `config.SEASON` game within `_MATCH_WINDOW` (24h) and
+  backfilling the id. It was an exact `game_time` match until 2026-10-29,
+  when CHI @ SEA (week 8) never linked: The Odds API said 01:20Z, Sports
+  IO 01:15Z. A miss inside the season's schedule is a `mapping_gaps` row
+  (`entity_type = 'game'`); one past the last game plus the window
+  (playoffs) is only logged. `load_sports_io_odds()` is a
   deliberate stub — sticking with The Odds API only for now, user's call.
 - `game_snapshots_loader.py` — `load_game_snapshots()` captures one
   `game_snapshots` row per game ESPN reports as in progress (status

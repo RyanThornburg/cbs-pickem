@@ -4,14 +4,15 @@ Usage: uv run python -m src.loaders.odds_loader [local|prod]
 """
 
 import logging
+from datetime import datetime, timedelta
 
 from api.the_odds_api_client import get_odds
 from api.the_odds_api_models import Event
-from config.config import run_cli
+from config.config import SEASON, run_cli
 from db.clients import get_d1
 from db.d1_client import Statement
 from src.loaders.loader_helper import id_map, mapping_gap_statement, sql_batch_call
-from src.timestamps import utc_iso
+from src.timestamps import parse_utc_iso, utc_iso
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,17 @@ WHERE NOT EXISTS (
 )
 """
 
+# The Odds API's kickoff can differ from Sports IO's (CHI @ SEA, week 8 2026:
+# 01:20Z vs 01:15Z), so first sighting takes the same matchup's nearest game
+# within this window. The same home/away pair never meets twice in a day.
+_MATCH_WINDOW = timedelta(hours=24)
+
+_SEASON_GAMES_SQL = """
+SELECT g.game_id, g.home_team_id, g.away_team_id, g.game_time
+FROM games g JOIN weeks w ON w.week_id = g.week_id
+WHERE w.season_id = ? AND g.game_time IS NOT NULL
+"""
+
 _MARKET_MAP = {
     "spreads": "spread",
     "totals": "total",
@@ -43,10 +55,12 @@ def _resolve_game_id(
     event: Event,
     odds_event_ids: dict[str, int],
     team_ids: dict[str, int],
-    games_by_matchup: dict[tuple[int, int, str], int],
+    games_by_matchup: dict[tuple[int, int], list[tuple[datetime, int]]],
+    last_game_time: datetime | None,
 ) -> tuple[int | None, list[Statement]]:
     """(game_id, mapping gaps) - by odds_api_event_id if it's linked
-    already, else by home id, away id, game time"""
+    already, else by home id, away id and the nearest game time within
+    _MATCH_WINDOW"""
     game_id = odds_event_ids.get(event.id)
     if game_id is not None:
         return game_id, []
@@ -70,16 +84,30 @@ def _resolve_game_id(
         ]
         return None, gaps
 
-    game_id = games_by_matchup.get((home_team_id, away_team_id, event.commence_time))
-    if game_id is None:
-        logger.warning(
-            "Skipping event %s - no games row for %s @ %s at %s yet",
-            event.id,
-            event.away_team,
-            event.home_team,
-            event.commence_time,
-        )
-    return game_id, []
+    commence = parse_utc_iso(event.commence_time)
+    candidates = [
+        (abs(game_time - commence), game_id)
+        for game_time, game_id in games_by_matchup.get((home_team_id, away_team_id), [])
+        if abs(game_time - commence) <= _MATCH_WINDOW
+    ]
+    if candidates:
+        return min(candidates)[1], []
+
+    logger.warning(
+        "Skipping event %s - no games row for %s @ %s at %s yet",
+        event.id,
+        event.away_team,
+        event.home_team,
+        event.commence_time,
+    )
+    # playoff games are never loaded (sports_io_loader skips them), so only
+    # a miss within the regular season is a real gap
+    if last_game_time is None or commence > last_game_time + _MATCH_WINDOW:
+        return None, []
+    raw = f"{event.away_team} @ {event.home_team} {event.commence_time}"
+    return None, [
+        mapping_gap_statement("the_odds_api", "game", raw, "_resolve_game_id")
+    ]
 
 
 def _snapshot_statements_for_event(event: Event, game_id: int) -> list[Statement]:
@@ -132,12 +160,14 @@ def load_the_odds_api_odds() -> None:
 
     odds_event_ids = id_map(client, "games", "odds_api_event_id", "game_id")
     team_ids = id_map(client, "teams", "name", "team_id")
-    games_by_matchup = {
-        (row["home_team_id"], row["away_team_id"], row["game_time"]): row["game_id"]
-        for row in client.query(
-            "SELECT game_id, home_team_id, away_team_id, game_time FROM games"
-        ).results
-    }
+    games_by_matchup: dict[tuple[int, int], list[tuple[datetime, int]]] = {}
+    for row in client.query(_SEASON_GAMES_SQL, [SEASON]).results:
+        games_by_matchup.setdefault(
+            (row["home_team_id"], row["away_team_id"]), []
+        ).append((parse_utc_iso(row["game_time"]), row["game_id"]))
+    last_game_time = max(
+        (t for games in games_by_matchup.values() for t, _ in games), default=None
+    )
 
     backfill_statements: list[Statement] = []
     gap_statements: list[Statement] = []
@@ -151,7 +181,7 @@ def load_the_odds_api_odds() -> None:
             continue
 
         game_id, gaps = _resolve_game_id(
-            event, odds_event_ids, team_ids, games_by_matchup
+            event, odds_event_ids, team_ids, games_by_matchup, last_game_time
         )
         gap_statements.extend(gaps)
         if game_id is None:

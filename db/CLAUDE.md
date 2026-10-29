@@ -225,9 +225,13 @@ fixing). Not every lookup miss belongs here, though: only log a gap when
 the miss is a genuinely *unknown external value* that a correction table
 (`ABBREV_CORRECTIONS`-style) could fix. Skip it when the miss is actually
 expected/transient — e.g. CBS's `pickInfo.cbsItemId: null` just means
-that entry didn't pick that game (see `api/CLAUDE.md`), and a
-`games_by_matchup` miss in `odds_loader.py` just means that game hasn't
-been loaded yet, not that a team name failed to map.
+that entry didn't pick that game (see `api/CLAUDE.md`). A
+`games_by_matchup` miss in `odds_loader.py` was skipped too, as "not
+loaded yet", until 2026-10-29: CHI @ SEA (week 8) never linked because
+The Odds API had its kickoff 5 minutes off Sports IO's, and the only
+sign was a warning in `log.log` for seven weeks. Now a miss is an
+`entity_type = 'game'` gap when the event falls inside the season's
+schedule (playoff events, which are never loaded, stay log-only).
 
 Gap statements always ride in the same batch as the loader's real writes
 (atomic, no extra HTTP round trip) but are tracked in their own list,
