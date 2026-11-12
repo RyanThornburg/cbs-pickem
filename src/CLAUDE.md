@@ -929,7 +929,12 @@ src.kv_writer.__main__`).
   user would win if the period ended now: tied users pool the amounts of
   the places they cover and split them evenly (two tied for 2nd share
   2nd + 3rd; past the paid places there's less to split), to the cent;
-  last place splits its amount among the tied winners. `0` when out of
+  last place splits its amount among the tied winners. A split always
+  adds up to exactly the amount (`_split()`, 2026-11-12): each share is
+  rounded down to the cent and the leftover cents go one each to the
+  lowest `user_id`s (the user's choice). Before that each share was
+  rounded on its own, so $1,435 33 ways came to $1,434.84 and $200 3
+  ways to $200.01. `0` when out of
   the money, `null` before the period starts or when the period has no
   payouts configured. The key also carries a top-level `periods` list (the
   definitions with their `payouts`/`last_place_payout`, `end_week`

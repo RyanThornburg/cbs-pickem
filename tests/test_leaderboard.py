@@ -534,8 +534,40 @@ class TestPayouts:
     ) -> None:
         _season_scores(seed, {"a": [5], "b": [4], "c": [3], "d": [3], "e": [3]})
         payouts = self._payouts(d1)
-        # three tied for 3rd share 3rd's $100
-        assert [payouts[n][0] for n in "cde"] == [33.33, 33.33, 33.33]
+        # three tied for 3rd share 3rd's $100, the leftover cent to the
+        # lowest user_id
+        assert [payouts[n][0] for n in "cde"] == [33.34, 33.33, 33.33]
+
+    def test_split_shares_add_up_exactly(self) -> None:
+        # the 2nd half in week 10, everyone tied for 1st on 0: $1,435 33 ways
+        shares = leaderboard._split(1435, list(range(33, 0, -1)))
+        assert sum(round(s * 100) for s in shares.values()) == 143500
+        assert [shares[u] for u in (1, 16, 17, 33)] == [43.49, 43.49, 43.48, 43.48]
+        # rounding up each share can't overpay either: $200 3 ways
+        assert leaderboard._split(200, [3, 1, 2]) == {1: 66.67, 2: 66.67, 3: 66.66}
+
+    def test_tied_last_place_splits_to_the_cent(
+        self, d1: FakeD1, seed: Seed, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            leaderboard,
+            "PERIODS",
+            (
+                Period(
+                    "overall",
+                    "Overall",
+                    1,
+                    None,
+                    paid_places=1,
+                    pay_last_place=True,
+                    payouts=(100,),
+                    last_place_payout=10,
+                ),
+            ),
+        )
+        _season_scores(seed, {"a": [5], "b": [1], "c": [1], "d": [1]})
+        payouts = self._payouts(d1)
+        assert [payouts[n][1] for n in "abcd"] == [0, 3.34, 3.33, 3.33]
 
     def test_not_configured_or_not_started_is_none(
         self, d1: FakeD1, seed: Seed
