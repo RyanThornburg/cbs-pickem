@@ -40,6 +40,22 @@ SELECT week_number FROM weeks
 WHERE season_id = ? AND week_number <= ? AND is_complete = 1
 """
 
+# finished weeks whose picks CBS has all graded. A push never gets a
+# grade (only Correct/Incorrect map to is_correct), so a pick on a game
+# that pushed against cbs_spread counts as graded.
+_SETTLED_WEEKS_SQL = """
+SELECT w.week_number FROM weeks w
+WHERE w.season_id = ? AND w.is_complete = 1
+AND NOT EXISTS (
+    SELECT 1 FROM user_picks up
+    JOIN games g ON g.game_id = up.game_id
+    WHERE g.week_id = w.week_id AND up.is_correct IS NULL
+    AND NOT COALESCE(
+        g.status = 'FINAL' AND g.home_score - g.away_score + g.cbs_spread = 0, 0
+    )
+)
+"""
+
 # prior seasons count of a user from historical standings
 _SEASONS_PLAYED_SQL = """
 SELECT user_id, COUNT(DISTINCT season_id) AS prior_seasons
@@ -278,6 +294,31 @@ def compute_week_leaderboard(
     return users_json
 
 
+def _with_final(
+    d1: D1Client, week_number: int, definitions: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """each period definition plus `final`: this key's week is at or past
+    the period's end_week, and every week of the period is finished with
+    every pick graded - the period's places and payouts won't change
+    after that. CBS grades a game a poll or two after it goes FINAL, so
+    a week can be complete before its last picks are."""
+    settled = {
+        row["week_number"] for row in d1.query(_SETTLED_WEEKS_SQL, [SEASON]).results
+    }
+    return [
+        definition
+        | {
+            "final": definition["end_week"] is not None
+            and week_number >= definition["end_week"]
+            and all(
+                week in settled
+                for week in range(definition["start_week"], definition["end_week"] + 1)
+            )
+        }
+        for definition in definitions
+    ]
+
+
 def write_week_leaderboard(week_number: int) -> None:
     """Write week:{season}:{weekNN}:leaderboard from compute_week_leaderboard()."""
     d1 = get_d1()
@@ -294,7 +335,9 @@ def write_week_leaderboard(week_number: int) -> None:
         f"week:{SEASON}:{week_number:02d}:leaderboard",
         {
             "week": week_number,
-            "periods": period_definitions(final_week_number(d1)),
+            "periods": _with_final(
+                d1, week_number, period_definitions(final_week_number(d1))
+            ),
             "users": users_json,
         },
     )

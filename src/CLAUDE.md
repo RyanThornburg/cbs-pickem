@@ -940,7 +940,18 @@ src.kv_writer.__main__`).
   definitions with their `payouts`/`last_place_payout`, `end_week`
   resolved to the season's last week, via `src/periods.py`), and close-out
   saves the same list to `seasons.periods_json`, so history keeps each
-  season's amounts. The pre-periods fields (`first_half_*`/
+  season's amounts. On this key only, each definition also has `final`
+  (`_with_final()`, 2026-11-12, for the UI's Admin › Payouts): the key's
+  week is at or past the period's `end_week` and every week of the
+  period is `is_complete` with every pick graded (a pick on a game that
+  pushed against `cbs_spread` counts, since CBS never grades a push).
+  `is_complete` alone isn't enough: it flips when the last game goes
+  FINAL, and CBS's grades land a poll or two later. A week's key is only
+  rewritten while that week `is_current` (it moves on at the first daily
+  housekeeping after CBS's own period does, which on prod has been
+  Tuesday ~08:00Z, hours after Monday night's game is graded), so a
+  period's `end_week` key stops changing a day or so after it turns
+  final. The pre-periods fields (`first_half_*`/
   `second_half_*`/`in_money_*` per user, `second_half_start_week`/
   `paid_places` on the key and meta:current) were removed 2026-10-02 once
   the UI switched.

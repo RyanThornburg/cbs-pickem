@@ -13,7 +13,7 @@ from config.config import (
 from src.game_rules import standard_rank
 from src.kv_writer import leaderboard
 from src.kv_writer.leaderboard import compute_week_leaderboard
-from tests.conftest import FakeD1, Seed
+from tests.conftest import Clients, FakeD1, Seed
 
 OVERALL_PAID_PLACES = PERIODS_BY_KEY["overall"].paid_places
 FIRST_HALF_PAID_PLACES = PERIODS_BY_KEY["first_half"].paid_places
@@ -584,3 +584,70 @@ class TestPeriodConfig:
     def test_last_place_payout_needs_pay_last_place(self) -> None:
         with pytest.raises(ValueError, match="without pay_last_place"):
             Period("overall", "Overall", 1, None, 1, last_place_payout=50)
+
+
+class TestPeriodFinal:
+    PERIODS = (
+        Period("overall", "Overall", 1, None, paid_places=1),
+        Period("early", "Early", 1, 2, paid_places=1),
+    )
+
+    @pytest.fixture(autouse=True)
+    def _periods(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(leaderboard, "PERIODS", self.PERIODS)
+        monkeypatch.setattr("src.periods.PERIODS", self.PERIODS)
+
+    @pytest.fixture
+    def season(self, seed: Seed) -> dict[str, int]:
+        """weeks 1-3, 1-2 complete with a graded pick each, 3 not"""
+        user = seed.user("a")
+        picks: dict[str, int] = {}
+        for week_number in (1, 2, 3):
+            week_id = seed.week(week_number)
+            home, away = seed.team(), seed.team()
+            game = seed.final(week_id, home, away, (20, 10), -3.5, "2026-09-13")
+            seed.performance(user, week_id, 1)
+            picks[f"pick{week_number}"] = seed.pick(user, game, home, is_correct=True)
+            picks[f"game{week_number}"] = game
+        seed.d1.query("UPDATE weeks SET is_complete = 1 WHERE week_number < 3")
+        return picks
+
+    def _final(self, clients: Clients, week: int) -> dict[str, bool]:
+        leaderboard.write_week_leaderboard(week)
+        board = clients.kv.values[f"week:{SEASON}:{week:02d}:leaderboard"]
+        return {p["key"]: p["final"] for p in board["periods"]}
+
+    def test_final_once_its_last_week_is_graded(
+        self, clients: Clients, season: dict[str, int]
+    ) -> None:
+        assert self._final(clients, 1) == {"overall": False, "early": False}
+        assert self._final(clients, 2) == {"overall": False, "early": True}
+        # still final on a later week's key, and overall waits for week 3
+        assert self._final(clients, 3) == {"overall": False, "early": True}
+
+    def test_an_ungraded_pick_holds_it_back(
+        self, clients: Clients, season: dict[str, int]
+    ) -> None:
+        clients.d1.query(
+            "UPDATE user_picks SET is_correct = NULL WHERE pick_id = ?",
+            [season["pick2"]],
+        )
+        assert self._final(clients, 2)["early"] is False
+
+    def test_a_push_never_graded_still_counts(
+        self, clients: Clients, season: dict[str, int]
+    ) -> None:
+        clients.d1.query(
+            "UPDATE user_picks SET is_correct = NULL WHERE pick_id = ?",
+            [season["pick2"]],
+        )
+        clients.d1.query(
+            "UPDATE games SET cbs_spread = -10 WHERE game_id = ?", [season["game2"]]
+        )
+        assert self._final(clients, 2)["early"] is True
+
+    def test_an_unfinished_week_holds_it_back(
+        self, clients: Clients, season: dict[str, int]
+    ) -> None:
+        clients.d1.query("UPDATE weeks SET is_complete = 0 WHERE week_number = 1")
+        assert self._final(clients, 2)["early"] is False
