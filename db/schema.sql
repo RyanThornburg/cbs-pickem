@@ -348,6 +348,8 @@ CREATE TABLE IF NOT EXISTS historical_standings (
     is_champion BOOLEAN AS (final_rank = 1),
     last_place BOOLEAN NOT NULL DEFAULT FALSE, -- won the overall last place payout
     paid_amount INT, -- entry fee paid, from the roster:{season} KV key at close-out (src/roster_backup.py), NULL if not recorded
+    payout REAL, -- overall prize owed at close-out (place + last place payout, ties split), NULL with no payouts configured
+    payout_paid REAL, -- overall prize paid, from the roster:{season} KV key's payouts at close-out, NULL if not recorded
     FOREIGN KEY (season_id) REFERENCES seasons(season_id),
     FOREIGN KEY (user_id) REFERENCES users(user_id),
     UNIQUE (season_id, user_id)
@@ -364,6 +366,8 @@ CREATE TABLE IF NOT EXISTS historical_period_standings (
     rank INT,
     score INT,
     last_place BOOLEAN NOT NULL DEFAULT FALSE, -- won that period's last place payout
+    payout REAL, -- prize owed at close-out, same as historical_standings.payout
+    payout_paid REAL, -- prize paid, same as historical_standings.payout_paid
     FOREIGN KEY (season_id) REFERENCES seasons(season_id),
     FOREIGN KEY (user_id) REFERENCES users(user_id),
     PRIMARY KEY (season_id, user_id, period_key)

@@ -1400,10 +1400,14 @@ it to D1's `roster_backups` (`season_id`, `captured_at`, the whole value
 as JSON) from daily housekeeping, only when it differs from the last copy
 (compared as sorted-key JSON), so every version is kept and a bad write
 can be undone by writing an older copy back. A missing key saves nothing.
-The UI owns the shape; the only part read here is
-`users.{user_id}.paid_amount` (whole dollars), by `paid_amounts()` at
-season close-out. An entry without it, or a key that isn't a user_id, is
-left out. CLI: `uv run python -m src.roster_backup [local|prod]`.
+The UI owns the shape; the parts read here, both at season close-out,
+are `users.{user_id}.paid_amount` (entry fees, whole dollars, by
+`paid_amounts()`) and `payouts.{period_key}.{user_id}.paid_amount`
+(prize money paid out, dollars and cents, by `paid_payouts()`; added
+2026-11-12 - `payouts` is absent until the admin page saves the first
+one, keyed by prize then player so one person can be paid two prizes).
+An entry without an amount, or a key that isn't a user_id, is left out -
+unknown, not 0. CLI: `uv run python -m src.roster_backup [local|prod]`.
 
 ## Season close-out
 
@@ -1420,7 +1424,10 @@ computes that week's leaderboard, and in one batch upserts one
 `historical_standings` row per user (overall place/score, `last_place`,
 and `paid_amount` from a fresh `backup_roster()` - see "Roster backup"),
 replaces the season's
-`historical_period_standings` rows (every non-overall period), and saves
+`historical_period_standings` rows (every non-overall period), each
+period's row (overall's on `historical_standings`) with the prize owed
+(`payout`, place plus last place) and paid (`payout_paid`, from the same
+roster copy; see `db/CLAUDE.md`), and saves
 `config.PERIODS` to `seasons.periods_json`. Then calls
 `write_historical()` to refresh KV.
 

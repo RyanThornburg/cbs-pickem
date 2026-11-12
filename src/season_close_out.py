@@ -4,26 +4,30 @@ Usage: uv run python -m src.season_close_out [local|prod]
 
 import json
 import logging
+from typing import Any
 
 from config.config import PERIODS, SEASON, run_cli
 from db.clients import get_d1
 from db.d1_client import D1Client, Statement
 from src.kv_writer import compute_week_leaderboard, write_historical
 from src.periods import final_week_number, period_definitions
-from src.roster_backup import backup_roster, paid_amounts
+from src.roster_backup import backup_roster, paid_amounts, paid_payouts
 
 logger = logging.getLogger(__name__)
 
 _UPSERT_STANDING_SQL = """
 INSERT INTO historical_standings
-    (season_id, user_id, pool_name, final_rank, final_score, last_place, paid_amount)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+    (season_id, user_id, pool_name, final_rank, final_score, last_place, paid_amount,
+     payout, payout_paid)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(season_id, user_id) DO UPDATE SET
     pool_name = excluded.pool_name,
     final_rank = excluded.final_rank,
     final_score = excluded.final_score,
     last_place = excluded.last_place,
-    paid_amount = excluded.paid_amount
+    paid_amount = excluded.paid_amount,
+    payout = excluded.payout,
+    payout_paid = excluded.payout_paid
 """
 
 # a re-run replaces the season's period rows, so a period renamed in
@@ -32,8 +36,8 @@ _CLEAR_PERIODS_SQL = "DELETE FROM historical_period_standings WHERE season_id = 
 
 _INSERT_PERIOD_SQL = """
 INSERT INTO historical_period_standings
-    (season_id, user_id, period_key, rank, score, last_place)
-VALUES (?, ?, ?, ?, ?, ?)
+    (season_id, user_id, period_key, rank, score, last_place, payout, payout_paid)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 _SAVE_PERIODS_SQL = "UPDATE seasons SET periods_json = ? WHERE season_id = ?"
@@ -41,6 +45,18 @@ _SAVE_PERIODS_SQL = "UPDATE seasons SET periods_json = ? WHERE season_id = ?"
 _UNFINISHED_WEEKS_SQL = """
 SELECT COUNT(*) AS unfinished FROM weeks WHERE season_id = ? AND is_complete = 0
 """
+
+
+def _owed(standing: dict[str, Any]) -> int | float | None:
+    """a period's prize for one user: its place payout plus its last place
+    payout (the roster records one payment per period, so both count
+    against it). None when the period has neither configured."""
+    amounts = [
+        amount
+        for amount in (standing["payout"], standing["last_place_payout"])
+        if amount is not None
+    ]
+    return round(sum(amounts), 2) if amounts else None
 
 
 def _season_pool_name(d1: D1Client) -> str | None:
@@ -81,7 +97,9 @@ def close_out_season() -> None:
 
     pool_name = _season_pool_name(d1)
     # a fresh backup first, so the paid amounts are the roster as it is now
-    paid = paid_amounts(backup_roster())
+    roster = backup_roster()
+    paid = paid_amounts(roster)
+    paid_out = paid_payouts(roster)
     statements: list[Statement] = [
         (
             _UPSERT_STANDING_SQL,
@@ -93,6 +111,8 @@ def close_out_season() -> None:
                 entry["cumulative_score"],
                 entry["periods"]["overall"]["in_money_last_place"],
                 paid.get(entry["user_id"]),
+                _owed(entry["periods"]["overall"]),
+                paid_out.get("overall", {}).get(entry["user_id"]),
             ],
         )
         for entry in standings
@@ -113,6 +133,8 @@ def close_out_season() -> None:
                         standing["place"],
                         standing["score"],
                         standing["in_money_last_place"],
+                        _owed(standing),
+                        paid_out.get(period.key, {}).get(entry["user_id"]),
                     ],
                 )
             )

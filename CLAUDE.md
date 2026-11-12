@@ -98,7 +98,8 @@ distinguish partial from complete):
    season's final cumulative standings the same way the live weekly
    leaderboard always has, writes one `historical_standings` row per
    user (with their entry fee `paid_amount` from the UI's
-   `roster:{season}` KV key) plus their `historical_period_standings` rows, saves
+   `roster:{season}` KV key) plus their `historical_period_standings` rows
+   (each period's prize owed and paid, `payout`/`payout_paid`), saves
    `config.PERIODS` to `seasons.periods_json`, then refreshes
    `meta:historical` in KV. It refuses while any week of the season
    isn't `is_complete` (the last game's FINAL marks it).

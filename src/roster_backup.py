@@ -72,6 +72,23 @@ def paid_amounts(roster: dict[str, Any] | None) -> dict[int, int | float]:
     return paid
 
 
+def paid_payouts(roster: dict[str, Any] | None) -> dict[str, dict[int, int | float]]:
+    """period_key -> user_id -> paid_amount from a roster value's payouts
+    (prize money paid out, dollars and cents). A winner with no entry is
+    left out - unknown, not 0, since the admin page's "Mark unpaid"
+    deletes the entry. Anything not the expected shape is left out too
+    (logged)."""
+    paid: dict[str, dict[int, int | float]] = {}
+    for period_key, winners in ((roster or {}).get("payouts") or {}).items():
+        if not isinstance(winners, dict):
+            logger.warning("Roster payouts.%s isn't an object - skipped", period_key)
+            continue
+        amounts = paid_amounts({"users": winners})
+        if amounts:
+            paid[period_key] = amounts
+    return paid
+
+
 def main() -> None:
     backup_roster()
 

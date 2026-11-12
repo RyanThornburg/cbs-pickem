@@ -57,3 +57,21 @@ def test_paid_amounts_skips_what_it_cant_read() -> None:
     }
     assert roster_backup.paid_amounts(roster) == {1: 200}
     assert roster_backup.paid_amounts(None) == {}
+
+
+def test_paid_payouts_by_period() -> None:
+    roster = {
+        "users": {"1": {"paid_amount": 200}},
+        "payouts": {
+            "first_half": {
+                "1": {"paid_amount": 685, "method": "venmo"},
+                "2": {"paid_amount": 37.5, "note": "rest Sunday"},
+            },
+            "overall": {},  # every record cleared
+            "second_half": "not an object",
+        },
+    }
+    assert roster_backup.paid_payouts(roster) == {"first_half": {1: 685, 2: 37.5}}
+    # absent until the first payout is saved
+    assert roster_backup.paid_payouts({"users": {}}) == {}
+    assert roster_backup.paid_payouts(None) == {}

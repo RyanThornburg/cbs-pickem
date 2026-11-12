@@ -430,3 +430,22 @@ for every archive season). Applying it to an existing database: the
 ```sql
 ALTER TABLE historical_standings ADD COLUMN paid_amount INT;
 ```
+
+## `payout` / `payout_paid`
+
+Added 2026-11-12 on both `historical_standings` (overall) and
+`historical_period_standings` (every other period), filled at close-out.
+`payout` is the prize owed: the leaderboard's place `payout` plus its
+`last_place_payout` for that period (ties already split), NULL when the
+period has neither configured. `payout_paid` is what the admin page
+recorded as paid in `roster:{season}`'s `payouts.{period_key}.{user_id}`,
+NULL when there's no entry (unknown, not 0 - "Mark unpaid" deletes the
+entry). Both REAL, since a split prize has cents. NULL for every archive
+season. Applying it to an existing database:
+
+```sql
+ALTER TABLE historical_standings ADD COLUMN payout REAL;
+ALTER TABLE historical_standings ADD COLUMN payout_paid REAL;
+ALTER TABLE historical_period_standings ADD COLUMN payout REAL;
+ALTER TABLE historical_period_standings ADD COLUMN payout_paid REAL;
+```

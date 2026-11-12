@@ -109,6 +109,53 @@ class TestCloseOut:
         backups = clients.d1.query("SELECT season_id FROM roster_backups").results
         assert backups == [{"season_id": SEASON}]
 
+    def test_records_payouts_owed_and_paid(
+        self, clients: Clients, seed: Seed, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        paid = (
+            Period("overall", "Overall", 1, None, 2, payouts=(1000, 500)),
+            Period("first_half", "First Half", 1, 9, 1, payouts=(300,)),
+            Period("second_half", "Second Half", 10, None, 1),  # no payouts
+        )
+        for module in (leaderboard, season_close_out):
+            monkeypatch.setattr(module, "PERIODS", paid)
+        monkeypatch.setattr("src.periods.PERIODS", paid)
+        users = _full_season(seed, {"a": [5], "b": [3], "c": [3]})
+        a, b = str(users["a"]), str(users["b"])
+        clients.kv.values[f"roster:{SEASON}"] = {
+            "users": {},
+            "payouts": {
+                "overall": {a: {"paid_amount": 1000}, b: {"paid_amount": 100}},
+                "first_half": {a: {"paid_amount": 300}},
+            },
+        }
+
+        season_close_out.close_out_season()
+
+        rows = _standings(clients.d1)
+        # b and c tied for 2nd split 2nd's $500; c's payment isn't recorded
+        assert {u: (r["payout"], r["payout_paid"]) for u, r in rows.items()} == {
+            users["a"]: (1000, 1000),
+            users["b"]: (250, 100),
+            users["c"]: (250, None),
+        }
+        periods = {
+            (r["user_id"], r["period_key"]): (r["payout"], r["payout_paid"])
+            for r in clients.d1.query(
+                "SELECT * FROM historical_period_standings WHERE season_id = ?",
+                [SEASON],
+            ).results
+        }
+        assert periods[(users["a"], "first_half")] == (300, 300)
+        assert periods[(users["b"], "first_half")] == (0, None)
+        assert periods[(users["a"], "second_half")] == (None, None)
+
+    def test_owed_counts_last_place_too(self) -> None:
+        owed = season_close_out._owed
+        assert owed({"payout": 0, "last_place_payout": 33.33}) == 33.33
+        assert owed({"payout": 250, "last_place_payout": None}) == 250
+        assert owed({"payout": None, "last_place_payout": None}) is None
+
     def test_matches_the_live_leaderboard(self, clients: Clients, seed: Seed) -> None:
         # close-out reuses compute_week_leaderboard(), so the final week's
         # leaderboard and the historical row can never disagree
