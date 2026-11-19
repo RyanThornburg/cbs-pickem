@@ -1,6 +1,6 @@
-"""Client for ESPN's undocumented public scoreboard endpoint - no API key,
-no auth required. See api/espn_models.py's module docstring for the
-"unofficial API" caveat.
+"""Client for ESPN's undocumented public endpoints - no API key, no auth
+required. See api/espn_models.py's module docstring for the "unofficial
+API" caveat.
 """
 
 import logging
@@ -24,6 +24,8 @@ SOURCE = "espn"
 API_URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
 # one game's full detail (drives/plays, per-play win probability, box score)
 SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary"
+# conference standings with seeds, tiebreakers, strength of schedule, etc.
+STANDINGS_URL = "https://site.api.espn.com/apis/v2/sports/football/nfl/standings"
 
 # regular season - same scope as the pool itself
 REGULAR_SEASON_TYPE = 2
@@ -65,6 +67,10 @@ class EspnClient:
         """one game's summary - only its drives/win probability are modeled"""
         return self._fetch(SUMMARY_URL, {"event": event_id}).json()
 
+    def get_standings(self, season: int) -> dict[str, Any]:
+        """conference standings with NFL tiebreaker seeding applied"""
+        return self._fetch(STANDINGS_URL, {"season": season, "type": 1}).json()
+
     @stamina.retry(
         on=(ApiRateLimitError, ApiServerError, requests.exceptions.RequestException)
     )
@@ -88,6 +94,38 @@ def get_summary(event_id: str) -> Summary:
     return fetch_and_validate_one(
         "ESPN summary", lambda: EspnClient().get_summary(event_id), Summary
     )
+
+
+def _stat_map(stats: list[dict[str, Any]]) -> dict[str, Any]:
+    """ESPN stats are [{name, value, displayValue}, ...] - flatten to a dict
+    keyed on name. value is typically numeric, displayValue the string form."""
+    return {s["name"]: s.get("value", s.get("displayValue")) for s in stats}
+
+
+def get_espn_standings() -> dict[str, dict[str, Any]]:
+    """Conference standings with ESPN's seeds (NFL tiebreakers applied).
+    Returns {abbreviation: {conference_rank, games_behind, ...}} keyed on
+    teams.abbreviation convention (ABBREV_CORRECTIONS applied)."""
+    data = EspnClient().get_standings(SEASON)
+    result: dict[str, dict[str, Any]] = {}
+    for conference in data.get("children", []):
+        for entry in conference.get("standings", {}).get("entries", []):
+            team = entry.get("team", {})
+            abbr = team.get("abbreviation", "")
+            abbr = ABBREV_CORRECTIONS.get(abbr, abbr)
+            stats = _stat_map(entry.get("stats", []))
+            conference_rank = stats.get("conferenceRank")
+            games_behind = stats.get("gamesBehind")
+            result[abbr] = {
+                "conference_rank": int(conference_rank)
+                if conference_rank is not None
+                else None,
+                "games_behind": float(games_behind)
+                if games_behind is not None
+                else None,
+            }
+    logger.info("ESPN standings: %d teams", len(result))
+    return result
 
 
 if __name__ == "__main__":

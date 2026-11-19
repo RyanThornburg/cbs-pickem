@@ -49,6 +49,11 @@ already never took `env` (see `config/CLAUDE.md`).
   now also calls `teams_loader.load_teams()` daily (see Orchestration
   below) to keep them current; the rest of the row (name/city/logo/etc.)
   just gets harmlessly re-upserted with itself in the same call.
+  `load_espn_standings()` (added 2026-11-19) writes `conference_rank`
+  (1-16 conference seed with full NFL tiebreakers) and `games_behind`
+  from ESPN's public standings endpoint - one call, keyed on
+  `teams.abbreviation` with `ABBREV_CORRECTIONS` applied. Called by
+  `_refresh_standings()` alongside `load_standings()`, both soft-fail.
 - `stadiums_loader.py` — upserts a static, hand-curated 38-row seed (30
   U.S. stadiums + 8 international venues actually on this season's
   schedule) into `stadiums`, keyed on `name`. Not fetched from any API —
@@ -513,8 +518,10 @@ Cadences, and why each one is what it is:
   `STANDINGS_FOLLOW_UP_SECONDS` after that it refreshes every
   `STANDINGS_FOLLOW_UP_INTERVAL_SECONDS`, so Sports IO's `division_rank`
   catches up once its own standings do. Each refresh is
-  `teams_loader.load_standings()` (one Sports IO call, soft-fail on its
-  own since the key doesn't need it) then `write_season_standings()`.
+  `teams_loader.load_standings()` (one Sports IO call, soft-fail) then
+  `teams_loader.load_espn_standings()` (one ESPN call, soft-fail) then
+  `write_season_standings()`. Both loader calls are independent soft-fails
+  so the key is still worth writing without either.
   `standings_refresh` in `meta:admin`. Housekeeping writes the key too.
 - **Housekeeping, 24 hr, quiet periods only** — full Sports IO schedule
   refresh + `teams_loader.load_teams()` (win/loss/tie records, added
@@ -1193,8 +1200,12 @@ src.kv_writer.__main__`).
   prod: every team's record, points and streak matched Sports IO's).
   Order is `win_pct`, then `teams.division_rank` (Sports IO's position,
   which applies the NFL tiebreakers we don't) - so on equal records the
-  order is only as fresh as the last `load_standings()`. No playoff
-  seeding. Written by `_run_standings_refresh()` (see Orchestration),
+  order is only as fresh as the last `load_standings()`. Each team also
+  has `seed` (`teams.conference_rank`, ESPN's 1-16 conference seed with
+  full NFL tiebreakers applied, `null` until `load_espn_standings()` has
+  run) and `games_behind` (games behind the #1 seed in that conference).
+  Seeds 1-4 are division winners, 5-7 wild card, 8-16 out. Added
+  2026-11-19. Written by `_run_standings_refresh()` (see Orchestration),
   daily housekeeping, and alongside the team keys whenever
   `_run_team_profiles_refresh()` rewrites any (a pick reveal or CBS
   grading changes `pool` without a new FINAL).

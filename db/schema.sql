@@ -30,7 +30,9 @@ CREATE TABLE IF NOT EXISTS teams (
     wins INT,
     losses INT,
     ties INT,
-    division_rank INT -- Sports IO /standings position (1-4), with the NFL tiebreakers applied - only used to order teams on equal records
+    division_rank INT, -- Sports IO /standings position (1-4), with the NFL tiebreakers applied
+    conference_rank INT, -- ESPN /standings conference seed (1-16), with full NFL tiebreakers
+    games_behind REAL -- ESPN /standings games behind the #1 conference seed
 );
 
 -- Stadiums and venues (including international)

@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 _TEAMS_SQL = """
 SELECT team_id, abbreviation AS abbr, nick_name AS name, conference, division,
-    division_rank
+    division_rank, conference_rank, games_behind
 FROM teams
 WHERE division IS NOT NULL
 """
@@ -130,6 +130,8 @@ def _team_entry(
     record = _wlt(results)
     return {
         "team": {"id": team["team_id"], "abbr": team["abbr"], "name": team["name"]},
+        "seed": team["conference_rank"],
+        "games_behind": team["games_behind"],
         **record,
         "win_pct": _win_pct(record["wins"], record["losses"], record["ties"]),
         "points_for": points_for,

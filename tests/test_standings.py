@@ -74,6 +74,8 @@ class TestStandings:
         assert _order(conferences, "AFC East") == ["BUF", "MIA", "NE", "NYJ"]
         buf = _teams(conferences)["BUF"]
         assert buf["rank"] == 1
+        assert buf["seed"] is None
+        assert buf["games_behind"] is None
         assert buf["win_pct"] is None
         assert buf["streak"] is None
         assert buf["ats"] == {"covers": 0, "losses": 0, "cover_pct": None}
@@ -182,6 +184,25 @@ class TestStandings:
         value = clients.kv.values[f"season:{SEASON}:standings"]
         assert value["season"] == SEASON
         assert len(value["conferences"]) == 2
+
+    def test_seed_from_espn(
+        self, league: Division, seed: Seed, clients: Clients
+    ) -> None:
+        sql = "UPDATE teams SET conference_rank = ?, games_behind = ? WHERE team_id = ?"
+        clients.d1.batch(
+            [
+                (sql, [1, 0.0, league.ids["BUF"]]),
+                (sql, [5, 3.0, league.ids["NYJ"]]),
+            ]
+        )
+
+        teams = _teams(standings.compute_standings())
+
+        assert teams["BUF"]["seed"] == 1
+        assert teams["BUF"]["games_behind"] == 0.0
+        assert teams["NYJ"]["seed"] == 5
+        assert teams["NYJ"]["games_behind"] == 3.0
+        assert teams["MIA"]["seed"] is None
 
     def test_no_teams_no_key(self, clients: Clients) -> None:
         standings.write_season_standings()

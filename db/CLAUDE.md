@@ -166,7 +166,9 @@ since been applied to prod too). `games.neutral_site` (added 2026-09-26)
 applied to both local and prod the same day, and backfilled on both via
 `src.loaders.espn_loader`. `teams.division_rank` (added 2026-09-30, Sports
 IO's standings position) needs `ALTER TABLE teams ADD COLUMN division_rank
-INT` on an existing database.
+INT` on an existing database. `teams.conference_rank`/`games_behind`
+(added 2026-11-19, ESPN's conference seed 1-16 with full NFL tiebreakers)
+applied to prod 2026-11-19 and filled by `load_espn_standings()`.
 New tables need no `ALTER`: `schema.sql`'s `CREATE TABLE IF NOT EXISTS`
 creates them on an existing database, so re-running `./setup.sh` is
 enough. `game_scoring_plays`, `game_player_stats` and

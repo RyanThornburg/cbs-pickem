@@ -4,6 +4,7 @@ Usage: uv run python -m src.loaders.teams_loader [local|prod]
 
 load_standings() refreshes only the standings columns (one Sports IO call),
 for after games finish - see orchestration's _run_standings_refresh().
+load_espn_standings() refreshes conference seeding from ESPN (one call).
 
 - sports io team model does not have conference/division, read from standings
 - No CBS id is set during load, that needs to happen when CBS data is loaded
@@ -14,6 +15,7 @@ Upserts are using sports_io_team_id
 
 import logging
 
+from api.espn_client import get_espn_standings
 from api.sports_io_client import get_standings, get_teams
 from api.sports_io_models import Standing
 from config.config import SEASON, run_cli
@@ -130,6 +132,29 @@ def load_standings() -> None:
         return
     sql_batch_call(statements, get_d1())
     logger.info("Standings updated for %d teams", len(statements))
+
+
+_UPDATE_ESPN_STANDINGS_SQL = """
+UPDATE teams SET conference_rank = ?, games_behind = ?
+WHERE abbreviation = ?
+"""
+
+
+def load_espn_standings() -> None:
+    """Conference seeds from ESPN - full NFL tiebreakers applied"""
+    espn = get_espn_standings()
+    if not espn:
+        logger.warning("No ESPN standings to load")
+        return
+    statements: list[Statement] = [
+        (
+            _UPDATE_ESPN_STANDINGS_SQL,
+            [data["conference_rank"], data["games_behind"], abbr],
+        )
+        for abbr, data in espn.items()
+    ]
+    sql_batch_call(statements, get_d1())
+    logger.info("ESPN standings updated for %d teams", len(statements))
 
 
 def main() -> None:

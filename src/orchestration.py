@@ -48,7 +48,7 @@ from src.loaders.sports_io_loader import (
     load_games_data,
     load_live_game_statistics,
 )
-from src.loaders.teams_loader import load_standings, load_teams
+from src.loaders.teams_loader import load_espn_standings, load_standings, load_teams
 from src.loaders.win_probability_loader import load_final_win_probability
 from src.roster_backup import backup_roster
 from src.scheduling import (
@@ -457,9 +457,10 @@ def _finish_week_stats(client: D1Client, week_id: int, week_number: int) -> bool
 
 
 def _refresh_standings(client: D1Client) -> None:
-    # Sports IO only supplies the tiebreak order - the records come from
-    # our own games, so the key is still worth writing without it
+    # Sports IO supplies division_rank, ESPN supplies conference_rank (seeds)
+    # - both are soft so the key is still worth writing without either
     soft(client, "sports_io_standings", load_standings)
+    soft(client, "espn_standings", load_espn_standings)
     write_season_standings()
 
 
